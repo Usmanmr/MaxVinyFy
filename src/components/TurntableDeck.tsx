@@ -45,13 +45,12 @@ export const TurntableDeck: React.FC<TurntableDeckProps> = ({
   onSeek,
   onToggleFullScreen,
 }) => {
-  const [rotationDeg, setRotationDeg] = useState(0);
+  const [scratchAngleOffset, setScratchAngleOffset] = useState(0);
   const [isScratching, setIsScratching] = useState(false);
   const [scratchFlash, setScratchFlash] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [rawLrcLyrics, setRawLrcLyrics] = useState<string | null>(null);
 
-  const lastFrameRef = useRef<number | null>(null);
   const scratchStartAngleRef = useRef<number>(0);
   const platterRef = useRef<HTMLDivElement | null>(null);
   const activeLyricRef = useRef<HTMLButtonElement | null>(null);
@@ -106,36 +105,17 @@ export const TurntableDeck: React.FC<TurntableDeckProps> = ({
     }
   }, [activeLyricIndex]);
 
-  // Smooth RAF rotation loop for the big vinyl record platter rotating underneath the Album Art
-  useEffect(() => {
-    let rafId: number;
-    const step = (timestamp: number) => {
-      if (lastFrameRef.current === null) {
-        lastFrameRef.current = timestamp;
-      }
-      const deltaMs = timestamp - lastFrameRef.current;
-      lastFrameRef.current = timestamp;
-
-      if (isPlaying && !isScratching) {
-        const baseDegPerSec = 200;
-        const speedMultiplier = 1 + pitchPercent / 100;
-        setRotationDeg((prev) => (prev + (baseDegPerSec * speedMultiplier * deltaMs) / 1000) % 360);
-      }
-      rafId = requestAnimationFrame(step);
-    };
-
-    rafId = requestAnimationFrame(step);
-    return () => {
-      cancelAnimationFrame(rafId);
-      lastFrameRef.current = null;
-    };
-  }, [isPlaying, isScratching, pitchPercent]);
+  // Hardware-accelerated CSS spin duration adjusted by pitch (zero 60fps React re-renders)
+  const spinDurationSec = useMemo(() => {
+    const speedMultiplier = Math.max(0.5, 1 + pitchPercent / 100);
+    return Number((1.8 / speedMultiplier).toFixed(2));
+  }, [pitchPercent]);
 
   const handleTriggerScratch = (intensity: 'light' | 'classic' | 'backspin') => {
     onScratch(intensity);
     setScratchFlash(true);
     const delta = intensity === 'backspin' ? -145 : intensity === 'classic' ? -68 : 42;
-    setRotationDeg((prev) => prev + delta);
+    setScratchAngleOffset((prev) => (prev + delta) % 360);
     window.setTimeout(() => setScratchFlash(false), 320);
   };
 
@@ -159,7 +139,7 @@ export const TurntableDeck: React.FC<TurntableDeckProps> = ({
     const currentAngle = Math.atan2(e.clientY - cy, e.clientX - cx) * (180 / Math.PI);
     const delta = currentAngle - scratchStartAngleRef.current;
     scratchStartAngleRef.current = currentAngle;
-    setRotationDeg((prev) => prev + delta);
+    setScratchAngleOffset((prev) => (prev + delta) % 360);
     if (Math.abs(delta) > 14) {
       onScratch('classic');
     }
@@ -231,79 +211,90 @@ export const TurntableDeck: React.FC<TurntableDeckProps> = ({
               scratchFlash ? 'scale-[0.985] ring-2 ring-amber-400/60' : ''
             }`}
           >
-            {/* Interactive Vinyl Record Disc Rotating Below the Album Cover */}
+            {/* Outer Scratch Wrapper + Inner GPU-Composited Vinyl Disc */}
             <div
-              ref={platterRef}
-              onPointerDown={handlePlatterPointerDown}
-              onPointerMove={handlePlatterPointerMove}
-              onPointerUp={handlePlatterPointerUp}
-              role="slider"
-              aria-label="Interactive Vinyl Platter — Drag to Scratch Record"
-              aria-valuenow={Math.round(rotationDeg)}
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === ' ' || e.key === 'Enter') {
-                  e.preventDefault();
-                  handleTriggerScratch('classic');
-                }
+              style={{
+                transform: `rotate(${scratchAngleOffset}deg)`,
+                transition: isScratching ? 'none' : 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1)',
               }}
-              style={{ transform: `rotate(${rotationDeg}deg)` }}
-              className="vinyl-grooves relative w-full h-full rounded-full cursor-grab active:cursor-grabbing flex items-center justify-center shadow-lg overflow-hidden"
+              className="w-full h-full rounded-full"
             >
-              {/* Anisotropic Vinyl Specular Light Sheen */}
               <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 rounded-full bg-[conic-gradient(from_35deg,transparent_0deg,rgba(255,255,255,0.15)_35deg,transparent_75deg,transparent_180deg,rgba(255,255,255,0.13)_215deg,transparent_255deg)]"
-              />
-
-              {/* Subtle Animated CSS Particle & Texture Overlay Simulating Vintage Vinyl Dust Accumulation */}
-              <div
-                aria-hidden="true"
-                className="vinyl-dust-particles pointer-events-none absolute inset-0 rounded-full"
-              />
-              <div
-                aria-hidden="true"
-                className="vinyl-dust-motes pointer-events-none absolute inset-0 rounded-full"
-              />
-
-              {/* Concentric Groove Track Rings */}
-              <div className="pointer-events-none absolute inset-[6%] rounded-full border border-white/10" />
-              <div className="pointer-events-none absolute inset-[14%] rounded-full border border-white/10" />
-              <div className="pointer-events-none absolute inset-[22%] rounded-full border border-white/10" />
-              <div className="pointer-events-none absolute inset-[28%] rounded-full border border-white/5" />
-
-              {/* Dynamic Stylus Landing Groove Ring — Shows Exact Vinyl Radius Where the Needle Tracks Song Duration */}
-              <div
-                aria-hidden="true"
-                style={{
-                  inset: `${activeGrooveInsetPercent}%`,
-                  borderColor: themePalette.borderRgba,
-                  boxShadow: `0 0 10px ${themePalette.glowRgba}`,
+                ref={platterRef}
+                onPointerDown={handlePlatterPointerDown}
+                onPointerMove={handlePlatterPointerMove}
+                onPointerUp={handlePlatterPointerUp}
+                role="slider"
+                aria-label="Interactive Vinyl Platter — Drag to Scratch Record"
+                aria-valuenow={Math.round(scratchAngleOffset)}
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === ' ' || e.key === 'Enter') {
+                    e.preventDefault();
+                    handleTriggerScratch('classic');
+                  }
                 }}
-                className="pointer-events-none absolute rounded-full border transition-all duration-200"
-              />
+                style={{
+                  animationDuration: `${spinDurationSec}s`,
+                  animationPlayState: isPlaying && !isScratching ? 'running' : 'paused',
+                }}
+                className="vinyl-grooves vinyl-platter-gpu-spin relative w-full h-full rounded-full cursor-grab active:cursor-grabbing flex items-center justify-center shadow-lg overflow-hidden"
+              >
+                {/* Anisotropic Vinyl Specular Light Sheen */}
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 rounded-full bg-[conic-gradient(from_35deg,transparent_0deg,rgba(255,255,255,0.15)_35deg,transparent_75deg,transparent_180deg,rgba(255,255,255,0.13)_215deg,transparent_255deg)]"
+                />
 
-              {/* Center Vinyl Record Label with Spotify Artwork */}
-              <div className="relative z-10 w-[34%] h-[34%] rounded-full overflow-hidden border-4 border-[#1c1a18] shadow-inner bg-[#181512] flex items-center justify-center">
-                {!imgError && track.artworkUrl ? (
-                  <img
-                    src={track.artworkUrl}
-                    alt={`${track.title} vinyl center artwork`}
-                    referrerPolicy="no-referrer"
-                    onError={() => setImgError(true)}
-                    className="w-full h-full object-cover pointer-events-none"
-                  />
-                ) : (
-                  <div
-                    style={{ background: themePalette.tvCabinetGradient }}
-                    className="w-full h-full flex items-center justify-center"
-                  >
-                    <Disc3 style={{ color: themePalette.lightHex }} className="w-6 h-6" />
-                  </div>
-                )}
+                {/* Subtle CSS Particle & Texture Overlay Simulating Vintage Vinyl Dust Accumulation */}
+                <div
+                  aria-hidden="true"
+                  className="vinyl-dust-particles pointer-events-none absolute inset-0 rounded-full"
+                />
+                <div
+                  aria-hidden="true"
+                  className="vinyl-dust-motes pointer-events-none absolute inset-0 rounded-full"
+                />
 
-                {/* Machined Chrome Center Spindle */}
-                <div className="absolute w-3.5 h-3.5 lg:w-4 lg:h-4 rounded-full bg-gradient-to-br from-white via-[#d4d4d8] to-[#52525b] border border-black/80 shadow" />
+                {/* Concentric Groove Track Rings */}
+                <div className="pointer-events-none absolute inset-[6%] rounded-full border border-white/10" />
+                <div className="pointer-events-none absolute inset-[14%] rounded-full border border-white/10" />
+                <div className="pointer-events-none absolute inset-[22%] rounded-full border border-white/10" />
+                <div className="pointer-events-none absolute inset-[28%] rounded-full border border-white/5" />
+
+                {/* Dynamic Stylus Landing Groove Ring — Shows Exact Vinyl Radius Where the Needle Tracks Song Duration */}
+                <div
+                  aria-hidden="true"
+                  style={{
+                    inset: `${activeGrooveInsetPercent}%`,
+                    borderColor: themePalette.borderRgba,
+                    boxShadow: `0 0 10px ${themePalette.glowRgba}`,
+                  }}
+                  className="pointer-events-none absolute rounded-full border transition-all duration-200"
+                />
+
+                {/* Center Vinyl Record Label with Spotify Artwork */}
+                <div className="relative z-10 w-[34%] h-[34%] rounded-full overflow-hidden border-4 border-[#1c1a18] shadow-inner bg-[#181512] flex items-center justify-center">
+                  {!imgError && track.artworkUrl ? (
+                    <img
+                      src={track.artworkUrl}
+                      alt={`${track.title} vinyl center artwork`}
+                      referrerPolicy="no-referrer"
+                      onError={() => setImgError(true)}
+                      className="w-full h-full object-cover pointer-events-none"
+                    />
+                  ) : (
+                    <div
+                      style={{ background: themePalette.tvCabinetGradient }}
+                      className="w-full h-full flex items-center justify-center"
+                    >
+                      <Disc3 style={{ color: themePalette.lightHex }} className="w-6 h-6" />
+                    </div>
+                  )}
+
+                  {/* Machined Chrome Center Spindle */}
+                  <div className="absolute w-3.5 h-3.5 lg:w-4 lg:h-4 rounded-full bg-gradient-to-br from-white via-[#d4d4d8] to-[#52525b] border border-black/80 shadow" />
+                </div>
               </div>
             </div>
 

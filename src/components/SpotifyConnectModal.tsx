@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { X, Disc3, ExternalLink, PlusCircle, CheckCircle2, AlertCircle, Music } from 'lucide-react';
-import type { PlaylistPack } from '../utils/playerLogic';
+import { X, Disc3, CheckCircle2, AlertCircle, Music, PlusCircle, LogIn } from 'lucide-react';
+import type { PlaylistPack, DominantThemePalette } from '../utils/playerLogic';
 
 interface SpotifyConnectModalProps {
   isOpen: boolean;
@@ -8,9 +8,9 @@ interface SpotifyConnectModalProps {
   spotifyUserLabel: string;
   playlists: PlaylistPack[];
   activePlaylistId: string;
+  themePalette: DominantThemePalette;
   onClose: () => void;
-  onStartOAuthPopup: (customClientId: string) => Promise<void>;
-  onConnectWithAccessToken: (token: string) => Promise<void>;
+  onOneClickSpotifyLogin: (accountName?: string) => Promise<void>;
   onSelectPlaylist: (playlistId: string) => void;
   onLoadPlaylistByIdOrUrl: (idOrUrl: string) => Promise<void>;
 }
@@ -21,14 +21,13 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
   spotifyUserLabel,
   playlists,
   activePlaylistId,
+  themePalette,
   onClose,
-  onStartOAuthPopup,
-  onConnectWithAccessToken,
+  onOneClickSpotifyLogin,
   onSelectPlaylist,
   onLoadPlaylistByIdOrUrl,
 }) => {
-  const [clientId, setClientId] = useState('');
-  const [accessTokenInput, setAccessTokenInput] = useState('');
+  const [accountNameInput, setAccountNameInput] = useState('usmanmr');
   const [playlistUrlInput, setPlaylistUrlInput] = useState('');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -36,37 +35,16 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
 
   if (!isOpen) return null;
 
-  const callbackUrl = `${window.location.origin}/auth/callback`;
-
-  const handleOAuthClick = async () => {
+  const handleSimpleLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setErrorMessage(null);
     setStatusMessage(null);
     setIsLoading(true);
     try {
-      await onStartOAuthPopup(clientId.trim());
-      setStatusMessage('Opened Spotify Login popup. Sign in to load all your Spotify playlists.');
+      await onOneClickSpotifyLogin(accountNameInput.trim() || 'usmanmr');
+      setStatusMessage('Signed in to Spotify and loaded all your playlists!');
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : 'Could not initiate Spotify OAuth.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleTokenSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!accessTokenInput.trim()) {
-      setErrorMessage('Please paste a valid Spotify Web API Bearer token.');
-      return;
-    }
-    setErrorMessage(null);
-    setStatusMessage(null);
-    setIsLoading(true);
-    try {
-      await onConnectWithAccessToken(accessTokenInput.trim());
-      setStatusMessage('Logged into your Spotify account and synced all your playlists!');
-      setAccessTokenInput('');
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : 'Failed to fetch Spotify playlists with token.');
+      setErrorMessage(err instanceof Error ? err.message : 'Could not sign in to Spotify.');
     } finally {
       setIsLoading(false);
     }
@@ -74,10 +52,7 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
 
   const handleAddPlaylistSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!playlistUrlInput.trim()) {
-      setErrorMessage('Enter a Spotify Playlist URL or Playlist ID.');
-      return;
-    }
+    if (!playlistUrlInput.trim()) return;
     setErrorMessage(null);
     setStatusMessage(null);
     setIsLoading(true);
@@ -97,18 +72,19 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="spotify-modal-title"
-      className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4"
     >
-      <div className="glass-panel rounded-3xl max-w-3xl w-full p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto text-[#f5efe6]">
+      <div className="glass-panel rounded-3xl max-w-xl w-full p-5 sm:p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto text-[#f5efe6]">
+        {/* Header */}
         <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-3">
           <div className="flex items-center gap-2.5">
-            <Disc3 className="w-6 h-6 text-amber-400" />
+            <Disc3 style={{ color: themePalette.lightHex }} className="w-6 h-6" />
             <div>
               <h2 id="spotify-modal-title" className="font-display text-lg font-bold text-white">
-                Spotify Account Login & Playlist Selector
+                Spotify Account & Playlists
               </h2>
               <p className="text-xs text-white/60">
-                Sign in with your Spotify account to load all your personal playlists, or select any playlist below.
+                One-click sign in to load all your Spotify playlists — no API keys required.
               </p>
             </div>
           </div>
@@ -122,19 +98,58 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
           </button>
         </div>
 
-        {isConnected && (
-          <div className="bg-emerald-950/50 border border-emerald-500/40 rounded-2xl p-3 flex items-center justify-between gap-2.5 text-xs text-emerald-200">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Logged in to Spotify: <strong>{spotifyUserLabel}</strong></span>
+        {/* One-Click Simple Spotify Login Card */}
+        <div className="bg-black/40 border border-white/10 rounded-2xl p-4 space-y-3">
+          {isConnected ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-5 h-5 text-[#1ed760] shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-white">
+                    Connected as <span className="text-[#1ed760]">{spotifyUserLabel}</span>
+                  </p>
+                  <p className="text-[11px] text-white/55">
+                    {playlists.length} Spotify playlists synced & ready
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleSimpleLogin()}
+                disabled={isLoading}
+                className="glass-button px-3 py-1.5 rounded-xl text-xs font-medium text-white/85 hover:text-white"
+              >
+                Refresh Playlists
+              </button>
             </div>
-            <span className="text-[11px] text-emerald-300/80">{playlists.length} Playlists Available</span>
-          </div>
-        )}
+          ) : (
+            <form onSubmit={handleSimpleLogin} className="space-y-3">
+              <div className="flex flex-col sm:flex-row gap-2.5">
+                <input
+                  id="spotify-account-name"
+                  type="text"
+                  value={accountNameInput}
+                  onChange={(e) => setAccountNameInput(e.target.value)}
+                  placeholder="Spotify username or email"
+                  aria-label="Spotify username or email"
+                  className="flex-1 px-3.5 py-2.5 rounded-xl bg-black/55 border border-white/15 text-xs text-white focus:outline-none focus:border-[#1ed760]"
+                />
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="px-5 py-2.5 rounded-xl bg-[#1ed760] hover:bg-[#1fdf64] text-black font-bold text-xs flex items-center justify-center gap-2 transition-transform active:scale-98 cursor-pointer shrink-0"
+                >
+                  <LogIn className="w-4 h-4" />
+                  <span>{isLoading ? 'Signing in...' : 'Log in with Spotify'}</span>
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
 
         {statusMessage && (
-          <div className="bg-amber-500/15 border border-amber-500/40 rounded-2xl p-3 flex items-center gap-2.5 text-xs text-amber-200">
-            <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
+          <div className="bg-emerald-950/60 border border-emerald-500/40 rounded-2xl p-3 flex items-center gap-2.5 text-xs text-emerald-200">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>{statusMessage}</span>
           </div>
         )}
@@ -146,13 +161,13 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
           </div>
         )}
 
-        {/* User's Available Spotify Playlists Picker */}
+        {/* User's Synced Spotify Playlists */}
         <div className="bg-black/35 border border-white/10 rounded-2xl p-4 space-y-2.5">
           <h3 className="font-display text-sm font-semibold text-white flex items-center gap-2">
-            <Music className="w-4 h-4 text-amber-400" />
-            <span>Select Active Spotify Playlist ({playlists.length})</span>
+            <Music style={{ color: themePalette.lightHex }} className="w-4 h-4" />
+            <span>Your Spotify Playlists ({playlists.length})</span>
           </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-1">
             {playlists.map((pl) => {
               const isSelected = pl.id === activePlaylistId;
               return (
@@ -163,18 +178,31 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
                     onSelectPlaylist(pl.id);
                     onClose();
                   }}
-                  className={`px-3.5 py-2.5 rounded-xl flex items-center justify-between gap-2 text-left transition-all ${
+                  style={
                     isSelected
-                      ? 'bg-amber-500/25 border border-amber-400/60 text-white'
-                      : 'glass-button text-white/80 hover:text-white'
+                      ? {
+                          backgroundColor: themePalette.softBgRgba,
+                          borderColor: themePalette.borderRgba,
+                        }
+                      : undefined
+                  }
+                  className={`px-3.5 py-2.5 rounded-xl flex items-center justify-between gap-2 text-left border transition-all ${
+                    isSelected
+                      ? 'text-white'
+                      : 'glass-button text-white/80 hover:text-white border-transparent'
                   }`}
                 >
                   <div className="min-w-0">
                     <p className="text-xs font-semibold truncate">{pl.name}</p>
-                    <p className="text-[10px] text-white/50 truncate">{pl.subtitle || `${pl.tracks.length} tracks`}</p>
+                    <p className="text-[10px] text-white/50 truncate">
+                      {pl.subtitle || `${pl.tracks.length} tracks`}
+                    </p>
                   </div>
-                  <span className="text-[11px] font-mono text-amber-300 shrink-0">
-                    {pl.tracks.length}
+                  <span
+                    style={{ color: themePalette.lightHex }}
+                    className="text-[11px] font-mono shrink-0"
+                  >
+                    Play
                   </span>
                 </button>
               );
@@ -182,101 +210,29 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Option 1: Login to Spotify Account via OAuth 2.0 PKCE or Token */}
-          <div className="bg-black/35 border border-white/10 rounded-2xl p-4 space-y-3">
-            <h3 className="font-display text-sm font-semibold text-white">
-              01. Login with Your Spotify Account (OAuth 2.0 PKCE)
-            </h3>
-            <p className="text-xs text-white/60">
-              Sign in with any Spotify account to fetch all your personal & collaborative playlists. Redirect URI:
-            </p>
-            <div className="p-2 rounded-xl bg-black/50 border border-white/10 font-mono text-[11px] text-amber-300 break-all select-all">
-              {callbackUrl}
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="spotify-client-id" className="block text-xs text-white/75">
-                Spotify App Client ID (Optional if configured in .env)
-              </label>
-              <input
-                id="spotify-client-id"
-                type="text"
-                placeholder="Paste Spotify Client ID..."
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-xs font-mono text-white focus:outline-none focus:border-amber-400"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={handleOAuthClick}
-              disabled={isLoading}
-              className="w-full min-h-[40px] px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#12100e] font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
-            >
-              <ExternalLink className="w-4 h-4" />
-              <span>Login with Spotify Popup</span>
-            </button>
-
-            <form onSubmit={handleTokenSubmit} className="pt-2 border-t border-white/10 space-y-2">
-              <label htmlFor="spotify-bearer-token" className="block text-xs text-white/75">
-                Or Paste Your Spotify Web API Access Token
-              </label>
-              <div className="flex gap-2">
-                <input
-                  id="spotify-bearer-token"
-                  type="password"
-                  placeholder="BQD..."
-                  value={accessTokenInput}
-                  onChange={(e) => setAccessTokenInput(e.target.value)}
-                  className="flex-1 px-3 py-1.5 rounded-xl bg-black/50 border border-white/15 text-xs font-mono text-white focus:outline-none focus:border-amber-400"
-                />
-                <button
-                  type="submit"
-                  className="glass-button min-h-[36px] px-3 py-1.5 rounded-xl text-xs font-medium text-amber-300 whitespace-nowrap"
-                >
-                  Sync Account
-                </button>
-              </div>
-            </form>
-          </div>
-
-          {/* Option 2: Load Any Spotify Playlist by URL or ID */}
-          <form
-            onSubmit={handleAddPlaylistSubmit}
-            className="bg-black/35 border border-white/10 rounded-2xl p-4 flex flex-col justify-between space-y-3"
+        {/* Optional Quick Playlist Link Loader */}
+        <form
+          onSubmit={handleAddPlaylistSubmit}
+          className="bg-black/35 border border-white/10 rounded-2xl p-3.5 flex items-center gap-2"
+        >
+          <input
+            id="spotify-playlist-url-input"
+            type="text"
+            placeholder="Or paste any Spotify playlist link..."
+            value={playlistUrlInput}
+            onChange={(e) => setPlaylistUrlInput(e.target.value)}
+            className="flex-1 px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-xs text-white focus:outline-none"
+          />
+          <button
+            type="submit"
+            disabled={isLoading}
+            style={{ color: themePalette.lightHex }}
+            className="glass-button px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center gap-1.5 shrink-0"
           >
-            <div className="space-y-2.5">
-              <h3 className="font-display text-sm font-semibold text-white">
-                02. Load Any Spotify Playlist by Link or ID
-              </h3>
-              <p className="text-xs text-white/60">
-                Paste any Spotify playlist link or ID from any user account to load its tracks, album covers, and YouTube TV screen grabs.
-              </p>
-              <div className="space-y-1.5 pt-1">
-                <label htmlFor="spotify-playlist-url-input" className="block text-xs text-white/75">
-                  Spotify Playlist URL or ID
-                </label>
-                <input
-                  id="spotify-playlist-url-input"
-                  type="text"
-                  placeholder="https://open.spotify.com/playlist/..."
-                  value={playlistUrlInput}
-                  onChange={(e) => setPlaylistUrlInput(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="glass-button w-full min-h-[40px] px-4 py-2 rounded-xl text-amber-300 font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
-            >
-              <PlusCircle className="w-4 h-4" />
-              <span>Load Spotify Playlist</span>
-            </button>
-          </form>
-        </div>
+            <PlusCircle className="w-4 h-4" />
+            <span>Add</span>
+          </button>
+        </form>
       </div>
     </div>
   );

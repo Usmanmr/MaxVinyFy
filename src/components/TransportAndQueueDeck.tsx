@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect, useRef, useState } from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import {
   Play,
   Pause,
@@ -12,6 +12,7 @@ import {
   Mic2,
   Flame,
   Zap,
+  Smartphone,
 } from 'lucide-react';
 import {
   formatDuration,
@@ -38,6 +39,7 @@ interface TransportAndQueueDeckProps {
   spotifyConnected: boolean;
   spotifyUserLabel: string;
   onOpenSpotifyModal: () => void;
+  onOpenAndroidModal: () => void;
   onSelectPlaylist: (playlistId: string) => void;
   onTogglePlay: () => void;
   onStop: () => void;
@@ -64,6 +66,7 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
   spotifyConnected,
   spotifyUserLabel,
   onOpenSpotifyModal,
+  onOpenAndroidModal,
   onSelectPlaylist,
   onTogglePlay,
   onStop,
@@ -82,8 +85,14 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
       ? Math.min(1, Math.max(0, currentTimeSec / activeTrack.durationSec))
       : 0;
 
-  // Natural physics-based spring-damper + ballistic decay state for Left and Right VU meter channels
-  const [animatedVu, setAnimatedVu] = useState<{
+  // Direct DOM refs for physics-based VU meters so we don't trigger 60fps React VDOM re-renders
+  const vuPanelRef = useRef<HTMLDivElement | null>(null);
+  const leftBarRef = useRef<HTMLDivElement | null>(null);
+  const rightBarRef = useRef<HTMLDivElement | null>(null);
+  const leftPeakRef = useRef<HTMLDivElement | null>(null);
+  const rightPeakRef = useRef<HTMLDivElement | null>(null);
+
+  const physicsStateRef = useRef<{
     left: VuChannelPhysicsState;
     right: VuChannelPhysicsState;
   }>({
@@ -107,41 +116,66 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
     bpmRef.current = activeTrack.bpm || 110;
   }, [activeTrack.bpm]);
 
-  // 60fps physics simulation loop with natural decay & slight beat-drop bounce
+  // Lightweight direct-DOM physics loop: runs when playing or settling, pauses completely at rest
   useEffect(() => {
     let rafId = 0;
     let lastTime = performance.now();
 
     const tickPhysics = (now: number) => {
-      const dtSec = Math.min(0.04, Math.max(0.005, (now - lastTime) / 1000));
+      const dtSec = Math.min(0.05, Math.max(0.008, (now - lastTime) / 1000));
       lastTime = now;
 
-      // Modulate target with beat-drop envelope when playing so beats visibly trigger spring bounce
       let targetLeft = targetVuRef.current.left;
       let targetRight = targetVuRef.current.right;
 
       if (isPlayingRef.current) {
         const beatPeriodSec = 60 / Math.max(70, bpmRef.current);
         const beatPhase = ((now / 1000) % beatPeriodSec) / beatPeriodSec;
-        // Sharp beat transient at phase < 0.18 followed by a sudden drop so the VU meter bounces
         const beatEnvelope = beatPhase < 0.18 ? 0.22 : -0.14;
         targetLeft = Math.max(0.08, Math.min(0.98, targetLeft + beatEnvelope));
         targetRight = Math.max(0.08, Math.min(0.98, targetRight + beatEnvelope * 0.92));
+      } else {
+        targetLeft = 0.12;
+        targetRight = 0.12;
       }
 
-      setAnimatedVu((prev) => ({
-        left: stepVuMeterPhysics(prev.left, targetLeft, dtSec),
-        right: stepVuMeterPhysics(prev.right, targetRight, dtSec),
-      }));
+      const nextLeft = stepVuMeterPhysics(physicsStateRef.current.left, targetLeft, dtSec);
+      const nextRight = stepVuMeterPhysics(physicsStateRef.current.right, targetRight, dtSec);
+      physicsStateRef.current = { left: nextLeft, right: nextRight };
 
-      rafId = window.requestAnimationFrame(tickPhysics);
+      if (leftBarRef.current) {
+        leftBarRef.current.style.width = `${Math.round(nextLeft.level * 100)}%`;
+      }
+      if (rightBarRef.current) {
+        rightBarRef.current.style.width = `${Math.round(nextRight.level * 100)}%`;
+      }
+      if (leftPeakRef.current) {
+        leftPeakRef.current.style.left = `${Math.min(98, Math.round(nextLeft.peakHold * 100))}%`;
+      }
+      if (rightPeakRef.current) {
+        rightPeakRef.current.style.left = `${Math.min(98, Math.round(nextRight.peakHold * 100))}%`;
+      }
+      if (vuPanelRef.current) {
+        vuPanelRef.current.dataset.vuLeft = String(nextLeft.level);
+        vuPanelRef.current.dataset.vuRight = String(nextRight.level);
+      }
+
+      // Only continue RAF loop if playing or still settling toward idle rest
+      const isSettled =
+        !isPlayingRef.current &&
+        Math.abs(nextLeft.level - targetLeft) < 0.005 &&
+        Math.abs(nextLeft.velocity) < 0.01;
+
+      if (!isSettled) {
+        rafId = window.requestAnimationFrame(tickPhysics);
+      }
     };
 
     rafId = window.requestAnimationFrame(tickPhysics);
     return () => window.cancelAnimationFrame(rafId);
-  }, []);
+  }, [isPlaying, vuLevels]);
 
-  // Deterministic acoustic waveform profile per track, modulated live by physics-decayed animatedVu
+  // Deterministic acoustic waveform profile per track (32 bars for lightweight DOM)
   const baseWaveHeights = useMemo(() => {
     const seedStr = `${activeTrack.id}-${activeTrack.title}`;
     let hash = 2166136261;
@@ -150,11 +184,11 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
       hash = Math.imul(hash, 16777619);
     }
     const bars: number[] = [];
-    const totalBars = 52;
+    const totalBars = 32;
     for (let i = 0; i < totalBars; i++) {
       const sinWave = Math.sin((i / totalBars) * Math.PI) * 0.55;
       const pseudoRand = (((hash >>> (i % 16)) & 0xff) / 255) * 0.45;
-      bars.push(Math.max(0.18, Math.min(1, sinWave + pseudoRand)));
+      bars.push(Math.max(0.2, Math.min(1, sinWave + pseudoRand)));
     }
     return bars;
   }, [activeTrack.id, activeTrack.title]);
@@ -174,7 +208,7 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
       aria-label="Playback Controls and Soundwave Deck"
       className="glass-panel relative flex flex-col justify-between rounded-3xl px-4 sm:px-5 py-4 select-none w-full lg:h-full overflow-hidden gap-3 lg:gap-0"
     >
-      {/* Top Row: Active Song Readout on Left + Time, Playlist Selector & Spotify Account Login Button on Right */}
+      {/* Top Row: Active Song Readout on Left + Time, Playlist Selector, Spotify Login & Android App Install on Right */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 shrink-0 w-full">
         <div className="min-w-0 w-full sm:flex-1">
           <h2 className="font-display text-base lg:text-lg font-bold text-white truncate">
@@ -186,7 +220,7 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center justify-between sm:justify-end gap-2.5 shrink-0 w-full sm:w-auto">
+        <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 w-full sm:w-auto">
           <div
             style={{ color: themePalette.lightHex }}
             className="font-mono tabular-nums text-xs lg:text-sm"
@@ -202,7 +236,7 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
             id="playlist-select"
             value={activePlaylist.id}
             onChange={(e) => onSelectPlaylist(e.target.value)}
-            className="glass-button min-h-[36px] max-w-[160px] sm:max-w-[210px] text-xs font-medium text-white rounded-xl px-3 py-1.5 focus:outline-none truncate"
+            className="glass-button min-h-[36px] max-w-[145px] sm:max-w-[195px] text-xs font-medium text-white rounded-xl px-2.5 py-1.5 focus:outline-none truncate"
           >
             {playlists.map((pl) => (
               <option key={pl.id} value={pl.id} className="bg-[#181411] text-white">
@@ -211,15 +245,16 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
             ))}
           </select>
 
-          {/* Icon-Only Spotify Account Login & Playlist Browser Button */}
+          {/* 1-Click Spotify Account Login & Playlist Browser Button */}
           <button
+            id="spotify-connect-btn"
             type="button"
             onClick={onOpenSpotifyModal}
             aria-label="Connect Spotify Account and Select Playlist"
             title={
               spotifyConnected
-                ? `Spotify Connected (${spotifyUserLabel}) — Click to switch account or browse playlists`
-                : 'Login to Spotify Account'
+                ? `Spotify Connected (${spotifyUserLabel}) — Click to switch playlist`
+                : 'Log in to Spotify Account (1-Click)'
             }
             style={
               !spotifyConnected
@@ -235,6 +270,19 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
             <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current" aria-hidden="true">
               <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm4.586 14.424c-.18.295-.563.387-.857.207-2.35-1.434-5.305-1.76-8.786-.963-.335.077-.67-.133-.746-.469-.077-.334.132-.67.469-.745 3.809-.87 7.076-.496 9.713 1.115.293.18.386.563.207.855zm1.224-2.722c-.226.367-.706.482-1.072.257-2.687-1.652-6.785-2.131-9.965-1.166-.413.127-.848-.106-.973-.517-.125-.413.108-.848.52-.973 3.632-1.102 8.147-.568 11.234 1.328.366.226.48.707.256 1.071zm.105-2.835C14.692 8.95 9.375 8.775 6.297 9.71c-.493.15-1.016-.129-1.166-.623-.148-.495.13-1.015.625-1.166 3.532-1.073 9.404-.866 13.115 1.337.445.264.59.838.327 1.282-.264.443-.838.59-1.283.327z" />
             </svg>
+          </button>
+
+          {/* Install Native Android App Button */}
+          <button
+            id="android-install-btn"
+            type="button"
+            onClick={onOpenAndroidModal}
+            aria-label="Install Android App"
+            title="Install Native Android App"
+            style={{ color: themePalette.lightHex }}
+            className="glass-button w-9 h-9 rounded-xl flex items-center justify-center hover:opacity-90 transition-all shrink-0"
+          >
+            <Smartphone className="w-4 h-4" />
           </button>
         </div>
       </div>
@@ -263,9 +311,10 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
         {/* 2. Below-Timeline VU Meter & Soundwave Area (Physics-Based Decay + Album Art Dominant Color) */}
         <div
           id="vu-meter-panel"
+          ref={vuPanelRef}
           data-dominant-color={themePalette.primaryHex}
-          data-vu-left={animatedVu.left.level}
-          data-vu-right={animatedVu.right.level}
+          data-vu-left={physicsStateRef.current.left.level}
+          data-vu-right={physicsStateRef.current.right.level}
           aria-label="Interactive Song Soundwave and Physics VU Meter"
           className="w-full rounded-2xl bg-black/40 border border-white/10 px-3.5 py-2.5 flex flex-col gap-2.5"
         >
@@ -274,10 +323,8 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
             {baseWaveHeights.map((baseH, i) => {
               const barRatio = i / baseWaveHeights.length;
               const isPlayed = barRatio <= progressRatio;
-              const isNearPlayhead = Math.abs(barRatio - progressRatio) < 0.035;
-              const channelLevel = i % 2 === 0 ? animatedVu.left.level : animatedVu.right.level;
-              const liveBoost = (channelLevel - 0.1) * 0.5;
-              const heightPct = Math.max(16, Math.min(100, Math.round((baseH + liveBoost) * 100)));
+              const isNearPlayhead = Math.abs(barRatio - progressRatio) < 0.04;
+              const heightPct = Math.max(18, Math.min(100, Math.round(baseH * 100)));
 
               return (
                 <button
@@ -309,8 +356,9 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
             <div className="relative h-2 w-full bg-white/10 rounded-full overflow-hidden">
               <div
                 id="vu-bar-left"
+                ref={leftBarRef}
                 style={{
-                  width: `${Math.round(animatedVu.left.level * 100)}%`,
+                  width: `${Math.round(physicsStateRef.current.left.level * 100)}%`,
                   background: vuGradientStyle,
                   boxShadow: `0 0 10px ${themePalette.glowRgba}`,
                 }}
@@ -318,9 +366,10 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
               />
               {/* Ballistic Peak-Hold Bounce Marker */}
               <div
+                ref={leftPeakRef}
                 aria-hidden="true"
                 style={{
-                  left: `${Math.min(98, Math.round(animatedVu.left.peakHold * 100))}%`,
+                  left: `${Math.min(98, Math.round(physicsStateRef.current.left.peakHold * 100))}%`,
                   backgroundColor: themePalette.vuPeakHex,
                 }}
                 className="pointer-events-none absolute top-0 bottom-0 w-1 rounded-full shadow"
@@ -331,8 +380,9 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
             <div className="relative h-2 w-full bg-white/10 rounded-full overflow-hidden">
               <div
                 id="vu-bar-right"
+                ref={rightBarRef}
                 style={{
-                  width: `${Math.round(animatedVu.right.level * 100)}%`,
+                  width: `${Math.round(physicsStateRef.current.right.level * 100)}%`,
                   background: vuGradientStyle,
                   boxShadow: `0 0 10px ${themePalette.glowRgba}`,
                 }}
@@ -340,9 +390,10 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
               />
               {/* Ballistic Peak-Hold Bounce Marker */}
               <div
+                ref={rightPeakRef}
                 aria-hidden="true"
                 style={{
-                  left: `${Math.min(98, Math.round(animatedVu.right.peakHold * 100))}%`,
+                  left: `${Math.min(98, Math.round(physicsStateRef.current.right.peakHold * 100))}%`,
                   backgroundColor: themePalette.vuPeakHex,
                 }}
                 className="pointer-events-none absolute top-0 bottom-0 w-1 rounded-full shadow"

@@ -546,3 +546,91 @@ export function computeDominantAccentFromRgbSamples(
   };
 }
 
+export interface TvVisualChannelTheme {
+  index: number;
+  id: string;
+  code: string;
+  name: string;
+  dialAngleDeg: number;
+  filterCss: string;
+  tintOverlayRgba: string;
+  videoSource: 'primary' | 'secondary' | 'lyric';
+  frameOffset: number;
+}
+
+export const TV_VISUAL_CHANNELS: TvVisualChannelTheme[] = [
+  {
+    index: 0,
+    id: 'ch-official',
+    code: 'CH 01',
+    name: 'Official MV',
+    dialAngleDeg: -72,
+    filterCss: 'contrast(1.05) saturate(1.12)',
+    tintOverlayRgba: 'rgba(0, 0, 0, 0)',
+    videoSource: 'primary',
+    frameOffset: 0,
+  },
+  {
+    index: 1,
+    id: 'ch-live',
+    code: 'CH 02',
+    name: 'Live Broadcast',
+    dialAngleDeg: -36,
+    filterCss: 'contrast(1.18) saturate(1.3) hue-rotate(-10deg)',
+    tintOverlayRgba: 'rgba(245, 158, 11, 0.1)',
+    videoSource: 'secondary',
+    frameOffset: 1,
+  },
+  {
+    index: 2,
+    id: 'ch-vhs',
+    code: 'CH 03',
+    name: '80s VHS Tape',
+    dialAngleDeg: 0,
+    filterCss: 'sepia(0.45) contrast(1.24) saturate(1.4) brightness(0.95)',
+    tintOverlayRgba: 'rgba(217, 119, 6, 0.14)',
+    videoSource: 'primary',
+    frameOffset: 2,
+  },
+  {
+    index: 3,
+    id: 'ch-neon',
+    code: 'CH 04',
+    name: 'Neon Synth',
+    dialAngleDeg: 36,
+    filterCss: 'contrast(1.28) saturate(1.7) hue-rotate(32deg)',
+    tintOverlayRgba: 'rgba(14, 165, 233, 0.15)',
+    videoSource: 'lyric',
+    frameOffset: 3,
+  },
+  {
+    index: 4,
+    id: 'ch-noir',
+    code: 'CH 05',
+    name: 'Studio Noir B&W',
+    dialAngleDeg: 72,
+    filterCss: 'grayscale(0.95) contrast(1.36) brightness(1.04)',
+    tintOverlayRgba: 'rgba(255, 255, 255, 0.04)',
+    videoSource: 'secondary',
+    frameOffset: 4,
+  },
+];
+
+/**
+ * Returns the YouTube visual theme channel configuration for a given dial index.
+ */
+export function getTvChannelTheme(channelIndex: number): TvVisualChannelTheme {
+  const total = TV_VISUAL_CHANNELS.length;
+  const safeIdx = ((Math.floor(channelIndex) % total) + total) % total;
+  return TV_VISUAL_CHANNELS[safeIdx];
+}
+
+/**
+ * Steps the side-mounted TV channel dial to the next YouTube visual theme channel.
+ */
+export function getNextTvChannelIndex(currentChannelIndex: number): number {
+  const total = TV_VISUAL_CHANNELS.length;
+  return (((Math.floor(currentChannelIndex) + 1) % total) + total) % total;
+}
+
+

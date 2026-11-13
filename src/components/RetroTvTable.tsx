@@ -4,6 +4,9 @@ import {
   selectActiveTvFrame,
   formatDuration,
   getUpNextQueue,
+  getTvChannelTheme,
+  getNextTvChannelIndex,
+  TV_VISUAL_CHANNELS,
   type TrackItem,
   type YouTubeGrabFrame,
   type PlaylistPack,
@@ -30,9 +33,12 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
   themePalette,
   onResolvedTrackMetadata,
 }) => {
+  const [channelIndex, setChannelIndex] = useState<number>(0);
   const [manualFrameIndex, setManualFrameIndex] = useState<number | null>(null);
   const [liveFrames, setLiveFrames] = useState<YouTubeGrabFrame[] | null>(null);
   const [resolvedVideoId, setResolvedVideoId] = useState<string>(track.youtubeVideoId);
+  const [secondaryVideoId, setSecondaryVideoId] = useState<string>(track.youtubeVideoId);
+  const [lyricVideoId, setLyricVideoId] = useState<string>(track.youtubeVideoId);
   const [showLiveEmbed, setShowLiveEmbed] = useState(false);
   const [crtScanlinesOn, setCrtScanlinesOn] = useState(true);
   const [channelStatic, setChannelStatic] = useState(false);
@@ -42,11 +48,15 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
   const lastSyncedTimeRef = useRef<number>(currentTimeSec);
   const initialEmbedStartRef = useRef<number>(Math.floor(currentTimeSec));
 
-  // Automatically read the song title & artist, search YouTube on the backend, and play its video grabs on the TV
+  const activeChannelTheme = getTvChannelTheme(channelIndex);
+
+  // Automatically read the song title & artist, search YouTube on the backend, and load multi-channel visual themes
   useEffect(() => {
     setManualFrameIndex(null);
     setLiveFrames(null);
     setResolvedVideoId(track.youtubeVideoId);
+    setSecondaryVideoId(track.youtubeVideoId);
+    setLyricVideoId(track.youtubeVideoId);
     setImgError(false);
     initialEmbedStartRef.current = Math.floor(currentTimeSec);
 
@@ -66,9 +76,10 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
 
         if (Array.isArray(data.frames) && data.frames.length > 0) {
           setLiveFrames(data.frames);
-          if (data.videoId) {
-            setResolvedVideoId(data.videoId);
-          }
+          if (data.videoId) setResolvedVideoId(data.videoId);
+          if (data.secondaryVideoId) setSecondaryVideoId(data.secondaryVideoId);
+          if (data.lyricVideoId) setLyricVideoId(data.lyricVideoId);
+
           if (onResolvedTrackMetadata) {
             onResolvedTrackMetadata(
               track.id,
@@ -116,31 +127,39 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
     lastSyncedTimeRef.current = currentTimeSec;
   }, [currentTimeSec, showLiveEmbed]);
 
+  // Pick active YouTube video ID for the currently tuned channel theme
+  const activeChannelVideoId =
+    activeChannelTheme.videoSource === 'secondary'
+      ? secondaryVideoId
+      : activeChannelTheme.videoSource === 'lyric'
+      ? lyricVideoId
+      : resolvedVideoId;
+
   const effectiveTrack: TrackItem =
     liveFrames && liveFrames.length > 0
-      ? { ...track, youtubeVideoId: resolvedVideoId, tvFrames: liveFrames }
-      : { ...track, youtubeVideoId: resolvedVideoId };
+      ? { ...track, youtubeVideoId: activeChannelVideoId, tvFrames: liveFrames }
+      : { ...track, youtubeVideoId: activeChannelVideoId };
 
   const totalFrames = Math.max(1, effectiveTrack.tvFrames.length);
 
-  // Strictly synchronize TV frame to exact song time in the control section
-  const syncedSelection = selectActiveTvFrame(effectiveTrack, currentTimeSec, manualFrameIndex);
-  const effectiveIndex = syncedSelection.frameIndex;
-  const activeFrame = syncedSelection.frame;
+  // Synchronize TV frame to exact song time + active channel theme offset
+  const baseSelection = selectActiveTvFrame(effectiveTrack, currentTimeSec, manualFrameIndex);
+  const channelAdjustedIndex =
+    (baseSelection.frameIndex + activeChannelTheme.frameOffset) % totalFrames;
+  const activeFrame =
+    effectiveTrack.tvFrames[channelAdjustedIndex] || baseSelection.frame;
 
   const triggerStaticBlip = () => {
     setChannelStatic(true);
     setImgError(false);
-    window.setTimeout(() => setChannelStatic(false), 160);
+    window.setTimeout(() => setChannelStatic(false), 140);
   };
 
-  const handleCycleChannelGrab = () => {
+  // Side-mounted rotary channel dial handler: switches between the 5 YouTube visual theme channels
+  const handleTurnChannelDial = () => {
     triggerStaticBlip();
-    setShowLiveEmbed(false);
-    setManualFrameIndex((prev) => {
-      const base = prev === null ? effectiveIndex : prev;
-      return (base + 1) % totalFrames;
-    });
+    initialEmbedStartRef.current = Math.floor(currentTimeSec);
+    setChannelIndex((prev) => getNextTvChannelIndex(prev));
   };
 
   const handleToggleLiveEmbed = () => {
@@ -163,6 +182,8 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
       if (Array.isArray(data.frames) && data.frames.length > 0) {
         setLiveFrames(data.frames);
         if (data.videoId) setResolvedVideoId(data.videoId);
+        if (data.secondaryVideoId) setSecondaryVideoId(data.secondaryVideoId);
+        if (data.lyricVideoId) setLyricVideoId(data.lyricVideoId);
       }
     } catch {
       // ignore
@@ -179,7 +200,7 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
         aria-hidden="true"
         className="pointer-events-none absolute -top-5 left-1/2 -translate-x-1/2 flex flex-col items-center z-10"
       >
-        <svg viewBox="0 0 180 26" className="w-36 h-5 overflow-visible drop-shadow">
+        <svg viewBox="0 0 180 26" className="w-36 h-5 overflow-visible">
           <line
             x1="90"
             y1="24"
@@ -213,6 +234,8 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
       <div
         id="retro-tv-chassis"
         data-synced-time={Math.floor(currentTimeSec)}
+        data-tv-channel={activeChannelTheme.code}
+        data-tv-channel-theme={activeChannelTheme.name}
         data-tv-outer-color={themePalette.tvCabinetBorderHex}
         style={{
           background: themePalette.tvCabinetGradient,
@@ -220,74 +243,99 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
         }}
         className="flex-1 min-h-[250px] lg:min-h-0 rounded-3xl border-2 p-3 shadow-[0_22px_50px_rgba(0,0,0,0.42)] flex gap-3 items-stretch relative z-10 transition-colors duration-500"
       >
-        {/* Left: Classic 4:3 Curved Glass CRT Screen with Slight Inner Black Glow Around Edges */}
+        {/* Left: Classic 4:3 Curved Glass CRT Screen with YouTube Visual Theme Filter & Inner Black Glow */}
         <div
           id="retro-tv-screen"
           className="relative flex-1 min-h-[220px] lg:min-h-0 lg:h-full rounded-2xl overflow-hidden bg-[#0b0a09] border-4 border-[#141210] shadow-inner"
         >
-          {showLiveEmbed ? (
-            <iframe
-              ref={ytIframeRef}
-              title={`YouTube broadcast for ${track.title}`}
-              src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(
-                resolvedVideoId
-              )}?enablejsapi=1&autoplay=${isPlaying ? 1 : 0}&start=${
-                initialEmbedStartRef.current
-              }&mute=1&controls=1&rel=0`}
-              onLoad={() => {
-                sendYouTubeCommand('seekTo', [Math.floor(currentTimeSec), true]);
-                sendYouTubeCommand(isPlaying ? 'playVideo' : 'pauseVideo');
-              }}
-              className="w-full h-full border-0"
-              allow="autoplay; encrypted-media"
-            />
-          ) : (
-            <>
-              {!imgError && activeFrame.imageUrl ? (
-                <img
-                  src={activeFrame.imageUrl}
-                  alt={activeFrame.caption}
-                  referrerPolicy="no-referrer"
-                  onError={() => setImgError(true)}
-                  className={`w-full h-full object-cover transition-all duration-500 ${
-                    isPlaying ? 'scale-[1.03]' : 'scale-100'
-                  } ${channelStatic ? 'opacity-25 blur-xs' : 'opacity-95'}`}
-                />
-              ) : (
-                <div className="w-full h-full bg-gradient-to-br from-[#2a1f18] via-[#171310] to-[#0d0b0a] flex flex-col items-center justify-center p-3 text-center">
-                  <Tv style={{ color: themePalette.lightHex }} className="w-7 h-7 mb-1" />
-                  <p className="text-xs font-semibold text-[#f5efe6] truncate max-w-full">{track.title}</p>
-                </div>
-              )}
+          {/* Visual Theme Filter Container */}
+          <div
+            style={{ filter: activeChannelTheme.filterCss }}
+            className="w-full h-full relative transition-all duration-300"
+          >
+            {showLiveEmbed ? (
+              <iframe
+                key={`${activeChannelVideoId}-${activeChannelTheme.id}`}
+                ref={ytIframeRef}
+                title={`YouTube broadcast for ${track.title} (${activeChannelTheme.name})`}
+                src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(
+                  activeChannelVideoId
+                )}?enablejsapi=1&autoplay=${isPlaying ? 1 : 0}&start=${
+                  initialEmbedStartRef.current
+                }&mute=1&controls=1&rel=0`}
+                onLoad={() => {
+                  sendYouTubeCommand('seekTo', [Math.floor(currentTimeSec), true]);
+                  sendYouTubeCommand(isPlaying ? 'playVideo' : 'pauseVideo');
+                }}
+                className="w-full h-full border-0"
+                allow="autoplay; encrypted-media"
+              />
+            ) : (
+              <>
+                {!imgError && activeFrame.imageUrl ? (
+                  <img
+                    src={activeFrame.imageUrl}
+                    alt={activeFrame.caption}
+                    referrerPolicy="no-referrer"
+                    onError={() => setImgError(true)}
+                    className={`w-full h-full object-cover transition-opacity duration-300 ${
+                      channelStatic ? 'opacity-25' : 'opacity-95'
+                    }`}
+                  />
+                ) : (
+                  <div className="w-full h-full bg-gradient-to-br from-[#2a1f18] via-[#171310] to-[#0d0b0a] flex flex-col items-center justify-center p-3 text-center">
+                    <Tv style={{ color: themePalette.lightHex }} className="w-7 h-7 mb-1" />
+                    <p className="text-xs font-semibold text-[#f5efe6] truncate max-w-full">
+                      {track.title}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
 
-              {/* Subtle Glass Gloss & Time-Synced Song Overlay on CRT */}
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent p-2.5 flex items-end justify-between gap-2 z-10">
-                <p className="text-xs font-medium text-white/95 truncate">
-                  {track.title} ·{' '}
-                  <span style={{ color: themePalette.lightHex }}>{track.artist}</span>
-                </p>
-                <span
-                  style={{ color: themePalette.lightHex }}
-                  className="font-mono text-[11px] shrink-0"
-                >
-                  {formatDuration(currentTimeSec)}
-                </span>
-              </div>
-            </>
+            {/* Channel Theme Color Tint Overlay */}
+            <div
+              aria-hidden="true"
+              style={{ backgroundColor: activeChannelTheme.tintOverlayRgba }}
+              className="pointer-events-none absolute inset-0"
+            />
+          </div>
+
+          {/* CRT On-Screen Display (OSD) Channel Theme Badge in Top-Left Corner */}
+          <div className="pointer-events-none absolute top-2.5 left-2.5 z-10 flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-black/70 border border-white/10">
+            <span
+              style={{ color: themePalette.lightHex }}
+              className="font-mono text-[10px] font-bold tracking-wider"
+            >
+              {activeChannelTheme.code}
+            </span>
+            <span className="text-[10px] font-medium text-white/80">
+              {activeChannelTheme.name}
+            </span>
+          </div>
+
+          {/* Time-Synced Song Overlay on CRT Bottom */}
+          {!showLiveEmbed && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent p-2.5 flex items-end justify-between gap-2 z-10">
+              <p className="text-xs font-medium text-white/95 truncate">
+                {track.title} ·{' '}
+                <span style={{ color: themePalette.lightHex }}>{track.artist}</span>
+              </p>
+              <span
+                style={{ color: themePalette.lightHex }}
+                className="font-mono text-[11px] shrink-0"
+              >
+                {formatDuration(currentTimeSec)}
+              </span>
+            </div>
           )}
 
-          {/* Animated CRT Scanlines & Rolling Cathode Beam Overlay */}
+          {/* Lightweight Static CRT Scanline Mesh */}
           {crtScanlinesOn && (
-            <>
-              <div
-                aria-hidden="true"
-                className="crt-scanlines pointer-events-none absolute -inset-6 z-10"
-              />
-              <div
-                aria-hidden="true"
-                className="crt-refresh-beam pointer-events-none absolute inset-x-0 top-0 h-10 z-10"
-              />
-            </>
+            <div
+              aria-hidden="true"
+              className="crt-scanlines pointer-events-none absolute inset-0 z-10"
+            />
           )}
 
           {/* Slight Inner Glow in Black Color Around the Edges of the TV Screen */}
@@ -298,24 +346,64 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
           />
         </div>
 
-        {/* Right: Vintage TV Rotary Dial & Icon-Only Glass Buttons */}
-        <div className="w-14 bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl p-1.5 flex flex-col justify-between items-center shrink-0">
-          <button
-            type="button"
-            onClick={handleCycleChannelGrab}
-            aria-label="Turn TV Channel Knob to Next YouTube Screen Grab"
-            title="Next YouTube Screen Grab"
-            className="w-10 h-10 rounded-full bg-[#14110e] border-2 border-white/25 active:scale-95 transition-all flex items-center justify-center shadow-sm"
-          >
-            <div
-              style={{
-                transform: `rotate(${effectiveIndex * 45}deg)`,
-                backgroundColor: themePalette.primaryHex,
-              }}
-              className="w-1.5 h-5 rounded-full transition-transform duration-200"
-            />
-          </button>
+        {/* Right: Side-Mounted Rotary Channel Dial + Icon-Only Tuner Controls */}
+        <div
+          id="retro-tv-side-mount"
+          className="w-15 bg-black/45 border border-white/10 rounded-2xl p-1.5 flex flex-col justify-between items-center shrink-0"
+        >
+          {/* Side-Mounted Rotary Channel Dial (Switches Between 5 YouTube Visual Theme Channels) */}
+          <div className="flex flex-col items-center gap-1 pt-0.5">
+            <span
+              style={{ color: themePalette.lightHex }}
+              className="font-mono text-[9px] font-bold tracking-tight"
+            >
+              {activeChannelTheme.code}
+            </span>
 
+            <button
+              id="tv-channel-dial"
+              type="button"
+              onClick={handleTurnChannelDial}
+              aria-label={`Side-Mounted TV Channel Dial — Current ${activeChannelTheme.code} ${activeChannelTheme.name}. Click to switch YouTube visual theme channel.`}
+              title={`Channel Dial: ${activeChannelTheme.code} · ${activeChannelTheme.name} (Click to switch visual theme)`}
+              className="relative w-11 h-11 rounded-full bg-gradient-to-b from-[#262320] to-[#12100e] border-2 border-white/25 active:scale-95 transition-transform flex items-center justify-center shadow-md cursor-pointer"
+            >
+              {/* 5 Channel Detent Dots Around Rotary Dial */}
+              {TV_VISUAL_CHANNELS.map((ch) => {
+                const isSelected = ch.index === channelIndex;
+                const rad = ((ch.dialAngleDeg - 90) * Math.PI) / 180;
+                const cx = 50 + Math.cos(rad) * 38;
+                const cy = 50 + Math.sin(rad) * 38;
+                return (
+                  <span
+                    key={ch.id}
+                    aria-hidden="true"
+                    style={{
+                      left: `${cx}%`,
+                      top: `${cy}%`,
+                      backgroundColor: isSelected ? themePalette.lightHex : 'rgba(255,255,255,0.28)',
+                    }}
+                    className="pointer-events-none absolute w-1 h-1 -translate-x-1/2 -translate-y-1/2 rounded-full"
+                  />
+                );
+              })}
+
+              {/* Rotary Knob Pointer Bar */}
+              <div
+                style={{
+                  transform: `rotate(${activeChannelTheme.dialAngleDeg}deg)`,
+                }}
+                className="w-full h-full flex items-start justify-center pt-1.5 transition-transform duration-200"
+              >
+                <div
+                  style={{ backgroundColor: themePalette.primaryHex }}
+                  className="w-1.5 h-4 rounded-full shadow"
+                />
+              </div>
+            </button>
+          </div>
+
+          {/* Compact Tuner Action Buttons */}
           <div className="flex flex-col gap-1.5 w-full items-center">
             <button
               type="button"
@@ -323,7 +411,7 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
               aria-label="Search YouTube Video Grabs for Song"
               title="Refresh YouTube Song Search"
               style={{ color: themePalette.lightHex }}
-              className="glass-button w-9 h-9 rounded-lg flex items-center justify-center transition-transform active:scale-95"
+              className="glass-button w-9 h-8 rounded-lg flex items-center justify-center transition-transform active:scale-95"
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
@@ -332,7 +420,9 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
               type="button"
               onClick={handleToggleLiveEmbed}
               aria-label={showLiveEmbed ? 'Show YouTube Screen Grabs' : 'Play Live YouTube Video'}
-              title={showLiveEmbed ? 'Show Time-Synced YouTube Grabs' : 'Play Time-Synced YouTube Video'}
+              title={
+                showLiveEmbed ? 'Show Time-Synced YouTube Grabs' : 'Play Time-Synced YouTube Video'
+              }
               style={
                 showLiveEmbed
                   ? {
@@ -341,7 +431,7 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
                     }
                   : undefined
               }
-              className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${
+              className={`w-9 h-8 rounded-lg flex items-center justify-center transition-all ${
                 showLiveEmbed ? 'shadow' : 'glass-button text-white/80'
               }`}
             >
@@ -353,7 +443,7 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
               onClick={() => setCrtScanlinesOn((v) => !v)}
               aria-label="Toggle Animated CRT Scanlines"
               aria-pressed={crtScanlinesOn}
-              title="Toggle Animated CRT Scanlines"
+              title="Toggle CRT Scanlines"
               style={
                 crtScanlinesOn
                   ? {
@@ -362,7 +452,7 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
                     }
                   : undefined
               }
-              className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${
+              className={`w-9 h-8 rounded-lg flex items-center justify-center transition-all ${
                 crtScanlinesOn ? 'glass-button' : 'glass-button text-white/40'
               }`}
             >
@@ -371,19 +461,24 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
 
             <button
               type="button"
-              onClick={() => setManualFrameIndex(null)}
+              onClick={() => {
+                setManualFrameIndex(null);
+                setChannelIndex(0);
+              }}
               aria-label="Auto-Sync YouTube Grabs"
-              title="Lock TV to Song Time"
+              title="Reset to CH 01 Official MV & Lock to Song Time"
               style={
-                manualFrameIndex === null
+                manualFrameIndex === null && channelIndex === 0
                   ? {
                       color: themePalette.lightHex,
                       borderColor: themePalette.borderRgba,
                     }
                   : undefined
               }
-              className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${
-                manualFrameIndex === null ? 'glass-button' : 'glass-button text-white/45'
+              className={`w-9 h-8 rounded-lg flex items-center justify-center transition-all ${
+                manualFrameIndex === null && channelIndex === 0
+                  ? 'glass-button'
+                  : 'glass-button text-white/45'
               }`}
             >
               <Radio className="w-3.5 h-3.5" />
@@ -394,7 +489,6 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
 
       {/* TV Stands / Feet Resting Directly on Top of the Playlist Box on Desktop with 50% Opacity Contact Shadows */}
       <div className="relative shrink-0 mb-0 lg:-mb-4 z-20 flex items-end justify-between px-10 h-3.5 lg:h-4">
-        {/* Left TV Stand Foot + 50% Opacity Contact Shadow */}
         <div className="relative flex flex-col items-center">
           <div
             style={{
@@ -405,11 +499,10 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
           />
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute -bottom-1 w-11 h-2 rounded-full bg-black/45 blur-[2.5px]"
+            className="pointer-events-none absolute -bottom-1 w-11 h-2 rounded-full bg-black/45"
           />
         </div>
 
-        {/* Right TV Stand Foot + 50% Opacity Contact Shadow */}
         <div className="relative flex flex-col items-center">
           <div
             style={{
@@ -420,7 +513,7 @@ export const RetroTvTable: React.FC<RetroTvTableProps> = ({
           />
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute -bottom-1 w-11 h-2 rounded-full bg-black/45 blur-[2.5px]"
+            className="pointer-events-none absolute -bottom-1 w-11 h-2 rounded-full bg-black/45"
           />
         </div>
       </div>
@@ -472,7 +565,6 @@ export const PlaylistQueueBox: React.FC<PlaylistQueueBoxProps> = ({
           )}
         </div>
 
-        {/* Shuffle Button Next to Next Track Button on Top of Playlist */}
         <div className="flex items-center gap-1.5 shrink-0">
           <button
             type="button"

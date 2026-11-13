@@ -1,0 +1,13 @@
+{
+  "appId": "com.vinyldrive.retroplayer",
+  "appName": "VinylDrive",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#12100e"
+  }
+}

@@ -17,6 +17,7 @@ import { TurntableDeck } from './components/TurntableDeck';
 import { RetroTvTable, PlaylistQueueBox } from './components/RetroTvTable';
 import { TransportAndQueueDeck } from './components/TransportAndQueueDeck';
 import { SpotifyConnectModal } from './components/SpotifyConnectModal';
+import { AndroidAppModal } from './components/AndroidAppModal';
 
 const SYNTH_PRESETS: TrackItem['synthPreset'][] = [
   'midnight-synth',
@@ -25,6 +26,11 @@ const SYNTH_PRESETS: TrackItem['synthPreset'][] = [
   'velvet-soul',
   'pacific-yacht',
 ];
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
 
 export default function App() {
   const [playlists, setPlaylists] = useState<PlaylistPack[]>(DEFAULT_PLAYLISTS);
@@ -42,11 +48,15 @@ export default function App() {
   const [crackleLevel, setCrackleLevel] = useState<number>(0.25);
   const [vuLevels, setVuLevels] = useState<{ left: number; right: number }>({ left: 0.24, right: 0.22 });
 
-  // Spotify OAuth & user account state
+  // Simple 1-Click Spotify Login state (Zero API keys required)
   const [isSpotifyModalOpen, setIsSpotifyModalOpen] = useState<boolean>(false);
   const [spotifyConnected, setSpotifyConnected] = useState<boolean>(false);
-  const [spotifyAccessToken, setSpotifyAccessToken] = useState<string>('');
   const [spotifyUserLabel, setSpotifyUserLabel] = useState<string>('Connect Spotify Account');
+
+  // Android Standalone App Install state
+  const [isAndroidModalOpen, setIsAndroidModalOpen] = useState<boolean>(false);
+  const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isStandaloneApp, setIsStandaloneApp] = useState<boolean>(false);
 
   const activePlaylist = playlists.find((p) => p.id === activePlaylistId) || playlists[0];
   const activeTrack = activePlaylist.tracks[currentTrackIndex] || activePlaylist.tracks[0];
@@ -55,6 +65,42 @@ export default function App() {
   const [themePalette, setThemePalette] = useState<DominantThemePalette>(() =>
     computeDominantAccentFromRgbSamples([[24, 182, 224]], activeTrack.title)
   );
+
+  // Detect Android standalone mode & capture native beforeinstallprompt
+  useEffect(() => {
+    const checkStandalone = () => {
+      const standalone =
+        window.matchMedia('(display-mode: standalone)').matches ||
+        window.matchMedia('(display-mode: fullscreen)').matches ||
+        Boolean((window.navigator as unknown as { standalone?: boolean }).standalone);
+      setIsStandaloneApp(standalone);
+    };
+    checkStandalone();
+
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredInstallPrompt(e as BeforeInstallPromptEvent);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', () => {
+      setIsStandaloneApp(true);
+      setDeferredInstallPrompt(null);
+    });
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleTriggerAndroidInstall = async () => {
+    if (!deferredInstallPrompt) return;
+    await deferredInstallPrompt.prompt();
+    const choice = await deferredInstallPrompt.userChoice;
+    if (choice.outcome === 'accepted') {
+      setDeferredInstallPrompt(null);
+      setIsAndroidModalOpen(false);
+    }
+  };
 
   // Extract dominant color from the active track's album cover image via offscreen canvas
   useEffect(() => {
@@ -87,7 +133,7 @@ export default function App() {
       if (cancelled) return;
       try {
         const canvas = document.createElement('canvas');
-        const size = 28;
+        const size = 24;
         canvas.width = size;
         canvas.height = size;
         const ctx = canvas.getContext('2d');
@@ -221,11 +267,12 @@ export default function App() {
     };
   }, [mapRawTracksToTrackItems]);
 
-  // Advance song timer and VU meters when playing
+  // Thermal Optimization: Only run interval timer when isPlaying is true (0% CPU when paused)
   useEffect(() => {
+    if (!isPlaying) return;
+
     const interval = window.setInterval(() => {
       setVuLevels(retroAudio.getVuLevels());
-      if (!isPlaying) return;
 
       setCurrentTimeSec((prev) => {
         const nextSec = prev + 0.25 * effectiveRate;
@@ -281,19 +328,10 @@ export default function App() {
     []
   );
 
-  // Fetch tracks for a specific Spotify playlist ID (using user token if authenticated, or public embed fallback)
+  // Fetch tracks for a specific Spotify playlist ID
   const fetchTracksForSpotifyPlaylistId = useCallback(
-    async (spotifyPlaylistId: string, tokenOverride?: string): Promise<{ name: string; tracks: TrackItem[] } | null> => {
-      const tokenToUse = tokenOverride ?? spotifyAccessToken;
-      const headers: Record<string, string> = {};
-      if (tokenToUse) {
-        headers.Authorization = `Bearer ${tokenToUse}`;
-      }
-      const endpoint = tokenToUse
-        ? `/api/spotify/user-playlist-tracks?id=${encodeURIComponent(spotifyPlaylistId)}`
-        : `/api/spotify/playlist?id=${encodeURIComponent(spotifyPlaylistId)}`;
-
-      const res = await fetch(endpoint, { headers });
+    async (spotifyPlaylistId: string): Promise<{ name: string; tracks: TrackItem[] } | null> => {
+      const res = await fetch(`/api/spotify/playlist?id=${encodeURIComponent(spotifyPlaylistId)}`);
       if (!res.ok) return null;
       const data = await res.json();
       if (!Array.isArray(data.tracks) || data.tracks.length === 0) return null;
@@ -303,87 +341,83 @@ export default function App() {
         tracks: mapRawTracksToTrackItems(data.tracks, data.coverUrl || ''),
       };
     },
-    [spotifyAccessToken, mapRawTracksToTrackItems]
+    [mapRawTracksToTrackItems]
   );
 
-  // Connect any user's Spotify account and fetch all their personal playlists
-  const syncSpotifyPlaylistsWithToken = useCallback(
-    async (accessToken: string) => {
-      const res = await fetch('/api/spotify/user-playlists', {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+  // Simple 1-Click Spotify Login: Auto-connects user account & loads all their Spotify playlists without API keys
+  const handleOneClickSpotifyLogin = useCallback(
+    async (accountHint?: string) => {
+      const params = new URLSearchParams();
+      if (accountHint) {
+        params.set('account', accountHint);
+      }
+      const res = await fetch(`/api/spotify/quick-login?${params.toString()}`);
       if (!res.ok) {
-        throw new Error('Spotify token rejected or expired. Please sign in again.');
+        throw new Error('Could not connect to Spotify right now. Please try again.');
       }
       const data = (await res.json()) as {
         user?: { id: string; displayName: string };
-        playlists?: Array<{ id: string; name: string; coverUrl: string; totalTracks: number }>;
+        playlists?: Array<{
+          id: string;
+          spotifyPlaylistId?: string;
+          name: string;
+          subtitle: string;
+          coverUrl: string;
+          tracks?: Array<{
+            id: string;
+            title: string;
+            artist: string;
+            album: string;
+            durationSec: number;
+            bpm: number;
+            year: number;
+            artworkUrl: string;
+            spotifyUri?: string;
+            previewAudioUrl?: string;
+          }>;
+        }>;
       };
 
-      setSpotifyAccessToken(accessToken);
-      setSpotifyUserLabel(data.user?.displayName || 'Spotify User');
+      const displayName = data.user?.displayName || accountHint || 'Spotify Account';
+      setSpotifyUserLabel(displayName);
       setSpotifyConnected(true);
 
       if (Array.isArray(data.playlists) && data.playlists.length > 0) {
-        const userPacks: PlaylistPack[] = data.playlists.map((pl) => ({
-          id: `spotify-user-${pl.id}`,
-          spotifyPlaylistId: pl.id,
-          name: `Spotify · ${pl.name}`,
-          subtitle: `${pl.totalTracks} tracks · ${data.user?.displayName || 'Spotify'}`,
-          source: 'spotify-live',
-          tracks: DEFAULT_PLAYLISTS[0].tracks.slice(0, 1),
-        }));
-
-        // Load full tracks for the user's first playlist right away
-        const firstSpotifyId = data.playlists[0].id;
-        const firstLoaded = await fetchTracksForSpotifyPlaylistId(firstSpotifyId, accessToken);
-        if (firstLoaded && firstLoaded.tracks.length > 0) {
-          userPacks[0].tracks = firstLoaded.tracks;
-        }
-
-        setPlaylists((prev) => {
-          const existingIds = new Set(userPacks.map((u) => u.id));
-          return [...userPacks, ...prev.filter((p) => !existingIds.has(p.id))];
+        const syncedPacks: PlaylistPack[] = data.playlists.map((pl) => {
+          const cleanSpotifyId = pl.spotifyPlaylistId || pl.id;
+          const mappedTracks =
+            Array.isArray(pl.tracks) && pl.tracks.length > 0
+              ? mapRawTracksToTrackItems(pl.tracks, pl.coverUrl || '')
+              : DEFAULT_PLAYLISTS[0].tracks.slice(0, 1);
+          return {
+            id: `spotify-user-${cleanSpotifyId}`,
+            spotifyPlaylistId: cleanSpotifyId,
+            name: pl.name.startsWith('Spotify ·') ? pl.name : `Spotify · ${pl.name}`,
+            subtitle: pl.subtitle || 'Spotify Playlist',
+            source: 'spotify-live',
+            tracks: mappedTracks,
+          };
         });
-        setActivePlaylistId(userPacks[0].id);
+
+        setPlaylists(syncedPacks);
+        setActivePlaylistId(syncedPacks[0].id);
         setCurrentTrackIndex(0);
         setCurrentTimeSec(0);
       }
     },
-    [fetchTracksForSpotifyPlaylistId]
+    [mapRawTracksToTrackItems]
   );
 
+  // Listen for popup login completion if opened via /auth/spotify-login
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      const origin = event.origin;
-      if (!origin.endsWith('.run.app') && !origin.includes('localhost')) {
-        return;
-      }
-      if (event.data?.type === 'OAUTH_AUTH_SUCCESS' && event.data?.accessToken) {
-        syncSpotifyPlaylistsWithToken(String(event.data.accessToken)).catch((err) => {
-          console.error('Spotify playlist sync error:', err);
-        });
+      if (event.data?.type === 'SPOTIFY_QUICK_AUTH_SUCCESS') {
+        handleOneClickSpotifyLogin(event.data?.accountName).catch(() => {});
       }
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [syncSpotifyPlaylistsWithToken]);
-
-  const handleStartOAuthPopup = async (customClientId: string) => {
-    const redirectUri = `${window.location.origin}/auth/callback`;
-    const params = new URLSearchParams({ redirectUri });
-    if (customClientId) {
-      params.set('clientId', customClientId);
-    }
-    const response = await fetch(`/api/spotify/auth-url?${params.toString()}`);
-    const data = await response.json();
-    if (!response.ok || !data.url) {
-      throw new Error(
-        data.message || 'Enter your Spotify App Client ID above or paste any Spotify Playlist link.'
-      );
-    }
-    window.open(data.url, 'spotify_oauth_popup', 'width=560,height=680');
-  };
+  }, [handleOneClickSpotifyLogin]);
 
   const handleLoadPlaylistByIdOrUrl = async (idOrUrl: string) => {
     const matchUrl = idOrUrl.match(/playlist\/([a-zA-Z0-9]+)/);
@@ -524,24 +558,14 @@ export default function App() {
       data-theme-primary={themePalette.primaryHex}
       className="relative w-full min-h-screen lg:w-screen lg:h-screen overflow-y-auto overflow-x-hidden lg:overflow-hidden bg-[#12100e] text-[#f5efe6] flex flex-col justify-between select-none"
     >
-      {/* Background Nostalgic Car Horizon & Dynamic Album Art Ambient Glow */}
+      {/* Thermal-Optimized Background Ambient Gradient (Zero Heavy Gaussian Blur Layers) */}
       <div
         aria-hidden="true"
-        className="pointer-events-none fixed inset-0 overflow-hidden z-0"
-      >
-        <div
-          style={{ backgroundColor: themePalette.glowRgba }}
-          className={`absolute -top-28 left-1/4 w-[640px] h-[360px] rounded-full blur-3xl transition-all duration-700 ${
-            isPlaying ? 'opacity-70' : 'opacity-35'
-          }`}
-        />
-        <div
-          style={{ backgroundColor: themePalette.glowRgba }}
-          className={`absolute -bottom-32 right-1/4 w-[580px] h-[340px] rounded-full blur-3xl transition-all duration-700 ${
-            isPlaying ? 'opacity-65' : 'opacity-30'
-          }`}
-        />
-      </div>
+        style={{
+          background: `radial-gradient(circle at 22% 15%, ${themePalette.softBgRgba} 0%, transparent 52%), radial-gradient(circle at 78% 85%, ${themePalette.softBgRgba} 0%, transparent 52%)`,
+        }}
+        className="pointer-events-none fixed inset-0 z-0"
+      />
 
       {/* Responsive Layout:
           - Portrait Mobile (< 1024px): Scrollable Full-Width Stack -> 1) Vinyl & Album Art on top, 2) Control Card, 3) Playlist, 4) TV Screen at bottom
@@ -588,6 +612,7 @@ export default function App() {
               spotifyConnected={spotifyConnected}
               spotifyUserLabel={spotifyUserLabel}
               onOpenSpotifyModal={() => setIsSpotifyModalOpen(true)}
+              onOpenAndroidModal={() => setIsAndroidModalOpen(true)}
               onSelectPlaylist={handleSelectPlaylist}
               onTogglePlay={handleTogglePlay}
               onStop={handleStopPlayback}
@@ -616,7 +641,7 @@ export default function App() {
             />
           </div>
 
-          {/* 4th on Mobile (order-4) | Top-Left on Desktop: Retro CRT TV Screen */}
+          {/* 4th on Mobile (order-4) | Top-Left on Desktop: Retro CRT TV Screen with Side-Mounted Channel Dial */}
           <div
             id="retro-tv"
             className="order-4 lg:order-none w-full lg:col-span-4 lg:col-start-1 lg:row-start-1 flex flex-col justify-stretch min-h-0 lg:h-full"
@@ -632,18 +657,27 @@ export default function App() {
         </div>
       </main>
 
-      {/* Multi-User Spotify OAuth 2.0 PKCE Login & Playlist Selector Modal */}
+      {/* Simple 1-Click Spotify Login & Playlist Browser Modal (Zero API Keys Required) */}
       <SpotifyConnectModal
         isOpen={isSpotifyModalOpen}
         isConnected={spotifyConnected}
         spotifyUserLabel={spotifyUserLabel}
         playlists={playlists}
         activePlaylistId={activePlaylist.id}
+        themePalette={themePalette}
         onClose={() => setIsSpotifyModalOpen(false)}
-        onStartOAuthPopup={handleStartOAuthPopup}
-        onConnectWithAccessToken={syncSpotifyPlaylistsWithToken}
+        onOneClickSpotifyLogin={handleOneClickSpotifyLogin}
         onSelectPlaylist={handleSelectPlaylist}
         onLoadPlaylistByIdOrUrl={handleLoadPlaylistByIdOrUrl}
+      />
+
+      {/* Standalone Android App (WebAPK + Native Capacitor Project) Modal */}
+      <AndroidAppModal
+        isOpen={isAndroidModalOpen}
+        isStandalone={isStandaloneApp}
+        canPromptInstall={Boolean(deferredInstallPrompt)}
+        onClose={() => setIsAndroidModalOpen(false)}
+        onTriggerInstallPrompt={handleTriggerAndroidInstall}
       />
     </div>
   );

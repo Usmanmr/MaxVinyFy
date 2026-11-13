@@ -26,79 +26,33 @@
   }
 }
 
-@keyframes crtScanlineScroll {
+/* Single Hardware-Composited GPU Keyframe for Vinyl Platter Rotation (Zero React Re-Renders) */
+@keyframes vinylPlatterSpin {
   0% {
-    transform: translateY(0px);
-  }
-  100% {
-    transform: translateY(16px);
-  }
-}
-
-@keyframes crtRefreshBar {
-  0% {
-    transform: translateY(-100%);
-  }
-  100% {
-    transform: translateY(500%);
-  }
-}
-
-@keyframes vinylDustDrift {
-  0% {
-    transform: rotate(0deg) scale(1);
-    opacity: 0.55;
-  }
-  50% {
-    transform: rotate(180deg) scale(1.03);
-    opacity: 0.85;
-  }
-  100% {
-    transform: rotate(360deg) scale(1);
-    opacity: 0.55;
-  }
-}
-
-@keyframes vinylDustTwinkle {
-  0%, 100% {
     transform: rotate(0deg);
-    opacity: 0.4;
   }
-  50% {
-    transform: rotate(-45deg);
-    opacity: 0.78;
+  100% {
+    transform: rotate(360deg);
   }
 }
 
-/* Animated CRT Scanline & Rolling Cathode Beam Effect */
+.vinyl-platter-gpu-spin {
+  animation-name: vinylPlatterSpin;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+/* Lightweight CRT Scanline Overlay (No Continuous Repaint Loop) */
 .crt-scanlines {
   background: repeating-linear-gradient(
     to bottom,
     rgba(255, 255, 255, 0) 0px,
     rgba(255, 255, 255, 0) 2px,
-    rgba(0, 0, 0, 0.5) 3px,
-    rgba(0, 0, 0, 0.5) 4px
-  ), linear-gradient(
-    90deg,
-    rgba(255, 0, 0, 0.04),
-    rgba(0, 255, 0, 0.015),
-    rgba(0, 0, 255, 0.04)
+    rgba(0, 0, 0, 0.45) 3px,
+    rgba(0, 0, 0, 0.45) 4px
   );
-  background-size: 100% 4px, 6px 100%;
-  animation: crtScanlineScroll 0.6s linear infinite;
-  will-change: transform;
-}
-
-.crt-refresh-beam {
-  background: linear-gradient(
-    to bottom,
-    rgba(245, 158, 11, 0) 0%,
-    rgba(245, 158, 11, 0.16) 50%,
-    rgba(255, 255, 255, 0.09) 80%,
-    rgba(245, 158, 11, 0) 100%
-  );
-  animation: crtRefreshBar 3.2s linear infinite;
-  will-change: transform;
+  background-size: 100% 4px;
 }
 
 /* Vinyl Grooves Effect */
@@ -112,63 +66,54 @@
   );
 }
 
-/* Subtle Animated Vinyl Surface Dust Accumulation & Micro-Particle Texture Overlay */
+/* Authentic Vinyl Surface Dust & Micro-Particle Texture (Rotates Naturally with Platter — Zero Extra Keyframe Threads) */
 .vinyl-dust-particles {
   background-image:
-    radial-gradient(circle at 18% 24%, rgba(255, 248, 231, 0.42) 0.6px, transparent 1.4px),
-    radial-gradient(circle at 76% 19%, rgba(251, 191, 36, 0.35) 0.8px, transparent 1.6px),
-    radial-gradient(circle at 34% 72%, rgba(255, 255, 255, 0.32) 0.7px, transparent 1.5px),
+    radial-gradient(circle at 18% 24%, rgba(255, 248, 231, 0.45) 0.7px, transparent 1.5px),
+    radial-gradient(circle at 76% 19%, rgba(251, 191, 36, 0.36) 0.8px, transparent 1.6px),
+    radial-gradient(circle at 34% 72%, rgba(255, 255, 255, 0.34) 0.7px, transparent 1.5px),
     radial-gradient(circle at 82% 68%, rgba(255, 248, 231, 0.38) 0.6px, transparent 1.4px),
-    radial-gradient(circle at 61% 38%, rgba(255, 255, 255, 0.28) 0.5px, transparent 1.2px),
-    radial-gradient(circle at 27% 46%, rgba(251, 191, 36, 0.25) 0.7px, transparent 1.5px),
-    radial-gradient(circle at 49% 83%, rgba(255, 255, 255, 0.35) 0.6px, transparent 1.3px),
-    radial-gradient(circle at 68% 54%, rgba(255, 248, 231, 0.3) 0.5px, transparent 1.2px);
-  background-size: 96px 96px, 114px 114px, 84px 84px, 128px 128px, 72px 72px, 108px 108px, 92px 92px, 64px 64px;
-  animation: vinylDustDrift 18s linear infinite;
-  will-change: transform, opacity;
-  mix-blend-mode: screen;
+    radial-gradient(circle at 61% 38%, rgba(255, 255, 255, 0.3) 0.6px, transparent 1.3px),
+    radial-gradient(circle at 27% 46%, rgba(251, 191, 36, 0.28) 0.7px, transparent 1.5px);
+  background-size: 96px 96px, 114px 114px, 84px 84px, 128px 128px, 72px 72px, 108px 108px;
+  opacity: 0.75;
 }
 
 .vinyl-dust-motes {
   background-image:
     radial-gradient(circle at 42% 22%, rgba(255, 255, 255, 0.34) 0.7px, transparent 1.5px),
     radial-gradient(circle at 22% 64%, rgba(251, 191, 36, 0.28) 0.8px, transparent 1.6px),
-    radial-gradient(circle at 79% 41%, rgba(255, 248, 231, 0.32) 0.6px, transparent 1.4px),
-    radial-gradient(circle at 58% 77%, rgba(255, 255, 255, 0.26) 0.6px, transparent 1.3px);
-  background-size: 110px 110px, 88px 88px, 124px 124px, 76px 76px;
-  animation: vinylDustTwinkle 7s ease-in-out infinite;
-  will-change: transform, opacity;
-  mix-blend-mode: screen;
+    radial-gradient(circle at 79% 41%, rgba(255, 248, 231, 0.32) 0.6px, transparent 1.4px);
+  background-size: 110px 110px, 88px 88px, 124px 124px;
+  opacity: 0.65;
 }
 
-/* Polished Smoked Glass Panel (50% Reduced Shadow Opacity) */
+/* Polished Smoked Glass Panel (Thermal-Optimized for Mobile & Desktop GPUs) */
 .glass-panel {
   background: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.08) 0%,
-    rgba(255, 255, 255, 0.03) 100%
+    rgba(30, 27, 25, 0.88) 0%,
+    rgba(20, 18, 16, 0.92) 100%
   );
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow:
-    0 20px 50px rgba(0, 0, 0, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    0 16px 36px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
-/* Polished Glass Interactive Button (50% Reduced Shadow Opacity) */
+/* Polished Glass Interactive Button (Zero Per-Button Backdrop Blur Overhead) */
 .glass-button {
   background: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.11) 0%,
-    rgba(255, 255, 255, 0.04) 100%
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0.05) 100%
   );
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.15);
   box-shadow:
-    0 4px 14px rgba(0, 0, 0, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    0 4px 12px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .glass-button:hover {

@@ -18,6 +18,8 @@ import {
   parseSpotifyInput,
   stepVuMeterPhysics,
   computeDominantAccentFromRgbSamples,
+  getTvChannelTheme,
+  getNextTvChannelIndex,
   type TrackItem,
 } from './playerLogic';
 
@@ -177,3 +179,48 @@ test('parseSpotifyInput parses Spotify playlist and track URLs and URIs', () => 
   );
   assert.deepEqual(parseSpotifyInput('not-a-url'), { type: 'invalid', id: '' });
 });
+
+test('stepVuMeterPhysics decays smoothly with physics momentum and bounce instead of snapping', () => {
+  let state = { level: 0.9, velocity: 0, peakHold: 0.9, peakVelocity: 0 };
+  const afterOneFrame = stepVuMeterPhysics(state, 0.2, 0.016);
+  assert.ok(afterOneFrame.level > 0.7 && afterOneFrame.level < 0.9);
+  assert.ok(afterOneFrame.velocity < 0);
+
+  let minReached = 1;
+  for (let i = 0; i < 45; i++) {
+    state = stepVuMeterPhysics(state, 0.25, 0.016);
+    if (state.level < minReached) minReached = state.level;
+  }
+  assert.ok(minReached < 0.25, `Expected slight bounce dip below 0.25, got ${minReached}`);
+  assert.ok(Math.abs(state.level - 0.25) < 0.05);
+  assert.ok(state.peakHold >= state.level);
+});
+
+test('computeDominantAccentFromRgbSamples extracts vibrant dominant color palette for UI, VU meter, and TV cabinet', () => {
+  const cyanCoverSamples: Array<[number, number, number]> = [
+    [12, 185, 225],
+    [18, 195, 235],
+    [15, 175, 215],
+    [10, 10, 12],
+    [250, 252, 255],
+  ];
+  const palette = computeDominantAccentFromRgbSamples(cyanCoverSamples, 'dhurandhar');
+  assert.ok(palette.hue >= 180 && palette.hue <= 210, `Expected cyan hue, got ${palette.hue}`);
+  assert.match(palette.primaryHex, /^#[0-9a-f]{6}$/i);
+  assert.match(palette.vuMidHex, /^#[0-9a-f]{6}$/i);
+  assert.ok(palette.tvCabinetGradient.includes('linear-gradient'));
+});
+
+test('getTvChannelTheme and getNextTvChannelIndex cycle through 5 YouTube visual theme channels', () => {
+  const ch0 = getTvChannelTheme(0);
+  assert.equal(ch0.code, 'CH 01');
+  assert.equal(ch0.videoSource, 'primary');
+
+  const ch2 = getTvChannelTheme(2);
+  assert.equal(ch2.code, 'CH 03');
+  assert.ok(ch2.filterCss.includes('sepia'));
+
+  assert.equal(getNextTvChannelIndex(0), 1);
+  assert.equal(getNextTvChannelIndex(4), 0);
+});
+
