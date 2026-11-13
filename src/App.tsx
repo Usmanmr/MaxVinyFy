@@ -7,6 +7,8 @@ import {
   getPreviousAction,
   calculatePlaybackRate,
   computeDominantAccentFromRgbSamples,
+  EMPTY_STANDBY_TRACK,
+  EMPTY_STANDBY_PLAYLIST,
   type PlaylistPack,
   type TrackItem,
   type YouTubeGrabFrame,
@@ -33,10 +35,11 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 export default function App() {
-  const [playlists, setPlaylists] = useState<PlaylistPack[]>(DEFAULT_PLAYLISTS);
-  const [activePlaylistId, setActivePlaylistId] = useState<string>(DEFAULT_PLAYLISTS[0].id);
+  // First-load state: no playlist or song is loaded until user connects Spotify or loads a playlist
+  const [playlists, setPlaylists] = useState<PlaylistPack[]>([]);
+  const [activePlaylistId, setActivePlaylistId] = useState<string>('');
   const [currentTrackIndex, setCurrentTrackIndex] = useState<number>(0);
-  const [currentTimeSec, setCurrentTimeSec] = useState<number>(18);
+  const [currentTimeSec, setCurrentTimeSec] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [repeatOne, setRepeatOne] = useState<boolean>(false);
   const [shuffleEnabled, setShuffleEnabled] = useState<boolean>(false);
@@ -46,7 +49,7 @@ export default function App() {
   const [pitchPercent, setPitchPercent] = useState<number>(0);
   const [volume, setVolume] = useState<number>(0.8);
   const [crackleLevel, setCrackleLevel] = useState<number>(0.25);
-  const [vuLevels, setVuLevels] = useState<{ left: number; right: number }>({ left: 0.24, right: 0.22 });
+  const [vuLevels, setVuLevels] = useState<{ left: number; right: number }>({ left: 0.08, right: 0.08 });
 
   // Simple 1-Click Spotify Login state (Zero API keys required)
   const [isSpotifyModalOpen, setIsSpotifyModalOpen] = useState<boolean>(false);
@@ -58,12 +61,15 @@ export default function App() {
   const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandaloneApp, setIsStandaloneApp] = useState<boolean>(false);
 
-  const activePlaylist = playlists.find((p) => p.id === activePlaylistId) || playlists[0];
-  const activeTrack = activePlaylist.tracks[currentTrackIndex] || activePlaylist.tracks[0];
+  const activePlaylist =
+    playlists.find((p) => p.id === activePlaylistId) || playlists[0] || EMPTY_STANDBY_PLAYLIST;
+  const activeTrack =
+    activePlaylist.tracks[currentTrackIndex] || activePlaylist.tracks[0] || EMPTY_STANDBY_TRACK;
+  const needsInitialSpotifyConnect = !spotifyConnected && playlists.length === 0;
   const effectiveRate = calculatePlaybackRate(33, pitchPercent);
 
   const [themePalette, setThemePalette] = useState<DominantThemePalette>(() =>
-    computeDominantAccentFromRgbSamples([[24, 182, 224]], activeTrack.title)
+    computeDominantAccentFromRgbSamples([[24, 182, 224]], 'MaxVinyFy')
   );
 
   // Detect Android standalone mode & capture native beforeinstallprompt
@@ -232,50 +238,21 @@ export default function App() {
     []
   );
 
-  // Load initial Spotify playlist on startup
-  useEffect(() => {
-    let cancelled = false;
-    const loadInitialSpotifyPlaylist = async () => {
-      try {
-        const res = await fetch('/api/spotify/playlist?id=2ENMa1IQDSlEPDKNmS25K2');
-        if (!res.ok || cancelled) return;
-        const data = await res.json();
-        if (cancelled || !Array.isArray(data.tracks) || data.tracks.length === 0) return;
-
-        const mergedTracks = mapRawTracksToTrackItems(data.tracks, data.coverUrl || '');
-
-        setPlaylists((prev) =>
-          prev.map((pl, idx) =>
-            idx === 0
-              ? {
-                  ...pl,
-                  name: data.name || 'Spotify · car',
-                  spotifyPlaylistId: '2ENMa1IQDSlEPDKNmS25K2',
-                  tracks: mergedTracks,
-                }
-              : pl
-          )
-        );
-      } catch {
-        // Keep default tracks
-      }
-    };
-
-    loadInitialSpotifyPlaylist();
-    return () => {
-      cancelled = true;
-    };
-  }, [mapRawTracksToTrackItems]);
-
   // Thermal Optimization: Only run interval timer when isPlaying is true (0% CPU when paused)
   useEffect(() => {
-    if (!isPlaying) return;
+    if (!isPlaying || activeTrack.id === 'standby-empty' || activeTrack.durationSec <= 0) return;
 
     const interval = window.setInterval(() => {
       setVuLevels(retroAudio.getVuLevels());
 
       setCurrentTimeSec((prev) => {
-        const nextSec = prev + 0.25 * effectiveRate;
+        // Sync with real full-length audio element currentTime when available
+        const realAudioSec = retroAudio.getCurrentAudioTime();
+        const nextSec =
+          realAudioSec !== null && Math.abs(realAudioSec - prev) < 3
+            ? realAudioSec
+            : prev + 0.25 * effectiveRate;
+
         if (nextSec >= activeTrack.durationSec) {
           const nextIdx = repeatOne
             ? currentTrackIndex
@@ -286,8 +263,10 @@ export default function App() {
             setCurrentTrackIndex(nextIdx);
             const nextTrack = activePlaylist.tracks[nextIdx];
             if (nextTrack) {
-              retroAudio.startPlayback(nextTrack, effectiveRate);
+              retroAudio.startPlayback(nextTrack, effectiveRate, 0);
             }
+          } else {
+            retroAudio.startPlayback(activeTrack, effectiveRate, 0);
           }
           return 0;
         }
@@ -299,7 +278,7 @@ export default function App() {
   }, [
     isPlaying,
     effectiveRate,
-    activeTrack.durationSec,
+    activeTrack,
     currentTrackIndex,
     activePlaylist.tracks,
     repeatOne,
@@ -328,7 +307,7 @@ export default function App() {
     []
   );
 
-  // Fetch tracks for a specific Spotify playlist ID
+  // Fetch all tracks (e.g. all 75 songs) for a specific Spotify playlist ID
   const fetchTracksForSpotifyPlaylistId = useCallback(
     async (spotifyPlaylistId: string): Promise<{ name: string; tracks: TrackItem[] } | null> => {
       const res = await fetch(`/api/spotify/playlist?id=${encodeURIComponent(spotifyPlaylistId)}`);
@@ -344,7 +323,7 @@ export default function App() {
     [mapRawTracksToTrackItems]
   );
 
-  // Simple 1-Click Spotify Login: Auto-connects user account & loads all their Spotify playlists without API keys
+  // Simple 1-Click Spotify Login: Auto-connects user account & loads all their Spotify playlists (including all 75 songs of car playlist)
   const handleOneClickSpotifyLogin = useCallback(
     async (accountHint?: string) => {
       const params = new URLSearchParams();
@@ -441,20 +420,25 @@ export default function App() {
       tracks: loaded.tracks,
     };
 
+    setSpotifyConnected(true);
     setPlaylists((prev) => [newPack, ...prev.filter((p) => p.id !== newPackId)]);
     setActivePlaylistId(newPackId);
     setCurrentTrackIndex(0);
     setCurrentTimeSec(0);
     if (isPlaying && loaded.tracks[0]) {
-      retroAudio.startPlayback(loaded.tracks[0], effectiveRate);
+      retroAudio.startPlayback(loaded.tracks[0], effectiveRate, 0);
     }
   };
 
   const handleTogglePlay = () => {
+    if (activeTrack.id === 'standby-empty' || activeTrack.durationSec <= 0) {
+      setIsSpotifyModalOpen(true);
+      return;
+    }
     setIsPlaying((prev) => {
       const next = !prev;
       if (next) {
-        retroAudio.startPlayback(activeTrack, effectiveRate);
+        retroAudio.startPlayback(activeTrack, effectiveRate, currentTimeSec);
       } else {
         retroAudio.pausePlayback();
       }
@@ -466,6 +450,7 @@ export default function App() {
     setIsPlaying(false);
     setCurrentTimeSec(0);
     retroAudio.pausePlayback();
+    retroAudio.seekTo(0);
   };
 
   const handleSelectPlaylist = async (playlistId: string) => {
@@ -482,14 +467,14 @@ export default function App() {
           prev.map((pl) => (pl.id === playlistId ? { ...pl, tracks: loaded.tracks } : pl))
         );
         if (isPlaying && loaded.tracks[0]) {
-          retroAudio.startPlayback(loaded.tracks[0], effectiveRate);
+          retroAudio.startPlayback(loaded.tracks[0], effectiveRate, 0);
         }
         return;
       }
     }
 
     if (isPlaying && targetPl.tracks[0]) {
-      retroAudio.startPlayback(targetPl.tracks[0], effectiveRate);
+      retroAudio.startPlayback(targetPl.tracks[0], effectiveRate, 0);
     }
   };
 
@@ -499,10 +484,11 @@ export default function App() {
     setCurrentTrackIndex(trackIndex);
     setCurrentTimeSec(0);
     setIsPlaying(true);
-    retroAudio.startPlayback(nextTrack, effectiveRate);
+    retroAudio.startPlayback(nextTrack, effectiveRate, 0);
   };
 
   const handleNextTrack = () => {
+    if (activePlaylist.tracks.length === 0) return;
     const nextIdx = shuffleEnabled
       ? getShuffledNextTrackIndex(currentTrackIndex, activePlaylist.tracks.length)
       : getNextTrackIndex(currentTrackIndex, activePlaylist.tracks.length, false);
@@ -514,6 +500,7 @@ export default function App() {
   };
 
   const handlePreviousTrack = (forcePrevious = false) => {
+    if (activePlaylist.tracks.length === 0) return;
     const action = getPreviousAction(
       currentTrackIndex,
       activePlaylist.tracks.length,
@@ -522,14 +509,29 @@ export default function App() {
     );
     if (action.action === 'restart') {
       setCurrentTimeSec(0);
+      retroAudio.seekTo(0);
     } else {
       handleSelectTrack(action.targetIndex);
     }
   };
 
   const handleSeek = (targetSec: number) => {
+    if (activeTrack.id === 'standby-empty' || activeTrack.durationSec <= 0) return;
     const clamped = clampSeekTime(targetSec, activeTrack.durationSec);
     setCurrentTimeSec(clamped);
+    retroAudio.seekTo(clamped);
+  };
+
+  // Dragging the playing head above the vinyl record seeks and plays the track from that exact location
+  const handleDragTonearmToTime = (targetSec: number) => {
+    if (activeTrack.id === 'standby-empty' || activeTrack.durationSec <= 0) return;
+    const clamped = clampSeekTime(targetSec, activeTrack.durationSec);
+    setCurrentTimeSec(clamped);
+    retroAudio.seekTo(clamped);
+    if (!isPlaying) {
+      setIsPlaying(true);
+      retroAudio.startPlayback(activeTrack, effectiveRate, clamped);
+    }
   };
 
   const handleChangePitch = (nextPitch: number) => {
@@ -556,7 +558,7 @@ export default function App() {
   return (
     <div
       data-theme-primary={themePalette.primaryHex}
-      className="relative w-full min-h-screen lg:w-screen lg:h-screen overflow-y-auto overflow-x-hidden lg:overflow-hidden bg-[#12100e] text-[#f5efe6] flex flex-col justify-between select-none"
+      className="relative w-full min-h-screen landscape:h-dvh lg:w-screen lg:h-screen overflow-y-auto overflow-x-hidden landscape:overflow-hidden lg:overflow-hidden bg-[#12100e] text-[#f5efe6] flex flex-col justify-between select-none"
     >
       {/* Thermal-Optimized Background Ambient Gradient (Zero Heavy Gaussian Blur Layers) */}
       <div
@@ -568,14 +570,14 @@ export default function App() {
       />
 
       {/* Responsive Layout:
-          - Portrait Mobile (< 1024px): Scrollable Full-Width Stack -> 1) Vinyl & Album Art on top, 2) Control Card, 3) Playlist, 4) TV Screen at bottom
-          - Landscape Desktop (>= 1024px): Synchronized 2x2 Cockpit -> Left: TV on top of Playlist | Right: Vinyl/Album Art on top of Control Card */}
-      <main className="relative z-10 flex-1 w-full max-w-[1440px] mx-auto px-4 lg:px-5 pt-6 pb-10 lg:pt-7 lg:pb-4 min-h-0 lg:overflow-hidden">
-        <div className="flex flex-col gap-5 lg:grid lg:grid-cols-12 lg:grid-rows-[53%_1fr] lg:gap-4 w-full lg:h-full min-h-0">
-          {/* 1st on Mobile (order-1) | Top-Right on Desktop: Vinyl & Album Art + Synced Lyrics + Control & Pitch Cards */}
+          - Portrait Mobile: Scrollable Full-Width Stack -> 1) Vinyl & Album Art on top, 2) Control Card, 3) Playlist, 4) TV Screen at bottom
+          - Mobile Landscape (`landscape:`) & Desktop (`lg:`): Synchronized 2x2 Cockpit -> Left: Brand + TV on top of Playlist | Right: Vinyl/Album Art + Vertical Control Icons on top of Play/Pause Control Card */}
+      <main className="relative z-10 flex-1 w-full max-w-[1440px] mx-auto px-3.5 landscape:px-3 lg:px-5 pt-4 pb-8 landscape:py-1.5 lg:pt-5 lg:pb-4 min-h-0 landscape:overflow-hidden lg:overflow-hidden">
+        <div className="flex flex-col gap-5 landscape:grid landscape:grid-cols-12 landscape:grid-rows-[50%_1fr] landscape:gap-2 lg:grid lg:grid-cols-12 lg:grid-rows-[53%_1fr] lg:gap-4 w-full landscape:h-full lg:h-full min-h-0">
+          {/* 1st on Mobile Portrait (order-1) | Top-Right on Mobile Landscape & Desktop: Vinyl & Album Art + Synced Lyrics + Vertical Control & Pitch Cards */}
           <div
             id="turntable"
-            className="order-1 lg:order-none w-full lg:col-span-8 lg:col-start-5 lg:row-start-1 flex flex-col justify-stretch min-h-0 lg:h-full"
+            className="order-1 landscape:order-none lg:order-none w-full landscape:col-span-8 landscape:col-start-5 landscape:row-start-1 lg:col-span-8 lg:col-start-5 lg:row-start-1 flex flex-col justify-stretch min-h-0 landscape:h-full lg:h-full"
           >
             <TurntableDeck
               track={activeTrack}
@@ -588,14 +590,15 @@ export default function App() {
               onChangePitch={handleChangePitch}
               onScratch={handleScratch}
               onSeek={handleSeek}
+              onDragTonearmToTime={handleDragTonearmToTime}
               onToggleFullScreen={handleToggleFullScreen}
             />
           </div>
 
-          {/* 2nd on Mobile (order-2) | Bottom-Right on Desktop: Playback Control Card & Physics VU Meter */}
+          {/* 2nd on Mobile Portrait (order-2) | Bottom-Right on Mobile Landscape & Desktop: Playback Control Card & Physics VU Meter */}
           <div
             id="up-next"
-            className="order-2 lg:order-none w-full lg:col-span-8 lg:col-start-5 lg:row-start-2 flex flex-col justify-stretch rounded-3xl min-h-0 lg:h-full"
+            className="order-2 landscape:order-none lg:order-none w-full landscape:col-span-8 landscape:col-start-5 landscape:row-start-2 lg:col-span-8 lg:col-start-5 lg:row-start-2 flex flex-col justify-stretch rounded-3xl min-h-0 landscape:h-full lg:h-full"
           >
             <TransportAndQueueDeck
               playlists={playlists}
@@ -611,6 +614,7 @@ export default function App() {
               themePalette={themePalette}
               spotifyConnected={spotifyConnected}
               spotifyUserLabel={spotifyUserLabel}
+              needsInitialSpotifyConnect={needsInitialSpotifyConnect}
               onOpenSpotifyModal={() => setIsSpotifyModalOpen(true)}
               onOpenAndroidModal={() => setIsAndroidModalOpen(true)}
               onSelectPlaylist={handleSelectPlaylist}
@@ -625,10 +629,10 @@ export default function App() {
             />
           </div>
 
-          {/* 3rd on Mobile (order-3) | Bottom-Left on Desktop: Spotify Playlist Queue Card */}
+          {/* 3rd on Mobile Portrait (order-3) | Bottom-Left on Mobile Landscape & Desktop: Spotify Playlist Queue Card */}
           <div
             id="playlist-queue"
-            className="order-3 lg:order-none w-full lg:col-span-4 lg:col-start-1 lg:row-start-2 flex flex-col justify-stretch rounded-3xl min-h-0 lg:h-full"
+            className="order-3 landscape:order-none lg:order-none w-full landscape:col-span-4 landscape:col-start-1 landscape:row-start-2 lg:col-span-4 lg:col-start-1 lg:row-start-2 flex flex-col justify-stretch rounded-3xl min-h-0 landscape:h-full lg:h-full"
           >
             <PlaylistQueueBox
               activePlaylist={activePlaylist}
@@ -641,10 +645,10 @@ export default function App() {
             />
           </div>
 
-          {/* 4th on Mobile (order-4) | Top-Left on Desktop: Retro CRT TV Screen with Side-Mounted Channel Dial */}
+          {/* 4th on Mobile Portrait (order-4) | Top-Left on Mobile Landscape & Desktop: MVF Brand Header + Retro CRT TV Screen with Side-Mounted Channel Dial */}
           <div
             id="retro-tv"
-            className="order-4 lg:order-none w-full lg:col-span-4 lg:col-start-1 lg:row-start-1 flex flex-col justify-stretch min-h-0 lg:h-full"
+            className="order-4 landscape:order-none lg:order-none w-full landscape:col-span-4 landscape:col-start-1 landscape:row-start-1 lg:col-span-4 lg:col-start-1 lg:row-start-1 flex flex-col justify-stretch min-h-0 landscape:h-full lg:h-full"
           >
             <RetroTvTable
               track={activeTrack}

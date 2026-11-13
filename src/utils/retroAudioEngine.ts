@@ -9,6 +9,7 @@ class RetroAudioEngine {
   private audioEl: HTMLAudioElement | null = null;
 
   private isPlaying = false;
+  private activeTrackId = '';
   private currentPreset: TrackItem['synthPreset'] = 'midnight-synth';
   private bpm = 110;
   private playbackRate = 1.0;
@@ -17,11 +18,14 @@ class RetroAudioEngine {
   private stepCounter = 0;
   private lastPeakL = 0.08;
   private lastPeakR = 0.08;
+  private fullStreamCache = new Map<string, string>();
 
   private ensureContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
     if (!this.ctx) {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return null;
       this.ctx = new AudioCtx();
       this.masterGain = this.ctx.createGain();
@@ -42,7 +46,6 @@ class RetroAudioEngine {
     const output = buffer.getChannelData(0);
 
     for (let i = 0; i < bufferSize; i++) {
-      // Sparse pops + subtle warm hiss
       const r = Math.random();
       if (r > 0.9985) {
         output[i] = (Math.random() * 2 - 1) * 0.65;
@@ -70,7 +73,46 @@ class RetroAudioEngine {
     this.crackleNode = whiteNoise;
   }
 
-  public startPlayback(track: TrackItem, rate = 1.0) {
+  private ensureAudioElement(): HTMLAudioElement {
+    if (!this.audioEl) {
+      this.audioEl = new Audio();
+      this.audioEl.preload = 'auto';
+      // Never loop a short preview clip — play the full song from start to end
+      this.audioEl.loop = false;
+    }
+    return this.audioEl;
+  }
+
+  private async resolveFullSongUrl(track: TrackItem): Promise<string | null> {
+    if (this.fullStreamCache.has(track.id)) {
+      return this.fullStreamCache.get(track.id)!;
+    }
+    try {
+      const params = new URLSearchParams({
+        title: track.title,
+        artist: track.artist,
+      });
+      const res = await fetch(`/api/audio/full-track?${params.toString()}`);
+      if (res.ok) {
+        const data = (await res.json()) as { streamUrl?: string };
+        if (data.streamUrl) {
+          this.fullStreamCache.set(track.id, data.streamUrl);
+          return data.streamUrl;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return track.previewAudioUrl || null;
+  }
+
+  public startPlayback(track: TrackItem, rate = 1.0, seekTimeSec?: number) {
+    if (!track || track.id === 'standby-empty' || track.durationSec <= 0) {
+      return;
+    }
+
+    const isSameTrack = this.activeTrackId === track.id;
+    this.activeTrackId = track.id;
     this.currentPreset = track.synthPreset;
     this.bpm = track.bpm || 110;
     this.playbackRate = rate;
@@ -81,30 +123,84 @@ class RetroAudioEngine {
       this.crackleGain.gain.setTargetAtTime(this.crackleAmount * 0.25, ctx.currentTime, 0.08);
     }
 
-    // If track has a real preview MP3 URL from Spotify API, play it alongside vinyl warmth
-    if (track.previewAudioUrl) {
+    const audio = this.ensureAudioElement();
+    audio.loop = false;
+    audio.playbackRate = Math.max(0.5, Math.min(2.0, this.playbackRate));
+    audio.volume = this.volume;
+
+    // If same track is already loaded in audioEl, resume or seek immediately
+    if (isSameTrack && audio.src) {
       this.stopStepLoop();
-      if (!this.audioEl) {
-        this.audioEl = new Audio();
-        this.audioEl.crossOrigin = 'anonymous';
-        this.audioEl.loop = true;
+      if (typeof seekTimeSec === 'number' && Number.isFinite(seekTimeSec)) {
+        try {
+          audio.currentTime = Math.max(0, seekTimeSec);
+        } catch {
+          // ignore if metadata not yet ready
+        }
       }
-      if (this.audioEl.src !== track.previewAudioUrl) {
-        this.audioEl.src = track.previewAudioUrl;
-      }
-      this.audioEl.playbackRate = this.playbackRate;
-      this.audioEl.volume = this.volume;
-      this.audioEl.play().catch(() => {
-        // Fallback to Web Audio synth groove if autoplay or remote preview fails
+      audio.play().catch(() => {
         this.startStepLoop();
       });
       return;
     }
 
-    if (this.audioEl) {
-      this.audioEl.pause();
+    // Resolve full-length song stream so the entire track plays out without looping a 30s preview
+    const requestTrackId = track.id;
+    this.resolveFullSongUrl(track).then((streamUrl) => {
+      if (!this.isPlaying || this.activeTrackId !== requestTrackId) return;
+      if (streamUrl) {
+        this.stopStepLoop();
+        if (audio.src !== streamUrl) {
+          audio.src = streamUrl;
+        }
+        audio.loop = false;
+        audio.playbackRate = Math.max(0.5, Math.min(2.0, this.playbackRate));
+        audio.volume = this.volume;
+
+        const applyInitialSeek = () => {
+          if (typeof seekTimeSec === 'number' && seekTimeSec > 0 && audio.duration > seekTimeSec) {
+            try {
+              audio.currentTime = seekTimeSec;
+            } catch {
+              // ignore
+            }
+          }
+        };
+
+        if (audio.readyState >= 1) {
+          applyInitialSeek();
+        } else {
+          audio.addEventListener('loadedmetadata', applyInitialSeek, { once: true });
+        }
+
+        audio.play().catch(() => {
+          this.startStepLoop();
+        });
+      } else {
+        audio.pause();
+        this.startStepLoop();
+      }
+    });
+  }
+
+  public seekTo(targetSec: number) {
+    if (!Number.isFinite(targetSec) || targetSec < 0) return;
+    if (this.audioEl && this.audioEl.src) {
+      try {
+        if (!Number.isFinite(this.audioEl.duration) || targetSec <= this.audioEl.duration) {
+          this.audioEl.currentTime = targetSec;
+        }
+      } catch {
+        // ignore
+      }
     }
-    this.startStepLoop();
+  }
+
+  public getCurrentAudioTime(): number | null {
+    if (this.audioEl && this.audioEl.src && !this.audioEl.paused && Number.isFinite(this.audioEl.currentTime)) {
+      return this.audioEl.currentTime;
+    }
+    return null;
   }
 
   public pausePlayback() {
@@ -157,7 +253,6 @@ class RetroAudioEngine {
     const now = ctx.currentTime;
     const duration = intensity === 'backspin' ? 0.52 : intensity === 'classic' ? 0.34 : 0.18;
 
-    // 1. Pitch-swept harmonic chirp (simulating groove drag)
     const osc = ctx.createOscillator();
     const oscGain = ctx.createGain();
     const bandpass = ctx.createBiquadFilter();
@@ -195,7 +290,6 @@ class RetroAudioEngine {
     osc.start(now);
     osc.stop(now + duration);
 
-    // 2. Vinyl friction noise burst
     const noiseBuffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * duration), ctx.sampleRate);
     const data = noiseBuffer.getChannelData(0);
     for (let i = 0; i < data.length; i++) {
@@ -230,7 +324,6 @@ class RetroAudioEngine {
       this.lastPeakR = Math.max(0.04, this.lastPeakR * 0.85);
       return { left: this.lastPeakL, right: this.lastPeakR };
     }
-    // Natural analog needle bounce
     const jitterL = (Math.random() - 0.48) * 0.14;
     const jitterR = (Math.random() - 0.48) * 0.14;
     this.lastPeakL = Math.max(0.22, Math.min(0.95, this.lastPeakL * 0.88 + 0.12 * 0.68 + jitterL));
@@ -268,7 +361,6 @@ class RetroAudioEngine {
     const now = ctx.currentTime;
     const stepInBar = step % 8;
 
-    // Scales per preset
     const bassNotes: Record<TrackItem['synthPreset'], number[]> = {
       'midnight-synth': [110, 110, 130.81, 130.81, 146.83, 146.83, 130.81, 98.0],
       'velvet-soul': [98.0, 110.0, 123.47, 146.83, 130.81, 123.47, 110.0, 98.0],
@@ -285,7 +377,6 @@ class RetroAudioEngine {
       'classic-funk': [220.0, 277.18, 329.63, 392.0],
     };
 
-    // Kick on 0 and 4
     if (stepInBar === 0 || stepInBar === 4) {
       const kickOsc = ctx.createOscillator();
       const kickGain = ctx.createGain();
@@ -300,7 +391,6 @@ class RetroAudioEngine {
       this.lastPeakL = Math.min(0.95, this.lastPeakL + 0.18);
     }
 
-    // Bass note on every step
     const bassFreq = (bassNotes[this.currentPreset]?.[stepInBar] || 110) * this.playbackRate;
     const bassOsc = ctx.createOscillator();
     const bassFilter = ctx.createBiquadFilter();
@@ -321,7 +411,6 @@ class RetroAudioEngine {
     bassOsc.start(now);
     bassOsc.stop(now + 0.25);
 
-    // Warm electric piano / synth chord stab on steps 2 and 6
     if (stepInBar === 2 || stepInBar === 6) {
       const notes = chordNotes[this.currentPreset] || chordNotes['midnight-synth'];
       notes.forEach((n, idx) => {

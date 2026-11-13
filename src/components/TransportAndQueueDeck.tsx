@@ -13,6 +13,7 @@ import {
   Flame,
   Zap,
   Smartphone,
+  Pointer,
 } from 'lucide-react';
 import {
   formatDuration,
@@ -38,6 +39,7 @@ interface TransportAndQueueDeckProps {
   themePalette: DominantThemePalette;
   spotifyConnected: boolean;
   spotifyUserLabel: string;
+  needsInitialSpotifyConnect: boolean;
   onOpenSpotifyModal: () => void;
   onOpenAndroidModal: () => void;
   onSelectPlaylist: (playlistId: string) => void;
@@ -65,6 +67,7 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
   themePalette,
   spotifyConnected,
   spotifyUserLabel,
+  needsInitialSpotifyConnect,
   onOpenSpotifyModal,
   onOpenAndroidModal,
   onSelectPlaylist,
@@ -77,6 +80,7 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
   onChangeVolume,
   onChangeCrackle,
 }) => {
+  const isStandby = activeTrack.id === 'standby-empty' || activeTrack.durationSec <= 0;
   const upNextItems = getUpNextQueue(activePlaylist.tracks, currentTrackIndex);
   const immediateNext = upNextItems[0] || null;
 
@@ -135,8 +139,8 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
         targetLeft = Math.max(0.08, Math.min(0.98, targetLeft + beatEnvelope));
         targetRight = Math.max(0.08, Math.min(0.98, targetRight + beatEnvelope * 0.92));
       } else {
-        targetLeft = 0.12;
-        targetRight = 0.12;
+        targetLeft = 0.08;
+        targetRight = 0.08;
       }
 
       const nextLeft = stepVuMeterPhysics(physicsStateRef.current.left, targetLeft, dtSec);
@@ -160,7 +164,6 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
         vuPanelRef.current.dataset.vuRight = String(nextRight.level);
       }
 
-      // Only continue RAF loop if playing or still settling toward idle rest
       const isSettled =
         !isPlayingRef.current &&
         Math.abs(nextLeft.level - targetLeft) < 0.005 &&
@@ -177,6 +180,9 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
 
   // Deterministic acoustic waveform profile per track (32 bars for lightweight DOM)
   const baseWaveHeights = useMemo(() => {
+    if (isStandby) {
+      return Array.from({ length: 32 }, () => 0.18);
+    }
     const seedStr = `${activeTrack.id}-${activeTrack.title}`;
     let hash = 2166136261;
     for (let i = 0; i < seedStr.length; i++) {
@@ -191,7 +197,7 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
       bars.push(Math.max(0.2, Math.min(1, sinWave + pseudoRand)));
     }
     return bars;
-  }, [activeTrack.id, activeTrack.title]);
+  }, [activeTrack.id, activeTrack.title, isStandby]);
 
   const cuePoints = [
     { aria: 'Jump to Intro 0:00', sec: 0, ratio: 0, Icon: Flag },
@@ -206,24 +212,24 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
     <section
       id="controls-panel"
       aria-label="Playback Controls and Soundwave Deck"
-      className="glass-panel relative flex flex-col justify-between rounded-3xl px-4 sm:px-5 py-4 select-none w-full lg:h-full overflow-hidden gap-3 lg:gap-0"
+      className="glass-panel relative flex flex-col justify-between rounded-3xl px-4 sm:px-5 landscape:px-3.5 lg:px-5 py-3.5 landscape:py-1.5 lg:py-4 select-none w-full landscape:h-full lg:h-full overflow-hidden gap-2.5 landscape:gap-1 lg:gap-0"
     >
-      {/* Top Row: Active Song Readout on Left + Time, Playlist Selector, Spotify Login & Android App Install on Right */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 shrink-0 w-full">
-        <div className="min-w-0 w-full sm:flex-1">
-          <h2 className="font-display text-base lg:text-lg font-bold text-white truncate">
+      {/* Top Row: Active Song Readout on Left + Time, Playlist Selector, Blinking Connect Spotify & Animated Hand Pointer on Right */}
+      <div className="flex flex-col sm:flex-row landscape:flex-row sm:items-center landscape:items-center sm:justify-between landscape:justify-between gap-1.5 sm:gap-3 shrink-0 w-full">
+        <div className="min-w-0 w-full sm:flex-1 landscape:flex-1">
+          <h2 className="font-display text-base landscape:text-xs lg:text-lg font-bold text-white truncate">
             {activeTrack.title}
           </h2>
-          <p className="text-xs text-white/60 truncate">
+          <p className="text-xs landscape:text-[10px] lg:text-xs text-white/60 truncate">
             {activeTrack.artist}
             {immediateNext ? ` · Next: ${immediateNext.track.title}` : ''}
           </p>
         </div>
 
-        <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 w-full sm:w-auto">
+        <div className="flex items-center justify-between sm:justify-end landscape:justify-end gap-2 shrink-0 w-full sm:w-auto landscape:w-auto">
           <div
             style={{ color: themePalette.lightHex }}
-            className="font-mono tabular-nums text-xs lg:text-sm"
+            className="font-mono tabular-nums text-xs landscape:text-[10px] lg:text-sm"
           >
             {formatDuration(currentTimeSec)}{' '}
             <span className="text-white/40">/ {formatDuration(activeTrack.durationSec)}</span>
@@ -234,42 +240,66 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
           </label>
           <select
             id="playlist-select"
-            value={activePlaylist.id}
+            value={playlists.length > 0 ? activePlaylist.id : ''}
             onChange={(e) => onSelectPlaylist(e.target.value)}
-            className="glass-button min-h-[36px] max-w-[145px] sm:max-w-[195px] text-xs font-medium text-white rounded-xl px-2.5 py-1.5 focus:outline-none truncate"
+            disabled={playlists.length === 0}
+            className="glass-button min-h-[34px] landscape:min-h-[26px] lg:min-h-[36px] max-w-[140px] sm:max-w-[190px] text-xs landscape:text-[10px] lg:text-xs font-medium text-white rounded-xl px-2.5 py-1 focus:outline-none truncate disabled:opacity-50"
           >
-            {playlists.map((pl) => (
-              <option key={pl.id} value={pl.id} className="bg-[#181411] text-white">
-                {pl.name}
+            {playlists.length === 0 ? (
+              <option value="" className="bg-[#181411] text-white/60">
+                No Playlist Loaded
               </option>
-            ))}
+            ) : (
+              playlists.map((pl) => (
+                <option key={pl.id} value={pl.id} className="bg-[#181411] text-white">
+                  {pl.name} ({pl.tracks.length})
+                </option>
+              ))
+            )}
           </select>
 
-          {/* 1-Click Spotify Account Login & Playlist Browser Button */}
+          {/* Animated Hand Pointer Guiding User Toward the Blinking Connect Spotify Button on Initial Load */}
+          {needsInitialSpotifyConnect && (
+            <div
+              id="spotify-hand-pointer"
+              aria-label="Animated Hand Pointer — Click Connect Spotify"
+              onClick={onOpenSpotifyModal}
+              className="hand-pointer-nudge flex items-center gap-1 px-2 py-1 rounded-xl bg-[#1ed760]/20 border border-[#1ed760] text-[#1ed760] text-[11px] landscape:text-[9px] lg:text-xs font-bold cursor-pointer shrink-0 shadow-[0_0_16px_rgba(30,215,96,0.45)]"
+            >
+              <span className="hidden sm:inline landscape:inline">Click Here</span>
+              <Pointer className="w-4 h-4 rotate-90 text-[#1ed760] fill-[#1ed760]/25" />
+            </div>
+          )}
+
+          {/* Blinking Connect Spotify Account & Playlist Browser Button */}
           <button
             id="spotify-connect-btn"
             type="button"
             onClick={onOpenSpotifyModal}
+            data-blinking={needsInitialSpotifyConnect ? 'true' : 'false'}
             aria-label="Connect Spotify Account and Select Playlist"
             title={
               spotifyConnected
                 ? `Spotify Connected (${spotifyUserLabel}) — Click to switch playlist`
-                : 'Log in to Spotify Account (1-Click)'
+                : 'Connect Your Spotify Account (Click Here)'
             }
             style={
-              !spotifyConnected
+              !spotifyConnected && !needsInitialSpotifyConnect
                 ? { color: themePalette.lightHex }
                 : undefined
             }
-            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all shrink-0 ${
-              spotifyConnected
-                ? 'bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500/30'
-                : 'glass-button hover:opacity-90'
+            className={`h-9 landscape:h-7 lg:h-9 rounded-xl flex items-center justify-center gap-1.5 transition-all shrink-0 cursor-pointer ${
+              needsInitialSpotifyConnect
+                ? 'spotify-connect-blink px-3 bg-[#1ed760] text-[#12100e] font-bold text-xs landscape:text-[10px] lg:text-xs ring-2 ring-white shadow-[0_0_24px_rgba(30,215,96,0.85)]'
+                : spotifyConnected
+                ? 'w-9 landscape:w-7 lg:w-9 bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500/30'
+                : 'w-9 landscape:w-7 lg:w-9 glass-button hover:opacity-90'
             }`}
           >
-            <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current" aria-hidden="true">
+            <svg viewBox="0 0 24 24" className="w-4 h-4 lg:w-5 lg:h-5 fill-current shrink-0" aria-hidden="true">
               <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm4.586 14.424c-.18.295-.563.387-.857.207-2.35-1.434-5.305-1.76-8.786-.963-.335.077-.67-.133-.746-.469-.077-.334.132-.67.469-.745 3.809-.87 7.076-.496 9.713 1.115.293.18.386.563.207.855zm1.224-2.722c-.226.367-.706.482-1.072.257-2.687-1.652-6.785-2.131-9.965-1.166-.413.127-.848-.106-.973-.517-.125-.413.108-.848.52-.973 3.632-1.102 8.147-.568 11.234 1.328.366.226.48.707.256 1.071zm.105-2.835C14.692 8.95 9.375 8.775 6.297 9.71c-.493.15-1.016-.129-1.166-.623-.148-.495.13-1.015.625-1.166 3.532-1.073 9.404-.866 13.115 1.337.445.264.59.838.327 1.282-.264.443-.838.59-1.283.327z" />
             </svg>
+            {needsInitialSpotifyConnect && <span>Connect Spotify</span>}
           </button>
 
           {/* Install Native Android App Button */}
@@ -280,15 +310,15 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
             aria-label="Install Android App"
             title="Install Native Android App"
             style={{ color: themePalette.lightHex }}
-            className="glass-button w-9 h-9 rounded-xl flex items-center justify-center hover:opacity-90 transition-all shrink-0"
+            className="glass-button w-9 h-9 landscape:w-7 landscape:h-7 lg:w-9 lg:h-9 rounded-xl flex items-center justify-center hover:opacity-90 transition-all shrink-0"
           >
-            <Smartphone className="w-4 h-4" />
+            <Smartphone className="w-4 h-4 landscape:w-3.5 landscape:h-3.5 lg:w-4 lg:h-4" />
           </button>
         </div>
       </div>
 
       {/* Middle Stack: 100% Full-Width Timeline + Below-Timeline VU Meter & Soundwaves + Below-Timeline Jump-To Buttons */}
-      <div className="flex flex-col justify-center gap-3 my-1 w-full">
+      <div className="flex flex-col justify-center gap-2 landscape:gap-1 lg:gap-2.5 my-0.5 w-full">
         {/* 1. Full-Width Timeline Seek Scrubber Tinted with Dominant Album Art Color */}
         <div className="w-full">
           <label htmlFor="song-seek-slider" className="sr-only">
@@ -298,13 +328,14 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
             id="song-seek-slider"
             type="range"
             min={0}
-            max={activeTrack.durationSec}
+            max={activeTrack.durationSec || 100}
             step={1}
-            value={Math.min(activeTrack.durationSec, Math.floor(currentTimeSec))}
+            disabled={isStandby}
+            value={Math.min(activeTrack.durationSec || 100, Math.floor(currentTimeSec))}
             onChange={(e) => onSeek(Number(e.target.value))}
             aria-label="Seek to any position in the song"
             style={{ accentColor: themePalette.primaryHex }}
-            className="w-full h-2 bg-white/15 rounded-lg cursor-pointer block"
+            className="w-full h-2 landscape:h-1.5 lg:h-2 bg-white/15 rounded-lg cursor-pointer block disabled:opacity-40"
           />
         </div>
 
@@ -316,14 +347,14 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
           data-vu-left={physicsStateRef.current.left.level}
           data-vu-right={physicsStateRef.current.right.level}
           aria-label="Interactive Song Soundwave and Physics VU Meter"
-          className="w-full rounded-2xl bg-black/40 border border-white/10 px-3.5 py-2.5 flex flex-col gap-2.5"
+          className="w-full rounded-2xl bg-black/40 border border-white/10 px-3 landscape:px-2.5 lg:px-3.5 py-2 landscape:py-1 lg:py-2.5 flex flex-col gap-1.5 landscape:gap-1 lg:gap-2"
         >
           {/* Multi-Bar Soundwave Spectrum Colored by Album Art Dominant Palette */}
-          <div className="flex items-end justify-between gap-1 h-10 w-full">
+          <div className="flex items-end justify-between gap-1 h-8 landscape:h-5 lg:h-10 w-full">
             {baseWaveHeights.map((baseH, i) => {
               const barRatio = i / baseWaveHeights.length;
-              const isPlayed = barRatio <= progressRatio;
-              const isNearPlayhead = Math.abs(barRatio - progressRatio) < 0.04;
+              const isPlayed = !isStandby && barRatio <= progressRatio;
+              const isNearPlayhead = !isStandby && Math.abs(barRatio - progressRatio) < 0.04;
               const heightPct = Math.max(18, Math.min(100, Math.round(baseH * 100)));
 
               return (
@@ -332,6 +363,7 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
                   type="button"
                   tabIndex={-1}
                   aria-hidden="true"
+                  disabled={isStandby}
                   onClick={() => onSeek(Math.floor(barRatio * activeTrack.durationSec))}
                   style={{
                     height: `${heightPct}%`,
@@ -353,7 +385,7 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
           {/* Stereo L/R Ballistic Physics VU Meter Bars with Peak-Hold Bounce Needles */}
           <div className="grid grid-cols-2 gap-3 pt-0.5">
             {/* Left Channel VU Meter */}
-            <div className="relative h-2 w-full bg-white/10 rounded-full overflow-hidden">
+            <div className="relative h-2 landscape:h-1.5 lg:h-2 w-full bg-white/10 rounded-full overflow-hidden">
               <div
                 id="vu-bar-left"
                 ref={leftBarRef}
@@ -364,7 +396,6 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
                 }}
                 className="h-full rounded-full"
               />
-              {/* Ballistic Peak-Hold Bounce Marker */}
               <div
                 ref={leftPeakRef}
                 aria-hidden="true"
@@ -377,7 +408,7 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
             </div>
 
             {/* Right Channel VU Meter */}
-            <div className="relative h-2 w-full bg-white/10 rounded-full overflow-hidden">
+            <div className="relative h-2 landscape:h-1.5 lg:h-2 w-full bg-white/10 rounded-full overflow-hidden">
               <div
                 id="vu-bar-right"
                 ref={rightBarRef}
@@ -388,7 +419,6 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
                 }}
                 className="h-full rounded-full"
               />
-              {/* Ballistic Peak-Hold Bounce Marker */}
               <div
                 ref={rightPeakRef}
                 aria-hidden="true"
@@ -403,16 +433,17 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
         </div>
 
         {/* 3. Below-Timeline Jump-To Hot Cue Buttons with Dominant Album Art Highlight */}
-        <div className="grid grid-cols-4 gap-3 w-full">
+        <div className="grid grid-cols-4 gap-2.5 landscape:gap-1.5 lg:gap-3 w-full">
           {cuePoints.map((cue, idx) => {
             const nextRatio = idx < cuePoints.length - 1 ? cuePoints[idx + 1].ratio : 1.01;
-            const isActiveSection = progressRatio >= cue.ratio && progressRatio < nextRatio;
+            const isActiveSection = !isStandby && progressRatio >= cue.ratio && progressRatio < nextRatio;
             const CueIcon = cue.Icon;
 
             return (
               <button
                 key={cue.aria}
                 type="button"
+                disabled={isStandby}
                 onClick={() => onSeek(cue.sec)}
                 aria-label={cue.aria}
                 title={cue.aria}
@@ -426,13 +457,11 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
                       }
                     : undefined
                 }
-                className={`h-10 rounded-xl flex items-center justify-center border transition-all ${
-                  isActiveSection
-                    ? ''
-                    : 'glass-button text-white/75 hover:text-white'
+                className={`h-9 landscape:h-6 lg:h-10 rounded-xl flex items-center justify-center border transition-all disabled:opacity-40 ${
+                  isActiveSection ? '' : 'glass-button text-white/75 hover:text-white'
                 }`}
               >
-                <CueIcon className="w-4 h-4" />
+                <CueIcon className="w-4 h-4 landscape:w-3 landscape:h-3 lg:w-4 lg:h-4" />
               </button>
             );
           })}
@@ -440,7 +469,7 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
       </div>
 
       {/* Bottom Row: Volume Aligned LEFT | Play / Pause / Stop Controls in the MIDDLE | Vinyl Warmth Aligned RIGHT */}
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-4 pt-2.5 border-t border-white/10 shrink-0 w-full">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-4 pt-2 landscape:pt-1 lg:pt-2.5 border-t border-white/10 shrink-0 w-full">
         {/* LEFT: Master Volume Controller Aligned Left */}
         <div
           id="volume-controller-left"
@@ -448,7 +477,7 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
         >
           <Volume2
             style={{ color: themePalette.lightHex }}
-            className="w-4 h-4 shrink-0"
+            className="w-4 h-4 landscape:w-3.5 landscape:h-3.5 lg:w-4 lg:h-4 shrink-0"
           />
           <input
             id="master-volume"
@@ -472,16 +501,18 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
         >
           <button
             type="button"
+            disabled={isStandby}
             onClick={() => onPrevious(true)}
             aria-label="Previous Track"
             title="Previous Track"
-            className="glass-button w-9 h-9 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center text-white transition-all"
+            className="glass-button w-9 h-9 landscape:w-8 landscape:h-7 lg:w-11 lg:h-11 rounded-2xl landscape:rounded-xl lg:rounded-2xl flex items-center justify-center text-white transition-all disabled:opacity-40"
           >
-            <SkipBack className="w-4 h-4" />
+            <SkipBack className="w-4 h-4 landscape:w-3.5 landscape:h-3.5 lg:w-4 lg:h-4" />
           </button>
 
           <button
             type="button"
+            disabled={isStandby}
             onClick={onTogglePlay}
             aria-label={isPlaying ? 'Pause Playback' : 'Play Playback'}
             title={isPlaying ? 'Pause' : 'Play'}
@@ -489,37 +520,40 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
               backgroundColor: themePalette.primaryHex,
               boxShadow: `0 0 16px ${themePalette.glowRgba}`,
             }}
-            className="w-11 h-9 sm:w-14 sm:h-11 rounded-2xl text-[#12100e] flex items-center justify-center transition-all hover:brightness-110"
+            className="w-11 h-9 landscape:w-11 landscape:h-7 lg:w-14 lg:h-11 rounded-2xl landscape:rounded-xl lg:rounded-2xl text-[#12100e] flex items-center justify-center transition-all hover:brightness-110 disabled:opacity-40"
           >
             {isPlaying ? (
-              <Pause className="w-5 h-5 fill-current" />
+              <Pause className="w-5 h-5 landscape:w-4 landscape:h-4 lg:w-5 lg:h-5 fill-current" />
             ) : (
-              <Play className="w-5 h-5 fill-current ml-0.5" />
+              <Play className="w-5 h-5 landscape:w-4 landscape:h-4 lg:w-5 lg:h-5 fill-current ml-0.5" />
             )}
           </button>
 
           <button
             type="button"
+            disabled={isStandby}
             onClick={onStop}
             aria-label="Stop Playback"
             title="Stop Playback (Reset to 0:00)"
-            className="glass-button w-9 h-9 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center text-white transition-all"
+            className="glass-button w-9 h-9 landscape:w-8 landscape:h-7 lg:w-11 lg:h-11 rounded-2xl landscape:rounded-xl lg:rounded-2xl flex items-center justify-center text-white transition-all disabled:opacity-40"
           >
-            <Square className="w-3.5 h-3.5 fill-current" />
+            <Square className="w-3.5 h-3.5 landscape:w-3 landscape:h-3 lg:w-3.5 lg:h-3.5 fill-current" />
           </button>
 
           <button
             type="button"
+            disabled={isStandby}
             onClick={onNext}
             aria-label="Next Track"
             title="Next Track"
-            className="glass-button w-9 h-9 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center text-white transition-all"
+            className="glass-button w-9 h-9 landscape:w-8 landscape:h-7 lg:w-11 lg:h-11 rounded-2xl landscape:rounded-xl lg:rounded-2xl flex items-center justify-center text-white transition-all disabled:opacity-40"
           >
-            <SkipForward className="w-4 h-4" />
+            <SkipForward className="w-4 h-4 landscape:w-3.5 landscape:h-3.5 lg:w-4 lg:h-4" />
           </button>
 
           <button
             type="button"
+            disabled={isStandby}
             onClick={onToggleRepeatOne}
             aria-label="Toggle Loop Current Song"
             aria-pressed={repeatOne}
@@ -533,11 +567,11 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
                   }
                 : undefined
             }
-            className={`w-9 h-9 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center border transition-all ${
+            className={`w-9 h-9 landscape:w-8 landscape:h-7 lg:w-11 lg:h-11 rounded-2xl landscape:rounded-xl lg:rounded-2xl flex items-center justify-center border transition-all disabled:opacity-40 ${
               repeatOne ? '' : 'glass-button text-white/75'
             }`}
           >
-            <Repeat className="w-4 h-4" />
+            <Repeat className="w-4 h-4 landscape:w-3.5 landscape:h-3.5 lg:w-4 lg:h-4" />
           </button>
         </div>
 
@@ -548,7 +582,7 @@ export const TransportAndQueueDeck: React.FC<TransportAndQueueDeckProps> = ({
         >
           <Sparkles
             style={{ color: themePalette.lightHex }}
-            className="w-4 h-4 shrink-0"
+            className="w-4 h-4 landscape:w-3.5 landscape:h-3.5 lg:w-4 lg:h-4 shrink-0"
           />
           <input
             id="vinyl-crackle"

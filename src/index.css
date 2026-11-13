@@ -43,6 +43,37 @@
   will-change: transform;
 }
 
+/* Initial Load Guidance: Hand Pointer Animating Toward Connect Spotify Button & Blinking Connect Button */
+@keyframes handPointerNudge {
+  0%, 100% {
+    transform: translateX(-8px) scale(1);
+  }
+  50% {
+    transform: translateX(3px) scale(1.06);
+  }
+}
+
+.hand-pointer-nudge {
+  animation: handPointerNudge 0.95s ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes spotifyConnectBlink {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.96);
+  }
+}
+
+.spotify-connect-blink {
+  animation: spotifyConnectBlink 1s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
 /* Lightweight CRT Scanline Overlay (No Continuous Repaint Loop) */
 .crt-scanlines {
   background: repeating-linear-gradient(

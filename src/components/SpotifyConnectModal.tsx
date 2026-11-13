@@ -28,7 +28,9 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
   onLoadPlaylistByIdOrUrl,
 }) => {
   const [accountNameInput, setAccountNameInput] = useState('usmanmr');
-  const [playlistUrlInput, setPlaylistUrlInput] = useState('');
+  const [playlistUrlInput, setPlaylistUrlInput] = useState(
+    'https://open.spotify.com/playlist/2ENMa1IQDSlEPDKNmS25K2'
+  );
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -58,8 +60,7 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
     setIsLoading(true);
     try {
       await onLoadPlaylistByIdOrUrl(playlistUrlInput.trim());
-      setStatusMessage('Loaded Spotify playlist onto the turntable!');
-      setPlaylistUrlInput('');
+      setStatusMessage('Loaded complete Spotify playlist (all songs) onto the turntable!');
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Failed to load Spotify playlist.');
     } finally {
@@ -81,10 +82,10 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
             <Disc3 style={{ color: themePalette.lightHex }} className="w-6 h-6" />
             <div>
               <h2 id="spotify-modal-title" className="font-display text-lg font-bold text-white">
-                Spotify Account & Playlists
+                MaxVinyFy · Spotify Connect
               </h2>
               <p className="text-xs text-white/60">
-                One-click sign in to load all your Spotify playlists — no API keys required.
+                One-click sign in to load all your Spotify playlists &amp; full tracklists — no API keys required.
               </p>
             </div>
           </div>
@@ -109,7 +110,7 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
                     Connected as <span className="text-[#1ed760]">{spotifyUserLabel}</span>
                   </p>
                   <p className="text-[11px] text-white/55">
-                    {playlists.length} Spotify playlists synced & ready
+                    {playlists.length} Spotify playlists synced &amp; ready
                   </p>
                 </div>
               </div>
@@ -135,6 +136,7 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
                   className="flex-1 px-3.5 py-2.5 rounded-xl bg-black/55 border border-white/15 text-xs text-white focus:outline-none focus:border-[#1ed760]"
                 />
                 <button
+                  id="spotify-one-click-login-btn"
                   type="submit"
                   disabled={isLoading}
                   className="px-5 py-2.5 rounded-xl bg-[#1ed760] hover:bg-[#1fdf64] text-black font-bold text-xs flex items-center justify-center gap-2 transition-transform active:scale-98 cursor-pointer shrink-0"
@@ -162,55 +164,57 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
         )}
 
         {/* User's Synced Spotify Playlists */}
-        <div className="bg-black/35 border border-white/10 rounded-2xl p-4 space-y-2.5">
-          <h3 className="font-display text-sm font-semibold text-white flex items-center gap-2">
-            <Music style={{ color: themePalette.lightHex }} className="w-4 h-4" />
-            <span>Your Spotify Playlists ({playlists.length})</span>
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-1">
-            {playlists.map((pl) => {
-              const isSelected = pl.id === activePlaylistId;
-              return (
-                <button
-                  key={pl.id}
-                  type="button"
-                  onClick={() => {
-                    onSelectPlaylist(pl.id);
-                    onClose();
-                  }}
-                  style={
-                    isSelected
-                      ? {
-                          backgroundColor: themePalette.softBgRgba,
-                          borderColor: themePalette.borderRgba,
-                        }
-                      : undefined
-                  }
-                  className={`px-3.5 py-2.5 rounded-xl flex items-center justify-between gap-2 text-left border transition-all ${
-                    isSelected
-                      ? 'text-white'
-                      : 'glass-button text-white/80 hover:text-white border-transparent'
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold truncate">{pl.name}</p>
-                    <p className="text-[10px] text-white/50 truncate">
-                      {pl.subtitle || `${pl.tracks.length} tracks`}
-                    </p>
-                  </div>
-                  <span
-                    style={{ color: themePalette.lightHex }}
-                    className="text-[11px] font-mono shrink-0"
+        {playlists.length > 0 && (
+          <div className="bg-black/35 border border-white/10 rounded-2xl p-4 space-y-2.5">
+            <h3 className="font-display text-sm font-semibold text-white flex items-center gap-2">
+              <Music style={{ color: themePalette.lightHex }} className="w-4 h-4" />
+              <span>Your Spotify Playlists ({playlists.length})</span>
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-1">
+              {playlists.map((pl) => {
+                const isSelected = pl.id === activePlaylistId;
+                return (
+                  <button
+                    key={pl.id}
+                    type="button"
+                    onClick={() => {
+                      onSelectPlaylist(pl.id);
+                      onClose();
+                    }}
+                    style={
+                      isSelected
+                        ? {
+                            backgroundColor: themePalette.softBgRgba,
+                            borderColor: themePalette.borderRgba,
+                          }
+                        : undefined
+                    }
+                    className={`px-3.5 py-2.5 rounded-xl flex items-center justify-between gap-2 text-left border transition-all ${
+                      isSelected
+                        ? 'text-white'
+                        : 'glass-button text-white/80 hover:text-white border-transparent'
+                    }`}
                   >
-                    Play
-                  </span>
-                </button>
-              );
-            })}
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold truncate">{pl.name}</p>
+                      <p className="text-[10px] text-white/50 truncate">
+                        {pl.tracks.length > 1 ? `${pl.tracks.length} tracks · Spotify` : pl.subtitle}
+                      </p>
+                    </div>
+                    <span
+                      style={{ color: themePalette.lightHex }}
+                      className="text-[11px] font-mono shrink-0"
+                    >
+                      Play
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Optional Quick Playlist Link Loader */}
+        {/* Direct Spotify Playlist Link Loader (Loads All 75 Songs) */}
         <form
           onSubmit={handleAddPlaylistSubmit}
           className="bg-black/35 border border-white/10 rounded-2xl p-3.5 flex items-center gap-2"
@@ -224,13 +228,14 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
             className="flex-1 px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-xs text-white focus:outline-none"
           />
           <button
+            id="spotify-load-playlist-btn"
             type="submit"
             disabled={isLoading}
             style={{ color: themePalette.lightHex }}
-            className="glass-button px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center gap-1.5 shrink-0"
+            className="glass-button px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
           >
             <PlusCircle className="w-4 h-4" />
-            <span>Add</span>
+            <span>Load Playlist</span>
           </button>
         </form>
       </div>

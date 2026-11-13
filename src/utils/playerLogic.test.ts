@@ -20,6 +20,8 @@ import {
   computeDominantAccentFromRgbSamples,
   getTvChannelTheme,
   getNextTvChannelIndex,
+  calculateSeekTimeFromTonearmAngle,
+  EMPTY_STANDBY_TRACK,
   type TrackItem,
 } from './playerLogic';
 
@@ -223,4 +225,22 @@ test('getTvChannelTheme and getNextTvChannelIndex cycle through 5 YouTube visual
   assert.equal(getNextTvChannelIndex(0), 1);
   assert.equal(getNextTvChannelIndex(4), 0);
 });
+
+test('calculateSeekTimeFromTonearmAngle maps dragged playing head angle to exact song timestamp', () => {
+  const startDrag = calculateSeekTimeFromTonearmAngle(6, 200);
+  assert.equal(startDrag.targetTimeSec, 0);
+  assert.equal(startDrag.grooveRadiusPercent, 46);
+
+  const midDrag = calculateSeekTimeFromTonearmAngle(15.5, 200);
+  assert.equal(midDrag.targetTimeSec, 100);
+  assert.equal(midDrag.progressRatio, 0.5);
+
+  const endDrag = calculateSeekTimeFromTonearmAngle(25, 200);
+  assert.equal(endDrag.targetTimeSec, 200);
+  assert.equal(endDrag.grooveRadiusPercent, 21);
+
+  const standbyDrag = calculateSeekTimeFromTonearmAngle(18, EMPTY_STANDBY_TRACK.durationSec);
+  assert.equal(standbyDrag.targetTimeSec, 0);
+});
+
 

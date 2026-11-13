@@ -86,6 +86,28 @@ export function getShuffledNextTrackIndex(
   return (currentIndex + offset) % totalTracks;
 }
 
+export const EMPTY_STANDBY_TRACK: TrackItem = {
+  id: 'standby-empty',
+  title: 'No Song Loaded',
+  artist: 'Click Connect Spotify to Load Your Playlists',
+  album: 'MaxVinyFy · Standby',
+  durationSec: 0,
+  bpm: 110,
+  year: 2025,
+  artworkUrl: '',
+  youtubeVideoId: '',
+  synthPreset: 'midnight-synth',
+  tvFrames: [],
+};
+
+export const EMPTY_STANDBY_PLAYLIST: PlaylistPack = {
+  id: 'standby-playlist',
+  name: 'No Playlist Loaded',
+  subtitle: 'Connect Spotify to load your playlists',
+  source: 'spotify-live',
+  tracks: [],
+};
+
 /**
  * Computes the exact tonearm angle and vinyl groove landing radius as a function of song duration and current playback time.
  * At 0:00 (0%), the stylus lands on the outer vinyl groove (6 deg, 46% radius).
@@ -95,12 +117,42 @@ export function calculateTonearmTracking(
   currentTimeSec: number,
   durationSec: number
 ): { progressRatio: number; tonearmAngleDeg: number; grooveRadiusPercent: number } {
-  const safeDuration = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : 180;
-  const clampedSec = clampSeekTime(currentTimeSec, safeDuration);
-  const progressRatio = clampedSec / safeDuration;
+  if (!Number.isFinite(durationSec) || durationSec <= 0) {
+    return { progressRatio: 0, tonearmAngleDeg: 6, grooveRadiusPercent: 46 };
+  }
+  const clampedSec = clampSeekTime(currentTimeSec, durationSec);
+  const progressRatio = clampedSec / durationSec;
   const tonearmAngleDeg = Number((6 + progressRatio * 19).toFixed(2));
   const grooveRadiusPercent = Number((46 - progressRatio * 25).toFixed(2));
   return { progressRatio, tonearmAngleDeg, grooveRadiusPercent };
+}
+
+/**
+ * Inverse of calculateTonearmTracking: converts a user-dragged tonearm angle [6 deg..25 deg]
+ * above the vinyl record into the exact target playback timestamp in seconds.
+ */
+export function calculateSeekTimeFromTonearmAngle(
+  angleDeg: number,
+  durationSec: number
+): {
+  targetTimeSec: number;
+  tonearmAngleDeg: number;
+  progressRatio: number;
+  grooveRadiusPercent: number;
+} {
+  if (!Number.isFinite(durationSec) || durationSec <= 0) {
+    return { targetTimeSec: 0, tonearmAngleDeg: 6, progressRatio: 0, grooveRadiusPercent: 46 };
+  }
+  const safeAngle = Number.isFinite(angleDeg) ? Math.max(6, Math.min(25, angleDeg)) : 6;
+  const progressRatio = (safeAngle - 6) / 19;
+  const targetTimeSec = Number((progressRatio * durationSec).toFixed(2));
+  const grooveRadiusPercent = Number((46 - progressRatio * 25).toFixed(2));
+  return {
+    targetTimeSec,
+    tonearmAngleDeg: Number(safeAngle.toFixed(2)),
+    progressRatio: Number(progressRatio.toFixed(4)),
+    grooveRadiusPercent,
+  };
 }
 
 /**

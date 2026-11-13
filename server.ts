@@ -167,7 +167,7 @@ async function fetchPublicSpotifyPlaylistById(playlistId: string) {
 
   const playlistName = entity.name || entity.title || 'Spotify Playlist';
   const playlistCover = entity.coverArt?.sources?.[0]?.url || '';
-  const rawTracks = entity.trackList.slice(0, 35);
+  const rawTracks = entity.trackList;
 
   const tracks = await Promise.all(
     rawTracks.map(
@@ -217,6 +217,66 @@ async function fetchPublicSpotifyPlaylistById(playlistId: string) {
   };
   spotifyPlaylistCache.set(playlistId, payload);
   return payload;
+}
+
+const fullAudioCache = new Map<string, { streamUrl: string; durationSec: number }>();
+
+async function resolveFullLengthAudioStream(
+  rawTitle: string,
+  rawArtist: string
+): Promise<{ streamUrl: string; durationSec: number } | null> {
+  const cleanTitle = rawTitle.replace(/\s*\(From.*?\)/i, '').trim() || rawTitle;
+  const primaryArtist = rawArtist.split(',')[0].trim() || rawArtist;
+  const cacheKey = `${cleanTitle}::${primaryArtist}`.toLowerCase();
+
+  if (fullAudioCache.has(cacheKey)) {
+    return fullAudioCache.get(cacheKey)!;
+  }
+
+  try {
+    const q = encodeURIComponent(`${cleanTitle} ${primaryArtist}`.trim());
+    const searchUrl = `https://www.jiosaavn.com/api.php?p=1&q=${q}&_format=json&_marker=0&api_version=4&ctx=web6dot0&n=5&__call=search.getResults`;
+    const searchRes = await fetch(searchUrl, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      },
+    });
+    if (!searchRes.ok) return null;
+    const searchJson = (await searchRes.json()) as {
+      results?: Array<{
+        title?: string;
+        more_info?: { duration?: string | number; encrypted_media_url?: string };
+      }>;
+    };
+    const match = searchJson.results?.find((item) => item?.more_info?.encrypted_media_url);
+    const encryptedUrl = match?.more_info?.encrypted_media_url;
+    if (!encryptedUrl) return null;
+
+    const authApiUrl = `https://www.jiosaavn.com/api.php?__call=song.generateAuthToken&url=${encodeURIComponent(
+      encryptedUrl
+    )}&bitrate=160&api_version=4&_format=json&ctx=web6dot0&_marker=0`;
+    const authRes = await fetch(authApiUrl, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      },
+    });
+    if (!authRes.ok) return null;
+    const authJson = (await authRes.json()) as { auth_url?: string };
+    if (!authJson.auth_url) return null;
+
+    const streamUrl = authJson.auth_url
+      .split('?')[0]
+      .replace('web.saavncdn.com', 'aac.saavncdn.com')
+      .replace('http://', 'https://');
+    const durationSec = Number(match?.more_info?.duration) || 0;
+    const resolved = { streamUrl, durationSec };
+    fullAudioCache.set(cacheKey, resolved);
+    return resolved;
+  } catch {
+    return null;
+  }
 }
 
 async function startServer() {
@@ -694,6 +754,22 @@ async function startServer() {
 
     lyricsCache.set(cacheKey, null);
     res.json({ syncedLyrics: null });
+  });
+
+  // 10. Resolve Full-Length Song Audio Stream URL (Prevents 30-second preview looping)
+  app.get('/api/audio/full-track', async (req, res) => {
+    const title = String(req.query.title || '').trim();
+    const artist = String(req.query.artist || '').trim();
+    if (!title) {
+      res.status(400).json({ error: 'Missing title' });
+      return;
+    }
+    const resolved = await resolveFullLengthAudioStream(title, artist);
+    if (!resolved) {
+      res.json({ streamUrl: null, durationSec: 0 });
+      return;
+    }
+    res.json(resolved);
   });
 
   if (process.env.NODE_ENV !== 'production') {
