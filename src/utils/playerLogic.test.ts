@@ -64,6 +64,10 @@ import {
   clampAlbumArtDragOffset,
   CRT_TINT_PRESETS,
   getNextCrtTintIndex,
+  getCrtTintKnobAngle,
+  clampHolderBoxDragOffset,
+  TRACK_CHANGE_TIMELINE_MS,
+  getTrackChangeStagePose,
   removePlaylistById,
   type TrackItem,
   type PlaylistPack,
@@ -774,6 +778,104 @@ test('CRT_TINT_PRESETS and removePlaylistById cycle broadcast tints and delete s
   assert.equal(afterDeleteOther.remaining.length, 2);
   assert.equal(afterDeleteOther.nextActiveId, 'pl-1');
 });
+
+test('getCrtTintKnobAngle maps 4 CRT filter/tint presets to rotary knob angles [-90, -30, +30, +90]', () => {
+  assert.equal(getCrtTintKnobAngle(0), -90);
+  assert.equal(getCrtTintKnobAngle(1), -30);
+  assert.equal(getCrtTintKnobAngle(2), 30);
+  assert.equal(getCrtTintKnobAngle(3), 90);
+  assert.equal(getCrtTintKnobAngle(4), -90);
+});
+
+test('clampHolderBoxDragOffset clamps the square album-art holder box within wooden board bounds and snaps to home', () => {
+  // Dropping within snap radius snaps cleanly back to (0, 0) above the vinyl
+  const snappedHome = clampHolderBoxDragOffset({
+    offsetX: 6,
+    offsetY: -5,
+    boardWidth: 500,
+    boardHeight: 420,
+    boxSize: 100,
+    homeCenterX: 250,
+    homeCenterY: 66,
+  });
+  assert.equal(snappedHome.offsetX, 0);
+  assert.equal(snappedHome.offsetY, 0);
+  assert.equal(snappedHome.isAtHomePosition, true);
+
+  // Dragging across the wooden board preserves offset while staying inside board bounds
+  const draggedRight = clampHolderBoxDragOffset({
+    offsetX: 110,
+    offsetY: 85,
+    boardWidth: 500,
+    boardHeight: 420,
+    boxSize: 100,
+    homeCenterX: 250,
+    homeCenterY: 66,
+  });
+  assert.equal(draggedRight.offsetX, 110);
+  assert.equal(draggedRight.offsetY, 85);
+  assert.equal(draggedRight.isAtHomePosition, false);
+
+  // Extreme drag beyond board edges is clamped so the holder box never leaves the wooden surface
+  const clampedExtreme = clampHolderBoxDragOffset({
+    offsetX: -999,
+    offsetY: 999,
+    boardWidth: 500,
+    boardHeight: 420,
+    boxSize: 100,
+    homeCenterX: 250,
+    homeCenterY: 66,
+  });
+  assert.equal(clampedExtreme.offsetX, -196); // minX = (50 + 4) - 250 = -196
+  assert.equal(clampedExtreme.offsetY, 300); // maxY = (420 - 50 - 4) - 66 = 300
+  assert.equal(clampedExtreme.isAtHomePosition, false);
+});
+
+test('getTrackChangeStagePose sequences all 6 steps (a-f) of the track-change animation within ~1.56s', () => {
+  assert.ok(
+    TRACK_CHANGE_TIMELINE_MS.lowerTonearmEndMs >= 1500 &&
+      TRACK_CHANGE_TIMELINE_MS.lowerTonearmEndMs <= 2000
+  );
+
+  // Step a & d: vinyl lifts/slides into box above it, tonearm swings to rest, outgoing art still in box
+  const stepA = getTrackChangeStagePose('lifting-vinyl-to-box');
+  assert.equal(stepA.holderSlotOpen, true);
+  assert.equal(stepA.forceTonearmRest, true);
+  assert.equal(stepA.showOutgoingTrackInBox, true);
+  assert.match(stepA.vinylTransform, /translate3d\(0%, -56%, 0\)/);
+
+  // Step b & d: holder box shrinks & slides toward playlist thumbnail
+  const stepB = getTrackChangeStagePose('returning-box-to-playlist');
+  assert.equal(stepB.forceTonearmRest, true);
+  assert.equal(stepB.showOutgoingTrackInBox, true);
+  assert.equal(stepB.vinylOpacity, 0);
+  assert.match(stepB.holderBoxTransform, /scale\(0\.24\)/);
+
+  // Step c & d: new track's holder box slides out from playlist onto board
+  const stepC = getTrackChangeStagePose('bringing-new-box-from-playlist');
+  assert.equal(stepC.forceTonearmRest, true);
+  assert.equal(stepC.showOutgoingTrackInBox, false);
+  assert.equal(stepC.holderSlotOpen, true);
+  assert.equal(stepC.holderBoxOpacity, 1);
+
+  // Step e & d: new box opens and vinyl slides out onto spindle
+  const stepE = getTrackChangeStagePose('sliding-vinyl-to-spindle');
+  assert.equal(stepE.forceTonearmRest, true);
+  assert.equal(stepE.holderSlotOpen, true);
+  assert.equal(stepE.vinylOpacity, 1);
+  assert.match(stepE.vinylTransform, /scale\(1\)/);
+
+  // Step f: tonearm swings back in and lowers onto record
+  const stepF = getTrackChangeStagePose('lowering-tonearm');
+  assert.equal(stepF.forceTonearmRest, false);
+  assert.equal(stepF.holderSlotOpen, false);
+  assert.equal(stepF.vinylOpacity, 1);
+
+  const idlePose = getTrackChangeStagePose('idle');
+  assert.equal(idlePose.forceTonearmRest, false);
+  assert.equal(idlePose.holderSlotOpen, false);
+});
+
 
 
 

@@ -21,8 +21,10 @@ import {
   formatDuration,
   clampSeekTime,
   resolveActiveArtworkState,
-  clampAlbumArtDragOffset,
-  isAlbumArtSyncedToSpindle,
+  clampHolderBoxDragOffset,
+  TRACK_CHANGE_TIMELINE_MS,
+  getTrackChangeStagePose,
+  type TrackChangePhase,
   type TonearmMotionPhase,
   type TrackItem,
   type DominantThemePalette,
@@ -31,7 +33,7 @@ import {
 import { usePlaybackSecond } from '../utils/playbackStore';
 import { SyncedLyricsPanel } from './SyncedLyricsPanel';
 
-const ALBUM_ART_POS_STORAGE_KEY = 'mvf_album_art_pos_v1';
+const HOLDER_BOX_POS_STORAGE_KEY = 'mvf_holder_box_pos_v2';
 
 export interface TurntableDeckProps {
   track: TrackItem;
@@ -591,6 +593,7 @@ interface RasterTonearmProps {
   isDocumentHidden: boolean;
   lowPowerMode: boolean;
   prefersReducedMotion: boolean;
+  forceTonearmRest?: boolean;
   chassisRef: React.RefObject<HTMLDivElement | null>;
   draggedTonearmAngle: number | null;
   onDragAngleChange: (angle: number | null) => void;
@@ -606,6 +609,7 @@ const RasterTonearm = React.memo<RasterTonearmProps>(
     isDocumentHidden,
     lowPowerMode,
     prefersReducedMotion,
+    forceTonearmRest = false,
     chassisRef,
     draggedTonearmAngle,
     onDragAngleChange,
@@ -615,10 +619,10 @@ const RasterTonearm = React.memo<RasterTonearmProps>(
     const immediateSnap = lowPowerMode || prefersReducedMotion;
 
     const [tonearmPhase, setTonearmPhase] = useState<TonearmMotionPhase>(() =>
-      isPlaying && !isStandby ? 'playing' : 'rest'
+      isPlaying && !isStandby && !forceTonearmRest ? 'playing' : 'rest'
     );
 
-    const prevPlayingRef = useRef<boolean>(isPlaying && !isStandby);
+    const prevPlayingRef = useRef<boolean>(isPlaying && !isStandby && !forceTonearmRest);
     const prevTrackIdRef = useRef<string>(trackId);
     const timersRef = useRef<number[]>([]);
 
@@ -630,7 +634,7 @@ const RasterTonearm = React.memo<RasterTonearmProps>(
     };
 
     useEffect(() => {
-      const shouldBeActive = isPlaying && !isStandby;
+      const shouldBeActive = isPlaying && !isStandby && !forceTonearmRest;
       const wasActive = prevPlayingRef.current;
       const trackChanged = prevTrackIdRef.current !== trackId;
 
@@ -644,49 +648,64 @@ const RasterTonearm = React.memo<RasterTonearmProps>(
         return;
       }
 
+      if (forceTonearmRest) {
+        // Step d: Tonearm lifts and swings out of the way to rest while vinyl swap happens
+        setTonearmPhase('returning-to-rest');
+        return clearCueTimers;
+      }
+
       if (shouldBeActive && (!wasActive || trackChanged)) {
-        setTonearmPhase('lifting-to-play');
+        // Step f: Tonearm swings back in and lowers onto the record
+        setTonearmPhase('swinging-to-groove');
         const t1 = window.setTimeout(() => {
-          setTonearmPhase('swinging-to-groove');
-        }, 280);
-        const t2 = window.setTimeout(() => {
           setTonearmPhase('dropping-to-groove');
-        }, 860);
-        const t3 = window.setTimeout(() => {
+        }, 180);
+        const t2 = window.setTimeout(() => {
           setTonearmPhase('playing');
-        }, 1180);
-        timersRef.current.push(t1, t2, t3);
+        }, 320);
+        timersRef.current.push(t1, t2);
       } else if (!shouldBeActive && wasActive) {
         setTonearmPhase('lifting-to-rest');
         const t1 = window.setTimeout(() => {
           setTonearmPhase('returning-to-rest');
-        }, 240);
+        }, 200);
         const t2 = window.setTimeout(() => {
           setTonearmPhase('rest');
-        }, 720);
+        }, 560);
         timersRef.current.push(t1, t2);
       } else if (!shouldBeActive) {
         setTonearmPhase('rest');
       }
 
       return clearCueTimers;
-    }, [isPlaying, isStandby, trackId, immediateSnap]);
+    }, [isPlaying, isStandby, trackId, forceTonearmRest, immediateSnap]);
 
     useEffect(() => {
-      if (isPlaying && !isStandby && currentSecond > 1 && tonearmPhase !== 'playing') {
+      if (
+        isPlaying &&
+        !isStandby &&
+        !forceTonearmRest &&
+        currentSecond > 1 &&
+        tonearmPhase !== 'playing'
+      ) {
         clearCueTimers();
         setTonearmPhase('playing');
       }
-    }, [currentSecond, isPlaying, isStandby, tonearmPhase]);
+    }, [currentSecond, isPlaying, isStandby, forceTonearmRest, tonearmPhase]);
 
     const effectivePhase: TonearmMotionPhase =
-      draggedTonearmAngle !== null ? 'dragging' : tonearmPhase;
+      draggedTonearmAngle !== null
+        ? 'dragging'
+        : forceTonearmRest
+        ? 'returning-to-rest'
+        : tonearmPhase;
 
     const grooveTracking = calculateTonearmTracking(currentSecond, durationSec);
     let activeTonearmAngleDeg = grooveTracking.tonearmAngleDeg;
     if (draggedTonearmAngle !== null) {
       activeTonearmAngleDeg = draggedTonearmAngle;
     } else if (
+      forceTonearmRest ||
       (effectivePhase === 'rest' && currentSecond <= 0) ||
       (effectivePhase === 'lifting-to-play' && currentSecond <= 0) ||
       effectivePhase === 'returning-to-rest'
@@ -702,17 +721,17 @@ const RasterTonearm = React.memo<RasterTonearmProps>(
       armTransition = 'none';
       shadowTransition = immediateSnap ? 'none' : 'transform 120ms ease-out, opacity 120ms ease';
     } else if (effectivePhase === 'lifting-to-play' || effectivePhase === 'lifting-to-rest') {
-      armTransition = 'transform 260ms ease-out';
-      shadowTransition = 'transform 260ms ease-out, opacity 260ms ease-out';
+      armTransition = 'transform 220ms ease-out';
+      shadowTransition = 'transform 220ms ease-out, opacity 220ms ease-out';
     } else if (effectivePhase === 'swinging-to-groove') {
-      armTransition = 'transform 580ms cubic-bezier(0.32, 0.08, 0.24, 1)';
-      shadowTransition = 'transform 580ms cubic-bezier(0.32, 0.08, 0.24, 1), opacity 240ms ease';
+      armTransition = 'transform 260ms cubic-bezier(0.32, 0.08, 0.24, 1)';
+      shadowTransition = 'transform 260ms cubic-bezier(0.32, 0.08, 0.24, 1), opacity 200ms ease';
     } else if (effectivePhase === 'returning-to-rest') {
-      armTransition = 'transform 480ms cubic-bezier(0.32, 0.08, 0.24, 1)';
-      shadowTransition = 'transform 480ms cubic-bezier(0.32, 0.08, 0.24, 1), opacity 240ms ease';
+      armTransition = 'transform 260ms cubic-bezier(0.32, 0.08, 0.24, 1)';
+      shadowTransition = 'transform 260ms cubic-bezier(0.32, 0.08, 0.24, 1), opacity 200ms ease';
     } else if (effectivePhase === 'dropping-to-groove') {
-      armTransition = 'transform 300ms ease-in';
-      shadowTransition = 'transform 300ms ease-in, opacity 300ms ease-in';
+      armTransition = 'transform 180ms ease-in';
+      shadowTransition = 'transform 180ms ease-in, opacity 180ms ease-in';
     }
 
     const dragActiveRef = useRef<boolean>(false);
@@ -922,15 +941,124 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
     const [isScratching, setIsScratching] = useState(false);
     const [scratchFlash, setScratchFlash] = useState(false);
 
-    // Multi-URL album art resolution & fallback state
+    // 6-Step Track-Change Animation Sequence State Machine (a -> f)
+    const [trackChangePhase, setTrackChangePhase] = useState<TrackChangePhase>('idle');
+    const [displayedBoxTrack, setDisplayedBoxTrack] = useState<TrackItem>(track);
+    const prevAnimatedTrackRef = useRef<TrackItem>(track);
+    const trackChangeTimersRef = useRef<number[]>([]);
+    const trackChangePhaseRef = useRef<TrackChangePhase>('idle');
+    trackChangePhaseRef.current = trackChangePhase;
+
+    const clearTrackChangeTimers = () => {
+      for (const timerId of trackChangeTimersRef.current) {
+        window.clearTimeout(timerId);
+      }
+      trackChangeTimersRef.current = [];
+    };
+
+    useEffect(() => {
+      return clearTrackChangeTimers;
+    }, []);
+
+    // Trigger snappy (~1.56s) 6-step track-change animation when a different song is selected
+    // Skippable / non-blocking if user clicks another track mid-animation!
+    useEffect(() => {
+      const prevTrack = prevAnimatedTrackRef.current;
+      if (prevTrack.id === track.id) {
+        setDisplayedBoxTrack(track);
+        return;
+      }
+      prevAnimatedTrackRef.current = track;
+
+      // Cancel any in-flight animation immediately so rapid clicks never queue up
+      clearTrackChangeTimers();
+
+      if (
+        prefersReducedMotion ||
+        prevTrack.id === 'standby-empty' ||
+        track.id === 'standby-empty'
+      ) {
+        setDisplayedBoxTrack(track);
+        setTrackChangePhase('idle');
+        return;
+      }
+
+      const wasMidAnimation = trackChangePhaseRef.current !== 'idle';
+
+      if (wasMidAnimation) {
+        // User clicked another track mid-animation: cut immediately to bringing the new track's box in!
+        setDisplayedBoxTrack(track);
+        setTrackChangePhase('bringing-new-box-from-playlist');
+
+        const tSlide = window.setTimeout(() => {
+          setTrackChangePhase('sliding-vinyl-to-spindle');
+        }, 280);
+        const tLower = window.setTimeout(() => {
+          setTrackChangePhase('lowering-tonearm');
+        }, 580);
+        const tIdle = window.setTimeout(() => {
+          setTrackChangePhase('idle');
+        }, 860);
+        trackChangeTimersRef.current.push(tSlide, tLower, tIdle);
+        return;
+      }
+
+      // Full 6-step sequence (a -> b -> c -> d -> e -> f):
+      // Step a & d (0ms): Vinyl lifts/slides off spindle into holder box above it; tonearm lifts & swings to rest
+      setDisplayedBoxTrack(prevTrack);
+      setTrackChangePhase('lifting-vinyl-to-box');
+
+      // Step b (260ms): Old track's holder box animates/shrinks toward its playlist position
+      const tReturnBox = window.setTimeout(() => {
+        setTrackChangePhase('returning-box-to-playlist');
+      }, TRACK_CHANGE_TIMELINE_MS.liftVinylEndMs);
+
+      // Step c (580ms): Newly selected track's holder box animates out from playlist onto wooden board above turntable
+      const tBringNewBox = window.setTimeout(() => {
+        setDisplayedBoxTrack(track);
+        setTrackChangePhase('bringing-new-box-from-playlist');
+      }, TRACK_CHANGE_TIMELINE_MS.returnBoxEndMs);
+
+      // Step e (920ms): New box opens and vinyl record slides out of holder box onto turntable spindle
+      const tSlideVinyl = window.setTimeout(() => {
+        setTrackChangePhase('sliding-vinyl-to-spindle');
+      }, TRACK_CHANGE_TIMELINE_MS.bringNewBoxEndMs);
+
+      // Step f (1260ms): Tonearm swings back in and lowers onto record
+      const tLowerArm = window.setTimeout(() => {
+        setTrackChangePhase('lowering-tonearm');
+      }, TRACK_CHANGE_TIMELINE_MS.slideVinylToSpindleEndMs);
+
+      // Complete (1560ms): Settle back to idle
+      const tIdle = window.setTimeout(() => {
+        setTrackChangePhase('idle');
+      }, TRACK_CHANGE_TIMELINE_MS.lowerTonearmEndMs);
+
+      trackChangeTimersRef.current.push(
+        tReturnBox,
+        tBringNewBox,
+        tSlideVinyl,
+        tLowerArm,
+        tIdle
+      );
+    }, [track, lowPowerMode, prefersReducedMotion]);
+
+    const stagePose = useMemo(
+      () => getTrackChangeStagePose(trackChangePhase),
+      [trackChangePhase]
+    );
+
+    const activeBoxTrack = stagePose.showOutgoingTrackInBox ? displayedBoxTrack : track;
+
+    // Multi-URL album art resolution & fallback state for the active holder box track
     const [failedAttemptCount, setFailedAttemptCount] = useState<number>(0);
     const [imgLoaded, setImgLoaded] = useState<boolean>(false);
 
-    // Draggable circular album art position state (offset in px from spindle center, persisted in localStorage)
-    const [artOffset, setArtOffset] = useState<{ offsetX: number; offsetY: number }>(() => {
+    // Draggable square album-art holder box position state (offset in px from home position above the vinyl)
+    const [holderBoxOffset, setHolderBoxOffset] = useState<{ offsetX: number; offsetY: number }>(() => {
       if (typeof window === 'undefined') return { offsetX: 0, offsetY: 0 };
       try {
-        const raw = window.localStorage.getItem(ALBUM_ART_POS_STORAGE_KEY);
+        const raw = window.localStorage.getItem(HOLDER_BOX_POS_STORAGE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
           if (typeof parsed.offsetX === 'number' && typeof parsed.offsetY === 'number') {
@@ -942,7 +1070,7 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
       }
       return { offsetX: 0, offsetY: 0 };
     });
-    const [isDraggingArt, setIsDraggingArt] = useState<boolean>(false);
+    const [isDraggingHolderBox, setIsDraggingHolderBox] = useState<boolean>(false);
 
     const [draggedTonearmAngle, setDraggedTonearmAngle] = useState<number | null>(null);
 
@@ -952,21 +1080,22 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
     const platterRef = useRef<HTMLDivElement | null>(null);
     const chassisRef = useRef<HTMLDivElement | null>(null);
     const plinthBedRef = useRef<HTMLDivElement | null>(null);
-    const albumArtCoverRef = useRef<HTMLDivElement | null>(null);
-    const artDragStartRef = useRef<{
+    const holderBoxSlotRef = useRef<HTMLDivElement | null>(null);
+    const holderBoxRef = useRef<HTMLDivElement | null>(null);
+    const holderDragStartRef = useRef<{
       startX: number;
       startY: number;
       initialOffsetX: number;
       initialOffsetY: number;
     } | null>(null);
 
-    // Reset artwork error attempts and loading skeleton when track changes
+    // Reset artwork error attempts and loading skeleton when holder box track changes
     const candidateSignature = useMemo(
       () =>
-        `${track.id}|${track.artworkUrl}|${
-          track.images ? track.images.map((i) => i.url).join(',') : ''
+        `${activeBoxTrack.id}|${activeBoxTrack.artworkUrl}|${
+          activeBoxTrack.images ? activeBoxTrack.images.map((i) => i.url).join(',') : ''
         }`,
-      [track.id, track.artworkUrl, track.images]
+      [activeBoxTrack.id, activeBoxTrack.artworkUrl, activeBoxTrack.images]
     );
 
     useEffect(() => {
@@ -975,19 +1104,17 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
     }, [candidateSignature]);
 
     const artworkState = useMemo(
-      () => resolveActiveArtworkState(track, failedAttemptCount),
-      [track, failedAttemptCount]
+      () => resolveActiveArtworkState(activeBoxTrack, failedAttemptCount),
+      [activeBoxTrack, failedAttemptCount]
     );
 
-    const isCenteredOnSpindle = isAlbumArtSyncedToSpindle(
-      artOffset.offsetX,
-      artOffset.offsetY
-    );
+    const isHolderAtHome =
+      Math.hypot(holderBoxOffset.offsetX, holderBoxOffset.offsetY) <= 12;
 
-    const persistArtOffset = (next: { offsetX: number; offsetY: number }) => {
-      setArtOffset(next);
+    const persistHolderBoxOffset = (next: { offsetX: number; offsetY: number }) => {
+      setHolderBoxOffset(next);
       try {
-        window.localStorage.setItem(ALBUM_ART_POS_STORAGE_KEY, JSON.stringify(next));
+        window.localStorage.setItem(HOLDER_BOX_POS_STORAGE_KEY, JSON.stringify(next));
       } catch {
         // ignore
       }
@@ -1009,8 +1136,6 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
 
     const shouldSpin =
       isPlaying && !isScratching && !isStandby && !isDocumentHidden && !prefersReducedMotion;
-
-    const shouldSpinAlbumArt = shouldSpin && isCenteredOnSpindle && !isDraggingArt;
 
     const shouldAnimateDustMotes =
       isPlaying && !isDocumentHidden && !lowPowerMode && !prefersReducedMotion;
@@ -1049,46 +1174,44 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
       };
     }, []);
 
-    // Pointer drag handlers for the circular album art overlay on top of the vinyl
-    const computeClampedArtOffset = (rawOffsetX: number, rawOffsetY: number) => {
+    // Pointer drag handlers for the SQUARE Album-Art Holder Box sitting above the vinyl
+    const computeClampedHolderOffset = (rawOffsetX: number, rawOffsetY: number) => {
       const boardEl = plinthBedRef.current;
-      const platterEl = platterRef.current;
-      const artEl = albumArtCoverRef.current;
-      if (!boardEl || !platterEl) {
+      const slotEl = holderBoxSlotRef.current;
+      const boxEl = holderBoxRef.current;
+      if (!boardEl || !slotEl) {
         return {
           offsetX: Math.round(rawOffsetX),
           offsetY: Math.round(rawOffsetY),
-          isCenteredOnSpindle: isAlbumArtSyncedToSpindle(rawOffsetX, rawOffsetY),
+          isAtHomePosition: Math.hypot(rawOffsetX, rawOffsetY) <= 12,
         };
       }
       const boardRect = boardEl.getBoundingClientRect();
-      const platterRect = platterEl.getBoundingClientRect();
-      const discDiameter = artEl
-        ? artEl.getBoundingClientRect().width
-        : platterRect.width * 0.44;
-      const spindleCenterX = platterRect.left - boardRect.left + platterRect.width / 2;
-      const spindleCenterY = platterRect.top - boardRect.top + platterRect.height / 2;
+      const slotRect = slotEl.getBoundingClientRect();
+      const boxSize = boxEl ? boxEl.getBoundingClientRect().width : slotRect.width;
+      const homeCenterX = slotRect.left - boardRect.left + slotRect.width / 2;
+      const homeCenterY = slotRect.top - boardRect.top + slotRect.height / 2;
 
-      return clampAlbumArtDragOffset({
+      return clampHolderBoxDragOffset({
         offsetX: rawOffsetX,
         offsetY: rawOffsetY,
         boardWidth: boardRect.width,
         boardHeight: boardRect.height,
-        discDiameter,
-        spindleCenterX,
-        spindleCenterY,
+        boxSize,
+        homeCenterX,
+        homeCenterY,
       });
     };
 
-    const handleAlbumArtPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const handleHolderBoxPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
       e.stopPropagation();
       triggerButtonHaptic(lowPowerMode);
-      setIsDraggingArt(true);
-      artDragStartRef.current = {
+      setIsDraggingHolderBox(true);
+      holderDragStartRef.current = {
         startX: e.clientX,
         startY: e.clientY,
-        initialOffsetX: artOffset.offsetX,
-        initialOffsetY: artOffset.offsetY,
+        initialOffsetX: holderBoxOffset.offsetX,
+        initialOffsetY: holderBoxOffset.offsetY,
       };
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -1097,30 +1220,30 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
       }
     };
 
-    const handleAlbumArtPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!isDraggingArt || !artDragStartRef.current) return;
+    const handleHolderBoxPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDraggingHolderBox || !holderDragStartRef.current) return;
       e.stopPropagation();
-      const dx = e.clientX - artDragStartRef.current.startX;
-      const dy = e.clientY - artDragStartRef.current.startY;
-      const clamped = computeClampedArtOffset(
-        artDragStartRef.current.initialOffsetX + dx,
-        artDragStartRef.current.initialOffsetY + dy
+      const dx = e.clientX - holderDragStartRef.current.startX;
+      const dy = e.clientY - holderDragStartRef.current.startY;
+      const clamped = computeClampedHolderOffset(
+        holderDragStartRef.current.initialOffsetX + dx,
+        holderDragStartRef.current.initialOffsetY + dy
       );
-      setArtOffset({ offsetX: clamped.offsetX, offsetY: clamped.offsetY });
+      setHolderBoxOffset({ offsetX: clamped.offsetX, offsetY: clamped.offsetY });
     };
 
-    const handleAlbumArtPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!isDraggingArt || !artDragStartRef.current) return;
+    const handleHolderBoxPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDraggingHolderBox || !holderDragStartRef.current) return;
       e.stopPropagation();
-      const dx = e.clientX - artDragStartRef.current.startX;
-      const dy = e.clientY - artDragStartRef.current.startY;
-      const clamped = computeClampedArtOffset(
-        artDragStartRef.current.initialOffsetX + dx,
-        artDragStartRef.current.initialOffsetY + dy
+      const dx = e.clientX - holderDragStartRef.current.startX;
+      const dy = e.clientY - holderDragStartRef.current.startY;
+      const clamped = computeClampedHolderOffset(
+        holderDragStartRef.current.initialOffsetX + dx,
+        holderDragStartRef.current.initialOffsetY + dy
       );
-      setIsDraggingArt(false);
-      artDragStartRef.current = null;
-      persistArtOffset({ offsetX: clamped.offsetX, offsetY: clamped.offsetY });
+      setIsDraggingHolderBox(false);
+      holderDragStartRef.current = null;
+      persistHolderBoxOffset({ offsetX: clamped.offsetX, offsetY: clamped.offsetY });
       try {
         e.currentTarget.releasePointerCapture(e.pointerId);
       } catch {
@@ -1128,6 +1251,7 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
       }
     };
 
+    // Rotational scratch handlers on the plain vinyl record (vinyl stays fixed on spindle, never translates on drag)
     const handlePlatterPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
       e.stopPropagation();
       if (!platterRef.current) return;
@@ -1181,9 +1305,15 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
       ? 'w-[66px] h-[36px]'
       : 'w-[70px] xl:w-[92px] h-[40px] xl:h-[46px]';
 
+    const stageAnimTransition =
+      lowPowerMode || prefersReducedMotion
+        ? 'none'
+        : 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms ease';
+
     return (
       <section
         id="turntable-stage-panel"
+        data-track-change-phase={trackChangePhase}
         aria-label="Unified 3D Wooden Turntable Console"
         className="walnut-furniture-cabinet panel-contain relative flex flex-col justify-between select-none w-full h-full min-h-0 overflow-hidden"
       >
@@ -1293,7 +1423,7 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
             />
           </div>
 
-          {/* 2. MIDDLE: Centered Turntable Platter + Draggable Circular Album Art Centered on Spindle */}
+          {/* 2. MIDDLE: Separate Square Album-Art Vinyl Box Holder (Directly Above) + Plain Spinning Vinyl Record (Below) */}
           <div className="relative z-20 flex-1 min-h-0 w-full flex flex-col justify-between gap-1">
             <div
               id="turntable-plinth-bed"
@@ -1301,12 +1431,188 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
               style={
                 {
                   containerType: 'size',
-                  '--chassis-size': 'min(88cqw, 98cqh)',
+                  '--holder-box-size': 'clamp(42px, min(21cqw, 25cqh), 124px)',
+                  '--chassis-size': 'clamp(104px, min(76cqw, 71cqh), 410px)',
                 } as React.CSSProperties
               }
-              className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden"
+              className="relative flex-1 min-h-0 min-w-0 flex flex-col items-center justify-evenly overflow-hidden"
             >
-              {/* Centered Photoreal Turntable Chassis Square */}
+              {/* =====================================================================
+                  SEPARATE SQUARE ALBUM-ART VINYL BOX HOLDER SITTING ABOVE THE VINYL RECORD
+                  - Draggable square holder box itself (#album-art-holder-box / #album-art-cover)
+                  - Animates back to playlist & brings new track's box out during track changes
+                 ===================================================================== */}
+              <div
+                id="album-art-holder-home-slot"
+                ref={holderBoxSlotRef}
+                style={{
+                  width: 'var(--holder-box-size)',
+                  height: 'var(--holder-box-size)',
+                }}
+                className="relative z-30 flex items-center justify-center shrink-0"
+              >
+                <div
+                  id="album-art-holder-box"
+                  ref={holderBoxRef}
+                  data-holder-box="true"
+                  data-at-home={isHolderAtHome ? 'true' : 'false'}
+                  data-offset-x={holderBoxOffset.offsetX}
+                  data-offset-y={holderBoxOffset.offsetY}
+                  data-track-change-phase={trackChangePhase}
+                  onPointerDown={handleHolderBoxPointerDown}
+                  onPointerMove={handleHolderBoxPointerMove}
+                  onPointerUp={handleHolderBoxPointerUp}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    triggerButtonHaptic(lowPowerMode);
+                    persistHolderBoxOffset({ offsetX: 0, offsetY: 0 });
+                  }}
+                  title="Drag the square vinyl box holder anywhere on the wooden board (Double-click to snap back above turntable)"
+                  style={{
+                    transform: `translate3d(${holderBoxOffset.offsetX}px, ${holderBoxOffset.offsetY}px, 0)`,
+                    touchAction: 'none',
+                  }}
+                  className="group relative w-full h-full cursor-grab active:cursor-grabbing select-none"
+                >
+                  {/* Track-Change Stage Pose Wrapper (Animates holder box to/from playlist on song change) */}
+                  <div
+                    id="album-art-cover"
+                    data-offset-x={holderBoxOffset.offsetX}
+                    data-offset-y={holderBoxOffset.offsetY}
+                    data-artwork-url={artworkState.activeUrl || ''}
+                    data-artwork-attempt={artworkState.attemptIndex}
+                    data-slot-open={stagePose.holderSlotOpen ? 'true' : 'false'}
+                    style={{
+                      transform: stagePose.holderBoxTransform,
+                      opacity: stagePose.holderBoxOpacity,
+                      transition: isDraggingHolderBox ? 'none' : stageAnimTransition,
+                    }}
+                    className="relative w-full h-full rounded-[4px] p-[3px] bg-gradient-to-b from-[#6e4726] via-[#3d2412] to-[#1f1209] border-2 border-[#b88958] shadow-[0_8px_20px_rgba(0,0,0,0.82),inset_0_1px_0_rgba(255,228,190,0.45)] flex flex-col items-center justify-center overflow-visible"
+                  >
+                    {/* Four Corner Brass Rivet Screws on the Square Vinyl Box Holder Frame */}
+                    <img
+                      src="/console/screw-head.webp"
+                      alt=""
+                      aria-hidden="true"
+                      draggable={false}
+                      className="pointer-events-none absolute top-[2px] left-[2px] w-1.5 h-1.5 z-30 opacity-90"
+                    />
+                    <img
+                      src="/console/screw-head.webp"
+                      alt=""
+                      aria-hidden="true"
+                      draggable={false}
+                      className="pointer-events-none absolute top-[2px] right-[2px] w-1.5 h-1.5 z-30 opacity-90"
+                    />
+                    <img
+                      src="/console/screw-head.webp"
+                      alt=""
+                      aria-hidden="true"
+                      draggable={false}
+                      className="pointer-events-none absolute bottom-[2px] left-[2px] w-1.5 h-1.5 z-30 opacity-90"
+                    />
+                    <img
+                      src="/console/screw-head.webp"
+                      alt=""
+                      aria-hidden="true"
+                      draggable={false}
+                      className="pointer-events-none absolute bottom-[2px] right-[2px] w-1.5 h-1.5 z-30 opacity-90"
+                    />
+
+                    {/* Bottom LP Sleeve Opening Slot (Opens When Vinyl Slides In/Out of Holder Box) */}
+                    <div
+                      id="holder-box-open-slot"
+                      aria-hidden="true"
+                      style={{
+                        transform: stagePose.holderSlotOpen ? 'scaleY(1.8)' : 'scaleY(1)',
+                        opacity: stagePose.holderSlotOpen ? 1 : 0.45,
+                        transition: stageAnimTransition,
+                      }}
+                      className="pointer-events-none absolute -bottom-[3px] inset-x-[12%] h-[4px] rounded-full bg-[#090604] border border-amber-300/55 z-30"
+                    />
+
+                    {/* Inner Square Album Sleeve Window */}
+                    <div className="relative w-full h-full rounded-[2px] overflow-hidden border border-black/85 bg-[#14100d] flex items-center justify-center">
+                      {/* Loading Skeleton While Artwork Loads */}
+                      {!artworkState.isPlaceholder && !imgLoaded && (
+                        <div
+                          id="album-art-skeleton"
+                          aria-hidden="true"
+                          className="absolute inset-0 z-10 bg-gradient-to-br from-[#2a221b] via-[#1c1612] to-[#120e0b] flex items-center justify-center"
+                        >
+                          <Disc3 strokeWidth={1.5} className="w-5 h-5 text-amber-300/45" />
+                        </div>
+                      )}
+
+                      {/* Resolved Track Artwork with Multi-Candidate onError Fallback */}
+                      {!artworkState.isPlaceholder && artworkState.activeUrl ? (
+                        <img
+                          id="album-art-img"
+                          key={`${activeBoxTrack.id}-${artworkState.attemptIndex}-${artworkState.activeUrl}`}
+                          ref={(el) => {
+                            if (el && el.complete && el.naturalWidth > 0 && !imgLoaded) {
+                              setImgLoaded(true);
+                            }
+                          }}
+                          src={artworkState.activeUrl}
+                          alt={`${activeBoxTrack.title} album art`}
+                          referrerPolicy="no-referrer"
+                          draggable={false}
+                          onLoad={() => setImgLoaded(true)}
+                          onError={() => {
+                            setImgLoaded(false);
+                            setFailedAttemptCount((prev) => prev + 1);
+                          }}
+                          className="relative z-10 w-full h-full object-cover pointer-events-none"
+                        />
+                      ) : (
+                        /* Generic Vinyl-Sleeve Placeholder Graphic When All Image Candidates Fail or Standby */
+                        <div
+                          id="album-art-vinyl-placeholder"
+                          style={{ background: themePalette.tvCabinetGradient }}
+                          className="relative z-10 w-full h-full flex flex-col items-center justify-center p-1.5 text-center"
+                        >
+                          <Disc3
+                            strokeWidth={1.75}
+                            style={{ color: themePalette.lightHex }}
+                            className="w-4 h-4 mb-0.5 opacity-85"
+                          />
+                          <p className="font-display text-[7.5px] sm:text-[9px] font-bold text-white/90 leading-tight line-clamp-1 px-1">
+                            {isStandby ? 'MaxVinyFy' : activeBoxTrack.title}
+                          </p>
+                          <p className="font-mono text-[6.5px] sm:text-[7.5px] text-white/65 leading-tight line-clamp-1 px-1">
+                            {isStandby ? 'LP Holder' : activeBoxTrack.artist}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Subtle Sleeve Gloss & Texture Overlay */}
+                      <div
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-0 z-20 bg-[linear-gradient(135deg,rgba(255,255,255,0.16)_0%,transparent_42%,rgba(0,0,0,0.38)_100%)]"
+                      />
+                    </div>
+
+                    {/* Hover / Active Drag Affordance Badge on the Square Holder Box */}
+                    <div
+                      id="album-art-drag-handle"
+                      aria-hidden="true"
+                      className={`pointer-events-none absolute -top-2.5 left-1/2 -translate-x-1/2 z-40 px-1.5 py-[1px] rounded-[2px] bg-black/90 border border-amber-300/65 text-amber-200 font-mono text-[6.5px] font-bold uppercase tracking-wider flex items-center gap-0.5 shadow-md whitespace-nowrap transition-opacity duration-150 ${
+                        isDraggingHolderBox ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                      }`}
+                    >
+                      <Move className="w-2.5 h-2.5 text-amber-300" />
+                      <span>{isHolderAtHome ? 'DRAG BOX' : 'LP BOX'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* =====================================================================
+                  FIXED TURNTABLE PLATTER + PLAIN SPINNING VINYL RECORD BELOW THE HOLDER BOX
+                  - Vinyl record has NO album art on it (just record grooves, plain label, and spindle hole)
+                  - Vinyl spindle position is fixed/non-draggable; during track change, vinyl slides into/out of holder box above it
+                 ===================================================================== */}
               <div
                 id="turntable-chassis-square"
                 ref={chassisRef}
@@ -1314,7 +1620,7 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
                   width: 'var(--chassis-size)',
                   height: 'var(--chassis-size)',
                 }}
-                className={`relative z-20 transition-transform duration-150 ${
+                className={`relative z-20 shrink-0 transition-transform duration-150 ${
                   scratchFlash ? 'scale-[0.99]' : ''
                 }`}
               >
@@ -1333,15 +1639,20 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
                   className="pointer-events-none absolute object-contain"
                 />
 
-                {/* ROTATING VINYL RECORD LAYER */}
+                {/* PLAIN ROTATING VINYL RECORD LAYER (Slides into/out of the Holder Box Above on Track Change) */}
                 <div
+                  id="vinyl-record-transition-wrapper"
+                  data-track-change-phase={trackChangePhase}
                   style={{
                     left: '3%',
                     top: '5%',
                     width: '90%',
                     height: '90%',
+                    transform: stagePose.vinylTransform,
+                    opacity: stagePose.vinylOpacity,
+                    transition: stageAnimTransition,
                   }}
-                  className="absolute"
+                  className="absolute z-10"
                 >
                   <div
                     style={{
@@ -1355,6 +1666,7 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
                     <div
                       id="vinyl-record-spin-layer"
                       ref={platterRef}
+                      data-plain-vinyl="true"
                       onPointerDown={handlePlatterPointerDown}
                       onPointerMove={handlePlatterPointerMove}
                       onPointerUp={handlePlatterPointerUp}
@@ -1384,12 +1696,13 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
                         className="pointer-events-none absolute inset-0 w-full h-full object-contain"
                       />
 
-                      {/* Underlying Printed Record Label (Visible When Draggable Circular Album Art is Dragged Off-Center) */}
+                      {/* Plain Vintage Record Center Label & Spindle Hole (No Album Art Overlaid on the Vinyl) */}
                       <div
+                        id="vinyl-plain-center-label"
                         style={{ background: themePalette.tvCabinetGradient }}
-                        className="relative z-10 w-[42%] h-[42%] rounded-full overflow-hidden border border-black/80 flex items-center justify-center"
+                        className="relative z-10 w-[34%] h-[34%] rounded-full overflow-hidden border border-black/80 flex items-center justify-center"
                       >
-                        <span className="font-display font-bold text-[10px] text-white/85 -translate-y-3.5">
+                        <span className="font-display font-bold text-[8.5px] sm:text-[10px] text-white/85 -translate-y-2.5 sm:-translate-y-3">
                           MVF
                         </span>
                         <img
@@ -1420,6 +1733,8 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
                     top: '5%',
                     width: '90%',
                     height: '90%',
+                    opacity: stagePose.vinylOpacity,
+                    transition: 'opacity 200ms ease',
                   }}
                   className="pointer-events-none absolute object-contain z-20"
                 />
@@ -1436,136 +1751,12 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
                     top: '5%',
                     width: '90%',
                     height: '90%',
-                    opacity: 0.1,
+                    opacity: 0.1 * stagePose.vinylOpacity,
                   }}
                   className="pointer-events-none absolute object-contain z-20"
                 />
 
-                {/* =====================================================================
-                    DRAGGABLE CIRCULAR ALBUM ART OVERLAY CENTERED ON TOP OF THE VINYL SPINDLE
-                    - Rotates in sync with vinyl ONLY when centered on spindle
-                    - Dragging off-center keeps it static within the wooden board bounds
-                    - Persists position in localStorage
-                   ===================================================================== */}
-                <div
-                  id="album-art-cover"
-                  ref={albumArtCoverRef}
-                  data-centered-on-spindle={isCenteredOnSpindle ? 'true' : 'false'}
-                  data-offset-x={artOffset.offsetX}
-                  data-offset-y={artOffset.offsetY}
-                  data-artwork-url={artworkState.activeUrl || ''}
-                  data-artwork-attempt={artworkState.attemptIndex}
-                  onPointerDown={handleAlbumArtPointerDown}
-                  onPointerMove={handleAlbumArtPointerMove}
-                  onPointerUp={handleAlbumArtPointerUp}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    triggerButtonHaptic(lowPowerMode);
-                    persistArtOffset({ offsetX: 0, offsetY: 0 });
-                  }}
-                  title="Drag circular album art anywhere on the wooden board (Double-click to snap back to spindle)"
-                  style={{
-                    left: '48%',
-                    top: '50%',
-                    width: '42%',
-                    height: '42%',
-                    transform: `translate(calc(-50% + ${artOffset.offsetX}px), calc(-50% + ${artOffset.offsetY}px))`,
-                    touchAction: 'none',
-                  }}
-                  className="group absolute z-25 rounded-full shadow-[0_8px_22px_rgba(0,0,0,0.78)] border-2 border-amber-100/35 bg-[#16120e] cursor-grab active:cursor-grabbing select-none"
-                >
-                  {/* Inner Rotation Layer: Spins in Sync with Vinyl ONLY When Centered on Spindle */}
-                  <div
-                    id="album-art-spin-sync"
-                    data-spinning={shouldSpinAlbumArt ? 'true' : 'false'}
-                    style={{
-                      animationDuration: `${spinDurationSec}s`,
-                      animationTimingFunction: spinTimingFunction,
-                      animationPlayState: shouldSpinAlbumArt ? 'running' : 'paused',
-                    }}
-                    className="vinyl-platter-gpu-spin relative w-full h-full rounded-full overflow-hidden flex items-center justify-center bg-[#181411]"
-                  >
-                    {/* Loading Skeleton While Artwork Loads */}
-                    {!artworkState.isPlaceholder && !imgLoaded && (
-                      <div
-                        id="album-art-skeleton"
-                        aria-hidden="true"
-                        className="absolute inset-0 z-10 bg-gradient-to-br from-[#2a221b] via-[#1c1612] to-[#120e0b] flex items-center justify-center"
-                      >
-                        <Disc3 strokeWidth={1.5} className="w-6 h-6 text-amber-300/45" />
-                      </div>
-                    )}
-
-                    {/* Resolved Track Artwork with Multi-Candidate onError Fallback */}
-                    {!artworkState.isPlaceholder && artworkState.activeUrl ? (
-                      <img
-                        id="album-art-img"
-                        key={`${track.id}-${artworkState.attemptIndex}-${artworkState.activeUrl}`}
-                        ref={(el) => {
-                          if (el && el.complete && el.naturalWidth > 0 && !imgLoaded) {
-                            setImgLoaded(true);
-                          }
-                        }}
-                        src={artworkState.activeUrl}
-                        alt={`${track.title} album art`}
-                        referrerPolicy="no-referrer"
-                        draggable={false}
-                        onLoad={() => setImgLoaded(true)}
-                        onError={() => {
-                          setImgLoaded(false);
-                          setFailedAttemptCount((prev) => prev + 1);
-                        }}
-                        className="relative z-10 w-full h-full object-cover pointer-events-none"
-                      />
-                    ) : (
-                      /* Generic Vinyl-Label Placeholder Graphic When All Image Candidates Fail or Standby */
-                      <div
-                        id="album-art-vinyl-placeholder"
-                        style={{ background: themePalette.tvCabinetGradient }}
-                        className="relative z-10 w-full h-full flex flex-col items-center justify-center p-2 text-center"
-                      >
-                        <Disc3
-                          strokeWidth={1.75}
-                          style={{ color: themePalette.lightHex }}
-                          className="w-5 h-5 mb-0.5 opacity-85"
-                        />
-                        <p className="font-display text-[8px] sm:text-[9.5px] font-bold text-white/90 leading-tight line-clamp-1 px-2">
-                          {isStandby ? 'MaxVinyFy' : track.title}
-                        </p>
-                        <p className="font-mono text-[7px] sm:text-[8px] text-white/65 leading-tight line-clamp-1 px-2">
-                          {isStandby ? 'LP Label' : track.artist}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Subtle Paper Label Texture + Center Spindle Hole */}
-                    <img
-                      src="/turntable/vinyl-label-paper.webp"
-                      alt=""
-                      aria-hidden="true"
-                      draggable={false}
-                      style={{ opacity: 0.24 }}
-                      className="pointer-events-none absolute inset-0 z-20 w-full h-full object-cover"
-                    />
-                    <div className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-gradient-to-br from-zinc-200 via-zinc-400 to-zinc-700 border border-black/85 flex items-center justify-center">
-                      <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full bg-[#090807]" />
-                    </div>
-                  </div>
-
-                  {/* Subtle Hover Drag-Handle Affordance */}
-                  <div
-                    id="album-art-drag-handle"
-                    aria-hidden="true"
-                    className={`pointer-events-none absolute -top-2 left-1/2 -translate-x-1/2 z-40 px-1.5 py-0.5 rounded-[2px] bg-black/85 border border-amber-300/60 text-amber-200 font-mono text-[7px] font-bold uppercase tracking-wider flex items-center gap-0.5 shadow-md transition-opacity duration-150 ${
-                      isDraggingArt ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                    }`}
-                  >
-                    <Move className="w-2.5 h-2.5 text-amber-300" />
-                    <span>{isCenteredOnSpindle ? 'DRAG ART' : 'FREE'}</span>
-                  </div>
-                </div>
-
-                {/* Photoreal Top-Down Tonearm */}
+                {/* Photoreal Top-Down Tonearm (Lifts & swings to rest during track-change swap, then lowers onto record) */}
                 <RasterTonearm
                   trackId={track.id}
                   durationSec={track.durationSec}
@@ -1574,6 +1765,7 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
                   isDocumentHidden={isDocumentHidden}
                   lowPowerMode={lowPowerMode}
                   prefersReducedMotion={prefersReducedMotion}
+                  forceTonearmRest={stagePose.forceTonearmRest}
                   chassisRef={chassisRef}
                   draggedTonearmAngle={draggedTonearmAngle}
                   onDragAngleChange={setDraggedTonearmAngle}
@@ -1591,8 +1783,8 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
                 id="lyrics-strip-slot"
                 className={`w-full ${
                   isLandscapeMobile
-                    ? 'h-[80px]'
-                    : 'h-[96px] sm:h-[104px] [@media(max-height:640px)]:h-[88px]'
+                    ? 'h-[76px]'
+                    : 'h-[92px] sm:h-[98px] [@media(max-height:640px)]:h-[82px]'
                 } shrink-0`}
               >
                 <SyncedLyricsPanel
@@ -1631,13 +1823,13 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
         />
 
         {/* =====================================================================
-            REBUILT SINGLE TURNTABLE CONTROL ROW (Left-to-Right):
-            1. Leftmost: Stacked Shuffle + Repeat (#shuffle-repeat-stack, matching Time Display w & h)
+            REBUILT SINGLE TURNTABLE CONTROL ROW (Left-to-Right, Bottom-Aligned):
+            1. Leftmost: Stacked Shuffle + Repeat (#shuffle-repeat-stack, bottom-aligned with playback titles)
             2. Next: Previous-track button (#btn-prev-track)
             3. Next: Scratch disc button (#btn-scratch-disc — press/hold DJ scratch effect)
             4. Center: Large Play/Pause primary toggle button (#btn-play-pause)
             5. Next: Stop button (#btn-stop-playback) & Next-track button (#btn-next-track)
-            6. Rightmost: Taller Time/Duration display (#console-time-display)
+            6. Rightmost: Taller Time/Duration display (#console-time-display, bottom-aligned with playback titles)
            ===================================================================== */}
         <div
           id="console-front-apron"
@@ -1660,9 +1852,9 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
 
           <div
             id="turntable-control-row"
-            className="relative z-10 w-full flex items-center justify-between gap-1 xl:gap-2"
+            className="relative z-10 w-full flex items-end justify-between gap-1 xl:gap-2"
           >
-            {/* 1. Leftmost: Vertically Stacked Shuffle + Repeat (Exact Same Width & Height as Time Display) */}
+            {/* 1. Leftmost: Vertically Stacked Shuffle + Repeat (Bottom-Aligned with Playback Control Titles) */}
             <StackedShuffleRepeatControl
               shuffleEnabled={shuffleEnabled}
               repeatOne={repeatOne}
@@ -1763,7 +1955,7 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
               </div>
             </div>
 
-            {/* 6. Rightmost: Taller Time/Duration Display (Exact Same Width & Height as Stacked Shuffle/Repeat) */}
+            {/* 6. Rightmost: Taller Time/Duration Display (Bottom-Aligned with Playback Control Titles) */}
             <FrontFaceTimeDisplay
               durationSec={track.durationSec}
               isStandby={isStandby}
@@ -1777,3 +1969,4 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
     );
   }
 );
+

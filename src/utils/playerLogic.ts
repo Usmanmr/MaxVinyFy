@@ -1453,6 +1453,163 @@ export function getNextCrtTintIndex(currentIndex: number): number {
 }
 
 /**
+ * Maps the 4 CRT broadcast filter/tint presets (CLR, AMB, CYN, B&W) to rotary knob angles [-90, -30, +30, +90].
+ */
+export function getCrtTintKnobAngle(tintIndex: number): number {
+  const total = CRT_TINT_PRESETS.length;
+  const safe = (((Math.floor(Number.isFinite(tintIndex) ? tintIndex : 0) % total) + total) % total);
+  return -90 + safe * 60;
+}
+
+/**
+ * Clamps the draggable square album-art holder box offset (relative to its home position above the vinyl)
+ * so the box can be dragged anywhere across the wooden board without ever leaving the board bounds.
+ * Snaps cleanly back to (0, 0) when dropped within snapRadiusPx of its home position.
+ */
+export function clampHolderBoxDragOffset(params: {
+  offsetX: number;
+  offsetY: number;
+  boardWidth: number;
+  boardHeight: number;
+  boxSize: number;
+  homeCenterX: number;
+  homeCenterY: number;
+  snapRadiusPx?: number;
+}): { offsetX: number; offsetY: number; isAtHomePosition: boolean } {
+  const half = Math.max(16, (Number.isFinite(params.boxSize) ? params.boxSize : 72) / 2);
+  const pad = 4;
+  const boardW = Math.max(half * 2 + pad * 2, Number.isFinite(params.boardWidth) ? params.boardWidth : 400);
+  const boardH = Math.max(half * 2 + pad * 2, Number.isFinite(params.boardHeight) ? params.boardHeight : 400);
+  const homeX = Number.isFinite(params.homeCenterX) ? params.homeCenterX : boardW / 2;
+  const homeY = Number.isFinite(params.homeCenterY) ? params.homeCenterY : half + 12;
+
+  const minX = Math.round(half + pad - homeX);
+  const maxX = Math.round(boardW - half - pad - homeX);
+  const minY = Math.round(half + pad - homeY);
+  const maxY = Math.round(boardH - half - pad - homeY);
+
+  const rawX = Number.isFinite(params.offsetX) ? params.offsetX : 0;
+  const rawY = Number.isFinite(params.offsetY) ? params.offsetY : 0;
+
+  const clampedX = Math.round(Math.max(minX, Math.min(maxX, rawX)));
+  const clampedY = Math.round(Math.max(minY, Math.min(maxY, rawY)));
+  const snapRadius = typeof params.snapRadiusPx === 'number' ? params.snapRadiusPx : 12;
+
+  if (Math.hypot(clampedX, clampedY) <= Math.max(0, snapRadius)) {
+    return { offsetX: 0, offsetY: 0, isAtHomePosition: true };
+  }
+  return { offsetX: clampedX, offsetY: clampedY, isAtHomePosition: false };
+}
+
+export type TrackChangePhase =
+  | 'idle'
+  | 'lifting-vinyl-to-box'
+  | 'returning-box-to-playlist'
+  | 'bringing-new-box-from-playlist'
+  | 'sliding-vinyl-to-spindle'
+  | 'lowering-tonearm';
+
+export const TRACK_CHANGE_TIMELINE_MS = {
+  liftVinylEndMs: 260,
+  returnBoxEndMs: 580,
+  bringNewBoxEndMs: 920,
+  slideVinylToSpindleEndMs: 1260,
+  lowerTonearmEndMs: 1560,
+} as const;
+
+export interface TrackChangeStagePose {
+  phase: TrackChangePhase;
+  vinylTransform: string;
+  vinylOpacity: number;
+  holderBoxTransform: string;
+  holderBoxOpacity: number;
+  holderSlotOpen: boolean;
+  forceTonearmRest: boolean;
+  showOutgoingTrackInBox: boolean;
+}
+
+/**
+ * Returns compositor-only (transform + opacity) poses for each phase of the 6-step track-change animation:
+ * a) lifting-vinyl-to-box: vinyl lifts/slides up off spindle into the square holder box above it
+ * b) returning-box-to-playlist: holder box shrinks & slides toward the playlist panel on the left
+ * c) bringing-new-box-from-playlist: new track's holder box slides out from playlist onto wooden board
+ * d) forceTonearmRest stays true throughout a-e so tonearm lifts & swings out of the way to rest
+ * e) sliding-vinyl-to-spindle: new box opens and vinyl record slides down onto the turntable spindle
+ * f) lowering-tonearm: tonearm swings back in and lowers onto the record
+ */
+export function getTrackChangeStagePose(phase: TrackChangePhase): TrackChangeStagePose {
+  switch (phase) {
+    case 'lifting-vinyl-to-box':
+      return {
+        phase,
+        vinylTransform: 'translate3d(0%, -56%, 0) scale(0.34)',
+        vinylOpacity: 0.78,
+        holderBoxTransform: 'translate3d(0%, 0%, 0) scale(1.05)',
+        holderBoxOpacity: 1,
+        holderSlotOpen: true,
+        forceTonearmRest: true,
+        showOutgoingTrackInBox: true,
+      };
+    case 'returning-box-to-playlist':
+      return {
+        phase,
+        vinylTransform: 'translate3d(-110%, -35%, 0) scale(0.18)',
+        vinylOpacity: 0,
+        holderBoxTransform: 'translate3d(-165%, 28%, 0) scale(0.24)',
+        holderBoxOpacity: 0.14,
+        holderSlotOpen: false,
+        forceTonearmRest: true,
+        showOutgoingTrackInBox: true,
+      };
+    case 'bringing-new-box-from-playlist':
+      return {
+        phase,
+        vinylTransform: 'translate3d(0%, -56%, 0) scale(0.32)',
+        vinylOpacity: 0.22,
+        holderBoxTransform: 'translate3d(0%, 0%, 0) scale(1)',
+        holderBoxOpacity: 1,
+        holderSlotOpen: true,
+        forceTonearmRest: true,
+        showOutgoingTrackInBox: false,
+      };
+    case 'sliding-vinyl-to-spindle':
+      return {
+        phase,
+        vinylTransform: 'translate3d(0%, 0%, 0) scale(1)',
+        vinylOpacity: 1,
+        holderBoxTransform: 'translate3d(0%, -3%, 0) scale(1.03)',
+        holderBoxOpacity: 1,
+        holderSlotOpen: true,
+        forceTonearmRest: true,
+        showOutgoingTrackInBox: false,
+      };
+    case 'lowering-tonearm':
+      return {
+        phase,
+        vinylTransform: 'translate3d(0%, 0%, 0) scale(1)',
+        vinylOpacity: 1,
+        holderBoxTransform: 'translate3d(0%, 0%, 0) scale(1)',
+        holderBoxOpacity: 1,
+        holderSlotOpen: false,
+        forceTonearmRest: false,
+        showOutgoingTrackInBox: false,
+      };
+    case 'idle':
+    default:
+      return {
+        phase: 'idle',
+        vinylTransform: 'translate3d(0%, 0%, 0) scale(1)',
+        vinylOpacity: 1,
+        holderBoxTransform: 'translate3d(0%, 0%, 0) scale(1)',
+        holderBoxOpacity: 1,
+        holderSlotOpen: false,
+        forceTonearmRest: false,
+        showOutgoingTrackInBox: false,
+      };
+  }
+}
+
+/**
  * Removes a saved playlist by ID and resolves the next active playlist ID cleanly.
  */
 export function removePlaylistById(
@@ -1491,6 +1648,7 @@ export function removePlaylistById(
     nextActiveId: nextActivePlaylistId,
   };
 }
+
 
 
 

@@ -24,6 +24,7 @@ import {
   triggerButtonHaptic,
   CRT_TINT_PRESETS,
   getNextCrtTintIndex,
+  getCrtTintKnobAngle,
   resolveActiveArtworkState,
   TV_CHANNEL_CHANGE_MS,
   type TrackItem,
@@ -507,6 +508,7 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
 
     const showCrtEffects = crtScanlinesOn && !lowPowerMode;
     const powerKnobAngleDeg = getBinaryKnobAngle(tvPoweredOn);
+    const tintKnobAngleDeg = getCrtTintKnobAngle(tintPresetIndex);
     const channelNumberLabel = `CH ${channelIndex + 1}`;
     const knobTransition =
       prefersReducedMotion || lowPowerMode ? 'none' : 'transform 160ms linear';
@@ -514,10 +516,13 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
     return (
       <section
         aria-label="Photorealistic 1970s CRT Television on Vintage Table"
-        className="relative flex flex-col justify-between gap-1 select-none w-full h-full min-h-0 overflow-visible"
+        className="relative flex flex-col justify-between gap-0 select-none w-full h-auto min-h-0 overflow-visible"
       >
-        {/* Top Brand Header Always Visible at the Top of the Layout */}
-        <div className="relative flex items-center justify-between shrink-0 z-20">
+        {/* Top Balanced Horizontal Header Composition: Spinning MVF Logo + Title (Left) Aligned with Right-Mounted Rabbit-Ear Antenna (Right) */}
+        <div
+          id="tv-top-header-bar"
+          className="relative w-full flex items-center justify-between px-1 pb-0.5 shrink-0 z-20"
+        >
           <BrandHeader
             themePalette={themePalette}
             isPlaying={isPlaying}
@@ -526,14 +531,127 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
             prefersReducedMotion={prefersReducedMotion}
             compact={compactLandscape}
           />
+
+          {/* Right-Positioned Retro Rabbit-Ear Dipole Antenna Assembly Aligned with Brand Header and Flush on Top-Right of TV Cabinet */}
+          <div
+            id="tv-rabbit-ear-antennas"
+            aria-hidden="true"
+            className="pointer-events-none relative flex flex-col items-center justify-end translate-y-[4px] mr-[4%] shrink-0 z-20"
+          >
+            <svg
+              viewBox="0 0 220 44"
+              className={
+                compactLandscape
+                  ? 'w-24 h-5 overflow-visible'
+                  : 'w-32 sm:w-40 h-6 sm:h-7 overflow-visible'
+              }
+            >
+              <defs>
+                <linearGradient id="antennaRodGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#71717a" />
+                  <stop offset="48%" stopColor="#f4f4f5" />
+                  <stop offset="100%" stopColor="#52525b" />
+                </linearGradient>
+                <linearGradient id="antennaBaseGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#5a351d" />
+                  <stop offset="55%" stopColor="#2b180c" />
+                  <stop offset="100%" stopColor="#140b05" />
+                </linearGradient>
+              </defs>
+              {/* Left & Right Brushed Chrome Dipole Rods Anchored Inside the Base Swivels */}
+              <line
+                x1="96"
+                y1="36"
+                x2="16"
+                y2="3"
+                stroke="url(#antennaRodGrad)"
+                strokeWidth="3.2"
+                strokeLinecap="round"
+              />
+              <line
+                x1="96"
+                y1="36"
+                x2="56"
+                y2="19.5"
+                stroke="#d4d4d8"
+                strokeWidth="4.4"
+                strokeLinecap="round"
+              />
+              <circle cx="16" cy="3" r="4" fill="#d97706" stroke="#27272a" strokeWidth="1.2" />
+
+              <line
+                x1="124"
+                y1="36"
+                x2="204"
+                y2="3"
+                stroke="url(#antennaRodGrad)"
+                strokeWidth="3.2"
+                strokeLinecap="round"
+              />
+              <line
+                x1="124"
+                y1="36"
+                x2="164"
+                y2="19.5"
+                stroke="#d4d4d8"
+                strokeWidth="4.4"
+                strokeLinecap="round"
+              />
+              <circle cx="204" cy="3" r="4" fill="#d97706" stroke="#27272a" strokeWidth="1.2" />
+
+              {/* Chrome Swivel Knuckles */}
+              <circle cx="96" cy="35" r="4.5" fill="#e4e4e7" stroke="#18181b" strokeWidth="1.2" />
+              <circle cx="124" cy="35" r="4.5" fill="#e4e4e7" stroke="#18181b" strokeWidth="1.2" />
+
+              {/* Bakelite & Walnut Flush Mounting Pedestal + Screwed Brass Bracket */}
+              <path
+                d="M 70 43 L 78 31 L 142 31 L 150 43 Z"
+                fill="url(#antennaBaseGrad)"
+                stroke="#7c4d2b"
+                strokeWidth="1.4"
+              />
+              <rect
+                x="64"
+                y="39"
+                width="92"
+                height="5"
+                rx="1.5"
+                fill="#a16207"
+                stroke="#29170b"
+                strokeWidth="1.2"
+              />
+            </svg>
+
+            {/* Flush Physical Mounting Bracket with Matching Slot-Head Screws */}
+            <div
+              id="tv-antenna-mount-bracket"
+              className="relative -mt-[3px] w-16 sm:w-20 h-[6px] rounded-[2px] bg-gradient-to-b from-[#d6c7b2] via-[#8c7a65] to-[#3f3429] border border-black/80 shadow-[0_1px_2px_rgba(0,0,0,0.85)] flex items-center justify-between px-1.5"
+            >
+              <img
+                src="/console/screw-head.webp"
+                alt=""
+                draggable={false}
+                className="w-1.5 h-1.5 object-contain"
+              />
+              <span className="font-mono text-[4px] font-black tracking-widest text-[#1c150e] uppercase leading-none">
+                VHF/UHF
+              </span>
+              <img
+                src="/console/screw-head.webp"
+                alt=""
+                draggable={false}
+                className="w-1.5 h-1.5 object-contain"
+              />
+            </div>
+          </div>
         </div>
 
-        {/* 1970s-80s CRT TV Cabinet Constrained Strictly to <= 16:10 Aspect Ratio */}
-        <div className="relative flex-1 min-h-0 w-full flex items-center justify-center pt-3 pb-0.5">
+        {/* 1970s-80s CRT TV Cabinet: Full Width Matching Playlist Box Width Exactly + Proportional 16:10 Height */}
+        <div className="relative w-full flex items-center justify-center pb-0.5">
           {/* Static Grounding Contact Shadow Under Walnut Cabinet */}
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute bottom-0 inset-x-[8%] h-2.5 rounded-full bg-black/65 z-0"
+            className="pointer-events-none absolute bottom-0 inset-x-[6%] h-2.5 rounded-full bg-black/65 z-0"
           />
 
           <div
@@ -544,7 +662,7 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
             data-tv-channel-video-id={activeChannelVideoId}
             data-tv-tint={activeTintPreset.code}
             style={{ aspectRatio: '16 / 10' }}
-            className="walnut-furniture-cabinet relative z-10 h-full max-h-full w-auto max-w-full mx-auto overflow-visible"
+            className="walnut-furniture-cabinet relative z-10 w-full overflow-visible"
           >
             {/* Four Corner Slot-Head Screws on the Raised Walnut Frame (Matching Turntable & Playlist) */}
             <img
@@ -576,120 +694,7 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
               className="pointer-events-none absolute bottom-1 right-1 w-2 h-2 z-40 opacity-85"
             />
 
-            {/* Flush-Mounted Retro Rabbit-Ear Dipole Antenna Sitting Directly on Top of the TV Cabinet */}
-            <div
-              id="tv-rabbit-ear-antennas"
-              aria-hidden="true"
-              className="pointer-events-none absolute bottom-full left-[46%] -translate-x-1/2 translate-y-[4px] flex flex-col items-center z-20"
-            >
-              <svg
-                viewBox="0 0 220 44"
-                className={
-                  compactLandscape
-                    ? 'w-24 h-4 overflow-visible'
-                    : 'w-32 sm:w-40 h-5 sm:h-7 overflow-visible'
-                }
-              >
-                <defs>
-                  <linearGradient id="antennaRodGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stopColor="#71717a" />
-                    <stop offset="48%" stopColor="#f4f4f5" />
-                    <stop offset="100%" stopColor="#52525b" />
-                  </linearGradient>
-                  <linearGradient id="antennaBaseGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                    <stop offset="0%" stopColor="#5a351d" />
-                    <stop offset="55%" stopColor="#2b180c" />
-                    <stop offset="100%" stopColor="#140b05" />
-                  </linearGradient>
-                </defs>
-                {/* Left & Right Brushed Chrome Dipole Rods Anchored Inside the Base Swivels */}
-                <line
-                  x1="96"
-                  y1="36"
-                  x2="16"
-                  y2="3"
-                  stroke="url(#antennaRodGrad)"
-                  strokeWidth="3.2"
-                  strokeLinecap="round"
-                />
-                <line
-                  x1="96"
-                  y1="36"
-                  x2="56"
-                  y2="19.5"
-                  stroke="#d4d4d8"
-                  strokeWidth="4.4"
-                  strokeLinecap="round"
-                />
-                <circle cx="16" cy="3" r="4" fill="#d97706" stroke="#27272a" strokeWidth="1.2" />
-
-                <line
-                  x1="124"
-                  y1="36"
-                  x2="204"
-                  y2="3"
-                  stroke="url(#antennaRodGrad)"
-                  strokeWidth="3.2"
-                  strokeLinecap="round"
-                />
-                <line
-                  x1="124"
-                  y1="36"
-                  x2="164"
-                  y2="19.5"
-                  stroke="#d4d4d8"
-                  strokeWidth="4.4"
-                  strokeLinecap="round"
-                />
-                <circle cx="204" cy="3" r="4" fill="#d97706" stroke="#27272a" strokeWidth="1.2" />
-
-                {/* Chrome Swivel Knuckles */}
-                <circle cx="96" cy="35" r="4.5" fill="#e4e4e7" stroke="#18181b" strokeWidth="1.2" />
-                <circle cx="124" cy="35" r="4.5" fill="#e4e4e7" stroke="#18181b" strokeWidth="1.2" />
-
-                {/* Bakelite & Walnut Flush Mounting Pedestal + Screwed Brass Bracket */}
-                <path
-                  d="M 70 43 L 78 31 L 142 31 L 150 43 Z"
-                  fill="url(#antennaBaseGrad)"
-                  stroke="#7c4d2b"
-                  strokeWidth="1.4"
-                />
-                <rect
-                  x="64"
-                  y="39"
-                  width="92"
-                  height="5"
-                  rx="1.5"
-                  fill="#a16207"
-                  stroke="#29170b"
-                  strokeWidth="1.2"
-                />
-              </svg>
-
-              {/* Flush Physical Mounting Bracket with Matching Slot-Head Screws */}
-              <div
-                id="tv-antenna-mount-bracket"
-                className="relative -mt-[3px] w-16 sm:w-20 h-[6px] rounded-[2px] bg-gradient-to-b from-[#d6c7b2] via-[#8c7a65] to-[#3f3429] border border-black/80 shadow-[0_1px_2px_rgba(0,0,0,0.85)] flex items-center justify-between px-1.5"
-              >
-                <img
-                  src="/console/screw-head.webp"
-                  alt=""
-                  draggable={false}
-                  className="w-1.5 h-1.5 object-contain"
-                />
-                <span className="font-mono text-[4px] font-black tracking-widest text-[#1c150e] uppercase leading-none">
-                  VHF/UHF
-                </span>
-                <img
-                  src="/console/screw-head.webp"
-                  alt=""
-                  draggable={false}
-                  className="w-1.5 h-1.5 object-contain"
-                />
-              </div>
-            </div>
-
-            {/* CRT Screen Aperture — Strictly 16:10 Max Aspect Ratio with Letterbox/Pillarbox Protection */}
+            {/* CRT Screen Aperture — Strictly 16:10 Aspect Ratio with Letterbox/Pillarbox Protection */}
             <div
               id="retro-tv-screen"
               ref={tvScreenRef}
@@ -864,9 +869,9 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
             />
 
             {/* =======================================================================
-                REDESIGNED RIGHT CONTROL PANEL:
-                - 2 Large Clearly Labeled Retro Knobs (POWER On/Off + CHANNEL CH 1..5)
-                - Horizontal Row of 3 Old Analogue Push-Buttons Below Them (FULL, SCAN, TINT)
+                REBALANCED RIGHT CONTROL PANEL:
+                - 3 Rotary Knobs: 1) POWER (On/Off), 2) CHANNEL (CH 1..5), 3) FILTER/TINT (CLR/AMB/CYN/B&W)
+                - 2 Larger, Prominent Analogue Push-Buttons Below Them: FULL & SCAN
                ======================================================================= */}
             <div
               id="retro-tv-side-mount"
@@ -908,12 +913,12 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                 />
               </div>
 
-              {/* TWO LARGE RETRO ROTARY KNOBS: 1) POWER (On/Off) and 2) CHANNEL (CH 1 - CH 5) */}
+              {/* THREE RETRO ROTARY KNOBS: 1) POWER, 2) CHANNEL (CH 1..5), 3) FILTER/TINT */}
               <div
                 id="retro-tv-large-knobs"
                 className="flex-1 w-full flex flex-col items-center justify-evenly py-0 min-h-0"
               >
-                {/* Knob 1: Large POWER Rotary Knob */}
+                {/* Knob 1: POWER Rotary Knob */}
                 <div className="w-full flex flex-col items-center justify-center gap-[1px]">
                   <button
                     id="tv-power-knob"
@@ -926,9 +931,9 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                     onClick={handleTogglePowerKnob}
                     className={`relative ${
                       compactLandscape
-                        ? 'w-[15px] h-[15px]'
-                        : 'w-[28px] h-[28px] sm:w-[34px] sm:h-[34px] xl:w-[38px] xl:h-[38px]'
-                    } rounded-full p-0.5 border border-black/70 bg-[#18130f] shadow-[0_3px_6px_rgba(0,0,0,0.75),inset_0_1px_1px_rgba(255,255,255,0.25)] cursor-pointer flex items-center justify-center`}
+                        ? 'w-[12px] h-[12px]'
+                        : 'w-[20px] h-[20px] sm:w-[24px] sm:h-[24px] xl:w-[28px] xl:h-[28px]'
+                    } rounded-full p-0.5 border border-black/70 bg-[#18130f] shadow-[0_2px_5px_rgba(0,0,0,0.75),inset_0_1px_1px_rgba(255,255,255,0.25)] cursor-pointer flex items-center justify-center`}
                   >
                     <img
                       src="/tv/tv-knob.webp"
@@ -959,15 +964,15 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                     {!compactLandscape && <Power className="w-2 h-2 text-amber-300 shrink-0" />}
                     <span
                       className={`font-mono ${
-                        compactLandscape ? 'text-[3.5px]' : 'text-[5px] sm:text-[6px]'
+                        compactLandscape ? 'text-[3px]' : 'text-[4.5px] sm:text-[5.5px]'
                       } font-extrabold uppercase tracking-tighter text-[#f5e7d3] leading-none whitespace-nowrap`}
                     >
-                      {compactLandscape ? `PWR·${tvPoweredOn ? 'ON' : 'OFF'}` : `POWER·${tvPoweredOn ? 'ON' : 'OFF'}`}
+                      {compactLandscape ? `PWR·${tvPoweredOn ? 'ON' : 'OFF'}` : `PWR·${tvPoweredOn ? 'ON' : 'OFF'}`}
                     </span>
                   </div>
                 </div>
 
-                {/* Knob 2: Large CHANNEL Selector Rotary Knob (CH 1 - CH 5) */}
+                {/* Knob 2: CHANNEL Selector Rotary Knob (CH 1 - CH 5) */}
                 <div className="w-full flex flex-col items-center justify-center gap-[1px]">
                   <button
                     id="tv-channel-knob"
@@ -980,9 +985,9 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                     title={`Channel Selector: ${channelNumberLabel} (${activeSongChannel?.label || activeChannelTheme.name}) — Click to cycle 5 YouTube videos`}
                     className={`relative ${
                       compactLandscape
-                        ? 'w-[15px] h-[15px]'
-                        : 'w-[28px] h-[28px] sm:w-[34px] sm:h-[34px] xl:w-[38px] xl:h-[38px]'
-                    } rounded-full p-0.5 border border-black/70 bg-[#18130f] shadow-[0_3px_6px_rgba(0,0,0,0.75),inset_0_1px_1px_rgba(255,255,255,0.25)] cursor-pointer flex items-center justify-center`}
+                        ? 'w-[12px] h-[12px]'
+                        : 'w-[20px] h-[20px] sm:w-[24px] sm:h-[24px] xl:w-[28px] xl:h-[28px]'
+                    } rounded-full p-0.5 border border-black/70 bg-[#18130f] shadow-[0_2px_5px_rgba(0,0,0,0.75),inset_0_1px_1px_rgba(255,255,255,0.25)] cursor-pointer flex items-center justify-center`}
                   >
                     <img
                       src="/tv/tv-knob.webp"
@@ -1010,25 +1015,80 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                   >
                     <span
                       className={`font-mono ${
-                        compactLandscape ? 'text-[3.5px]' : 'text-[5px] sm:text-[6px]'
+                        compactLandscape ? 'text-[3px]' : 'text-[4.5px] sm:text-[5.5px]'
                       } font-extrabold uppercase tracking-tighter text-amber-300 leading-none whitespace-nowrap`}
                     >
                       {compactLandscape ? channelNumberLabel : `CH·${channelNumberLabel}`}
                     </span>
                   </div>
                 </div>
+
+                {/* Knob 3: FILTER / TINT Rotary Knob (CLR, AMB, CYN, B&W) */}
+                <div className="w-full flex flex-col items-center justify-center gap-[1px]">
+                  <button
+                    id="tv-tint-knob"
+                    type="button"
+                    data-tint={activeTintPreset.code}
+                    data-knob-angle={tintKnobAngleDeg}
+                    onClick={handleCycleTintButton}
+                    aria-label={`TV Filter and Tint Knob (${activeTintPreset.label})`}
+                    title={`Broadcast Filter/Tint Knob: ${activeTintPreset.label} (${activeTintPreset.code})`}
+                    className={`relative ${
+                      compactLandscape
+                        ? 'w-[12px] h-[12px]'
+                        : 'w-[20px] h-[20px] sm:w-[24px] sm:h-[24px] xl:w-[28px] xl:h-[28px]'
+                    } rounded-full p-0.5 border border-black/70 bg-[#18130f] shadow-[0_2px_5px_rgba(0,0,0,0.75),inset_0_1px_1px_rgba(255,255,255,0.25)] cursor-pointer flex items-center justify-center`}
+                  >
+                    <img
+                      src="/tv/tv-knob.webp"
+                      alt=""
+                      aria-hidden="true"
+                      draggable={false}
+                      style={{
+                        transform: `rotate(${tintKnobAngleDeg}deg)`,
+                        transition: knobTransition,
+                      }}
+                      className="w-full h-full object-contain pointer-events-none"
+                    />
+                    <span
+                      aria-hidden="true"
+                      className={`pointer-events-none absolute top-0.5 left-1/2 -translate-x-1/2 ${
+                        compactLandscape ? 'w-1 h-1' : 'w-1.5 h-1.5'
+                      } rounded-full border border-black/70 ${
+                        tintPresetIndex > 0 ? 'bg-cyan-300' : 'bg-amber-200'
+                      }`}
+                    />
+                  </button>
+                  <div
+                    id="tv-tint-label-plate"
+                    className={`${
+                      compactLandscape ? 'px-0.5 py-0' : 'px-1 py-[1px]'
+                    } rounded-[2px] bg-[#1e1812] border border-black/60 shadow-inner flex items-center justify-center gap-0.5 max-w-full overflow-hidden`}
+                  >
+                    {!compactLandscape && <Sparkles className="w-2 h-2 text-amber-300 shrink-0" />}
+                    <span
+                      className={`font-mono ${
+                        compactLandscape ? 'text-[3px]' : 'text-[4.5px] sm:text-[5.5px]'
+                      } font-extrabold uppercase tracking-tighter text-[#f5e7d3] leading-none whitespace-nowrap`}
+                    >
+                      {compactLandscape
+                        ? `FLT·${activeTintPreset.code}`
+                        : `TINT·${activeTintPreset.code}`}
+                    </span>
+                  </div>
+                </div>
               </div>
 
-              {/* HORIZONTAL ROW OF 3 OLD ANALOGUE PUSH-BUTTONS BELOW THE 2 KNOBS */}
+              {/* TWO LARGER, PROMINENT ANALOGUE PUSH-BUTTONS BELOW THE 3 KNOBS: FULL & SCAN */}
               <div
                 id="retro-tv-analogue-buttons"
                 role="group"
                 aria-label="TV Analogue Push Buttons"
-                className={`w-full grid grid-cols-3 gap-0.5 ${
+                className={`w-full grid grid-cols-2 gap-1 ${
                   compactLandscape ? 'pt-0.5' : 'pt-1'
-                } border-t border-black/30 shrink-0`}
+                } border-t border-black/35 shrink-0`}
               >
-                {/* Analogue Push-Button 1: Fullscreen */}
+                {/* Analogue Push-Button 1: Prominent Fullscreen Toggle */}
                 <button
                   id="tv-btn-fullscreen"
                   type="button"
@@ -1037,29 +1097,29 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                   aria-label={isTvFullscreen ? 'Exit TV Fullscreen' : 'Enter TV Fullscreen'}
                   title="Fullscreen Video (FULL)"
                   className={`${
-                    compactLandscape ? 'h-3.5' : 'h-5 sm:h-6'
-                  } rounded-[2px] border border-black/80 ${
+                    compactLandscape ? 'h-4' : 'h-7 sm:h-8'
+                  } rounded-[3px] border border-black/85 ${
                     isTvFullscreen
                       ? 'bg-gradient-to-b from-[#45382b] to-[#261e16] text-amber-300 translate-y-[0.5px]'
-                      : 'bg-gradient-to-b from-[#f5efe6] via-[#d5c8b6] to-[#9b8c79] text-[#1a140f]'
-                  } shadow-[inset_0_1px_0_rgba(255,255,255,0.7),0_1px_2px_rgba(0,0,0,0.65)] flex flex-col items-center justify-center cursor-pointer active:translate-y-[1px]`}
+                      : 'bg-gradient-to-b from-[#faf4ec] via-[#dccfb9] to-[#9b8c79] text-[#17120d]'
+                  } shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_2px_4px_rgba(0,0,0,0.75)] flex flex-col items-center justify-center gap-[1px] cursor-pointer active:translate-y-[1px]`}
                 >
                   {!compactLandscape &&
                     (isTvFullscreen ? (
-                      <Minimize2 strokeWidth={2.2} className="w-2 h-2 sm:w-2.5 sm:h-2.5" />
+                      <Minimize2 strokeWidth={2.4} className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
                     ) : (
-                      <Maximize2 strokeWidth={2.2} className="w-2 h-2 sm:w-2.5 sm:h-2.5" />
+                      <Maximize2 strokeWidth={2.4} className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
                     ))}
                   <span
                     className={`font-mono ${
-                      compactLandscape ? 'text-[3.5px]' : 'text-[4.5px] sm:text-[5.5px]'
-                    } font-black uppercase tracking-tighter leading-none`}
+                      compactLandscape ? 'text-[4px]' : 'text-[6px] sm:text-[7px]'
+                    } font-black uppercase tracking-tight leading-none`}
                   >
                     FULL
                   </span>
                 </button>
 
-                {/* Analogue Push-Button 2: Scanlines Toggle */}
+                {/* Analogue Push-Button 2: Prominent Scanlines Toggle */}
                 <button
                   id="tv-btn-scanlines"
                   type="button"
@@ -1072,49 +1132,20 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                   aria-label="Toggle CRT Scanlines Overlay"
                   title={`CRT Scanlines: ${crtScanlinesOn ? 'ON' : 'OFF'}`}
                   className={`${
-                    compactLandscape ? 'h-3.5' : 'h-5 sm:h-6'
-                  } rounded-[2px] border border-black/80 ${
+                    compactLandscape ? 'h-4' : 'h-7 sm:h-8'
+                  } rounded-[3px] border border-black/85 ${
                     crtScanlinesOn
                       ? 'bg-gradient-to-b from-[#45382b] to-[#261e16] text-amber-300 translate-y-[0.5px]'
-                      : 'bg-gradient-to-b from-[#f5efe6] via-[#d5c8b6] to-[#9b8c79] text-[#1a140f]'
-                  } shadow-[inset_0_1px_0_rgba(255,255,255,0.7),0_1px_2px_rgba(0,0,0,0.65)] flex flex-col items-center justify-center cursor-pointer active:translate-y-[1px]`}
+                      : 'bg-gradient-to-b from-[#faf4ec] via-[#dccfb9] to-[#9b8c79] text-[#17120d]'
+                  } shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_2px_4px_rgba(0,0,0,0.75)] flex flex-col items-center justify-center gap-[1px] cursor-pointer active:translate-y-[1px]`}
                 >
-                  {!compactLandscape && <Tv strokeWidth={2.2} className="w-2 h-2 sm:w-2.5 sm:h-2.5" />}
+                  {!compactLandscape && <Tv strokeWidth={2.4} className="w-2.5 h-2.5 sm:w-3 sm:h-3" />}
                   <span
                     className={`font-mono ${
-                      compactLandscape ? 'text-[3.5px]' : 'text-[4.5px] sm:text-[5.5px]'
-                    } font-black uppercase tracking-tighter leading-none`}
+                      compactLandscape ? 'text-[4px]' : 'text-[6px] sm:text-[7px]'
+                    } font-black uppercase tracking-tight leading-none`}
                   >
                     SCAN
-                  </span>
-                </button>
-
-                {/* Analogue Push-Button 3: Broadcast Phosphor Tint Cycle */}
-                <button
-                  id="tv-btn-tint"
-                  type="button"
-                  data-tint={activeTintPreset.code}
-                  data-pressed={tintPresetIndex > 0 ? 'true' : 'false'}
-                  onClick={handleCycleTintButton}
-                  aria-label={`Cycle CRT Phosphor Tint (${activeTintPreset.label})`}
-                  title={`Broadcast Tint: ${activeTintPreset.label} (${activeTintPreset.code})`}
-                  className={`${
-                    compactLandscape ? 'h-3.5' : 'h-5 sm:h-6'
-                  } rounded-[2px] border border-black/80 ${
-                    tintPresetIndex > 0
-                      ? 'bg-gradient-to-b from-[#45382b] to-[#261e16] text-amber-300 translate-y-[0.5px]'
-                      : 'bg-gradient-to-b from-[#f5efe6] via-[#d5c8b6] to-[#9b8c79] text-[#1a140f]'
-                  } shadow-[inset_0_1px_0_rgba(255,255,255,0.7),0_1px_2px_rgba(0,0,0,0.65)] flex flex-col items-center justify-center cursor-pointer active:translate-y-[1px]`}
-                >
-                  {!compactLandscape && (
-                    <Sparkles strokeWidth={2.2} className="w-2 h-2 sm:w-2.5 sm:h-2.5" />
-                  )}
-                  <span
-                    className={`font-mono ${
-                      compactLandscape ? 'text-[3.5px]' : 'text-[4.5px] sm:text-[5.5px]'
-                    } font-black uppercase tracking-tighter leading-none`}
-                  >
-                    {activeTintPreset.code}
                   </span>
                 </button>
               </div>
@@ -1122,6 +1153,125 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
           </div>
         </div>
       </section>
+    );
+  }
+);
+
+/**
+ * Shared Screwed-in Brushed-Metal Label Plate for Playlist Hardware Push-Buttons (Matching Turntable Controls).
+ */
+const PlaylistHardwareLabelPlate = React.memo<{ label: string }>(({ label }) => (
+  <div className="relative w-[36px] sm:w-[40px] h-[11px] sm:h-[12px] rounded-[2px] overflow-hidden border border-[#d6c7b2]/45 shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_1px_2px_rgba(0,0,0,0.7)] flex items-center justify-center shrink-0">
+    <img
+      src="/console/metal-plate.webp"
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+      className="pointer-events-none absolute inset-0 w-full h-full object-cover"
+    />
+    <img
+      src="/console/screw-head.webp"
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+      className="pointer-events-none absolute left-[2px] top-1/2 -translate-y-1/2 w-[3px] h-[3px] z-10"
+    />
+    <img
+      src="/console/screw-head.webp"
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+      className="pointer-events-none absolute right-[2px] top-1/2 -translate-y-1/2 w-[3px] h-[3px] z-10"
+    />
+    <span className="relative z-10 font-mono text-[5px] sm:text-[5.5px] font-extrabold uppercase tracking-tighter text-[#16120e] drop-shadow-[0_0.5px_0_rgba(255,255,255,0.65)] leading-none whitespace-nowrap">
+      {label}
+    </span>
+  </div>
+));
+
+/**
+ * Round Machined Metal Push-Button + Screwed-In Engraved Label Plate for the Playlist Box
+ * (Exact same retro hardware theme as the controls on the turntable board).
+ */
+const PlaylistHardwarePushButton = React.memo<{
+  id?: string;
+  label: string;
+  ariaLabel: string;
+  title: string;
+  disabled?: boolean;
+  isPressed?: boolean;
+  isBlinking?: boolean;
+  highlightEmerald?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}>(
+  ({
+    id,
+    label,
+    ariaLabel,
+    title,
+    disabled = false,
+    isPressed = false,
+    isBlinking = false,
+    highlightEmerald = false,
+    onClick,
+    children,
+  }) => {
+    const [momentaryDown, setMomentaryDown] = useState(false);
+    const depressed = isPressed || momentaryDown;
+
+    return (
+      <div className="flex flex-col items-center justify-end gap-0.5 shrink-0">
+        <button
+          id={id}
+          type="button"
+          disabled={disabled}
+          aria-label={ariaLabel}
+          aria-pressed={isPressed}
+          title={title}
+          data-pressed={depressed ? 'true' : 'false'}
+          data-blinking={isBlinking ? 'true' : 'false'}
+          onPointerDown={() => {
+            if (!disabled) setMomentaryDown(true);
+          }}
+          onPointerUp={() => setMomentaryDown(false)}
+          onPointerLeave={() => {
+            if (momentaryDown) setMomentaryDown(false);
+          }}
+          onClick={onClick}
+          style={{
+            transform: depressed && !disabled ? 'translateY(1.5px)' : 'translateY(0px)',
+            transition: 'transform 80ms linear, opacity 120ms linear',
+          }}
+          className={`relative w-[28px] h-[28px] sm:w-[32px] sm:h-[32px] rounded-full flex items-center justify-center cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none ${
+            isBlinking ? 'spotify-connect-blink ring-2 ring-[#1ed760]' : ''
+          } ${
+            highlightEmerald
+              ? 'ring-1 ring-emerald-400/70 shadow-[0_2px_6px_rgba(0,0,0,0.75)]'
+              : 'shadow-[0_2px_6px_rgba(0,0,0,0.75)]'
+          }`}
+        >
+          <img
+            src={depressed ? '/console/pushbutton-down.webp' : '/console/pushbutton-up.webp'}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            className="pointer-events-none w-[26px] h-[26px] sm:w-[30px] sm:h-[30px] object-contain"
+          />
+          <span
+            className={`pointer-events-none absolute inset-0 flex items-center justify-center ${
+              highlightEmerald
+                ? 'text-emerald-950'
+                : depressed
+                ? 'text-amber-300'
+                : 'text-[#18130e]'
+            }`}
+          >
+            {children}
+          </span>
+        </button>
+        <PlaylistHardwareLabelPlate label={label} />
+      </div>
     );
   }
 );
@@ -1265,9 +1415,9 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
           </div>
         )}
 
-        {/* Top Bar: Playlist Selector Dropdown (Immediately Left of Spotify Button) + Connect Spotify + Shuffle & Next */}
-        <div className="relative z-30 flex items-center justify-between gap-1.5 pb-2 mb-2 border-b border-amber-200/20 shrink-0">
-          {/* Playlist Selector Dropdown Immediately to the Left of the Spotify Connect Button */}
+        {/* Top Bar: Screwed-In Brushed-Metal Playlist Selector Plate + Retro Machined Hardware Push-Buttons */}
+        <div className="relative z-30 flex items-end justify-between gap-1.5 pb-2 mb-2 border-b border-amber-200/20 shrink-0">
+          {/* Playlist Selector Dropdown Immediately to the Left of the Spotify Connect Button — Restyled as a Screwed-In Brushed-Metal Hardware Plate */}
           <div
             id="playlist-selector-dropdown"
             ref={dropdownRef}
@@ -1284,32 +1434,79 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
               aria-haspopup="listbox"
               aria-expanded={isDropdownOpen}
               aria-label="Select or Manage Loaded Playlists"
-              className="w-full h-[38px] sm:h-[42px] px-2.5 rounded-[3px] border border-[#8c6239] bg-gradient-to-b from-[#331e10] via-[#24140a] to-[#170c06] shadow-[inset_0_1px_0_rgba(255,215,170,0.22),0_2px_4px_rgba(0,0,0,0.65)] flex items-center justify-between gap-1.5 cursor-pointer text-left"
+              className="relative w-full h-[40px] sm:h-[44px] px-3.5 rounded-[3px] overflow-hidden border border-[#d6c7b2]/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_3px_7px_rgba(0,0,0,0.75)] flex items-center justify-between gap-1.5 cursor-pointer text-left active:translate-y-[1px]"
             >
-              <div className="min-w-0 flex-1">
-                <p className="font-display text-[11px] sm:text-xs font-bold engraved-wood-text truncate">
+              <img
+                src="/console/metal-plate.webp"
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="pointer-events-none absolute inset-0 w-full h-full object-cover"
+              />
+              <img
+                src="/console/screw-head.webp"
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="pointer-events-none absolute top-1 left-1 w-1.5 h-1.5 z-20"
+              />
+              <img
+                src="/console/screw-head.webp"
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="pointer-events-none absolute top-1 right-1 w-1.5 h-1.5 z-20"
+              />
+              <img
+                src="/console/screw-head.webp"
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="pointer-events-none absolute bottom-1 left-1 w-1.5 h-1.5 z-20"
+              />
+              <img
+                src="/console/screw-head.webp"
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="pointer-events-none absolute bottom-1 right-1 w-1.5 h-1.5 z-20"
+              />
+
+              <div className="relative z-10 min-w-0 flex-1 leading-tight">
+                <p className="font-display text-[11px] sm:text-xs font-extrabold uppercase tracking-wide text-[#17130f] drop-shadow-[0_1px_0_rgba(255,255,255,0.65)] truncate">
                   {hasTracks ? activePlaylist.name : 'Select Playlist'}
                 </p>
-                <p className="font-mono text-[9.5px] text-amber-200/65 truncate">
+                <p className="font-mono text-[9px] sm:text-[9.5px] font-bold text-[#2b241d]/90 drop-shadow-[0_1px_0_rgba(255,255,255,0.5)] truncate">
                   {playlists.length} {playlists.length === 1 ? 'playlist' : 'playlists'} ·{' '}
                   {activePlaylist.tracks.length} tracks
                 </p>
               </div>
-              <ChevronDown
-                strokeWidth={2.2}
-                className={`w-4 h-4 text-amber-300/85 shrink-0 transition-transform duration-150 ${
-                  isDropdownOpen ? 'rotate-180' : ''
-                }`}
-              />
+
+              {/* Machined Hardware Dial Cap Around Dropdown Chevron */}
+              <span className="relative z-10 w-6 h-6 rounded-full flex items-center justify-center shrink-0">
+                <img
+                  src={isDropdownOpen ? '/console/pushbutton-down.webp' : '/console/pushbutton-up.webp'}
+                  alt=""
+                  aria-hidden="true"
+                  draggable={false}
+                  className="pointer-events-none absolute inset-0 w-full h-full object-contain"
+                />
+                <ChevronDown
+                  strokeWidth={2.5}
+                  className={`relative z-10 w-3.5 h-3.5 text-[#17130f] transition-transform duration-150 ${
+                    isDropdownOpen ? 'rotate-180 text-amber-300' : ''
+                  }`}
+                />
+              </span>
             </button>
 
-            {/* Dropdown Menu Listing All Loaded/Saved Playlists with Delete (Trash) + Confirmation Step */}
+            {/* Dropdown Menu Listing All Loaded/Saved Playlists with Retro Hardware Delete Buttons */}
             {isDropdownOpen && (
               <div
                 id="playlist-selector-menu"
                 role="listbox"
                 aria-label="Saved Playlists"
-                className="absolute left-0 right-0 top-full mt-1 z-50 max-h-56 overflow-y-auto rounded-[3px] border-2 border-[#7a4f2a] bg-[#1a0f08] shadow-[0_14px_30px_rgba(0,0,0,0.92)] p-1 space-y-1"
+                className="absolute left-0 right-0 top-full mt-1 z-50 max-h-56 overflow-y-auto rounded-[3px] border-2 border-[#a87c4f] bg-[#1a0f08] shadow-[0_14px_30px_rgba(0,0,0,0.92)] p-1.5 space-y-1"
               >
                 {playlists.length === 0 ? (
                   <div className="px-2.5 py-3 text-center font-mono text-[11px] text-amber-100/60">
@@ -1323,10 +1520,10 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
                       <div
                         key={pl.id}
                         data-playlist-row-id={pl.id}
-                        className={`flex items-center justify-between gap-1 rounded-[2px] px-2 py-1.5 border ${
+                        className={`flex items-center justify-between gap-1.5 rounded-[3px] px-2 py-1.5 border ${
                           isSelected
-                            ? 'bg-[#382111] border-amber-400/55 text-amber-100'
-                            : 'bg-[#24150b]/80 hover:bg-[#2f1b0e] border-white/10 text-amber-100/85'
+                            ? 'bg-[#382111] border-amber-400/65 text-amber-100'
+                            : 'bg-[#24150b]/85 hover:bg-[#2f1b0e] border-[#7a4f2a]/45 text-amber-100/85'
                         }`}
                       >
                         {isConfirmingDelete ? (
@@ -1345,7 +1542,7 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
                                   onDeletePlaylist(pl.id);
                                   setPendingDeleteId(null);
                                 }}
-                                className="px-2 py-0.5 rounded-[2px] bg-red-600 hover:bg-red-500 text-white font-mono text-[9.5px] font-bold flex items-center gap-0.5 cursor-pointer"
+                                className="px-2 py-0.5 rounded-[2px] border border-red-300/60 bg-gradient-to-b from-red-500 to-red-700 text-white font-mono text-[9.5px] font-bold shadow-[inset_0_1px_0_rgba(255,255,255,0.4)] flex items-center gap-0.5 cursor-pointer"
                               >
                                 <Check className="w-3 h-3" />
                                 <span>Delete</span>
@@ -1358,9 +1555,16 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
                                   e.stopPropagation();
                                   setPendingDeleteId(null);
                                 }}
-                                className="px-1.5 py-0.5 rounded-[2px] bg-white/10 hover:bg-white/20 text-amber-100 font-mono text-[9.5px] cursor-pointer"
+                                className="relative px-2 py-0.5 rounded-[2px] overflow-hidden border border-[#d6c7b2]/50 text-[#17130f] font-mono text-[9.5px] font-extrabold cursor-pointer"
                               >
-                                Cancel
+                                <img
+                                  src="/console/metal-plate.webp"
+                                  alt=""
+                                  aria-hidden="true"
+                                  draggable={false}
+                                  className="pointer-events-none absolute inset-0 w-full h-full object-cover"
+                                />
+                                <span className="relative z-10">Cancel</span>
                               </button>
                             </div>
                           </div>
@@ -1384,6 +1588,7 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
                                 {pl.tracks.length} tracks
                               </p>
                             </button>
+                            {/* Machined Hardware Trash Push-Button */}
                             <button
                               type="button"
                               data-delete-playlist-id={pl.id}
@@ -1394,9 +1599,16 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
                                 triggerButtonHaptic(lowPowerMode);
                                 setPendingDeleteId(pl.id);
                               }}
-                              className="p-1.5 rounded-[2px] text-amber-200/60 hover:text-red-400 hover:bg-black/40 cursor-pointer shrink-0"
+                              className="relative w-6 h-6 rounded-full flex items-center justify-center text-[#18130e] hover:text-red-700 cursor-pointer shrink-0 active:translate-y-[1px]"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <img
+                                src="/console/pushbutton-up.webp"
+                                alt=""
+                                aria-hidden="true"
+                                draggable={false}
+                                className="pointer-events-none absolute inset-0 w-full h-full object-contain"
+                              />
+                              <Trash2 strokeWidth={2.2} className="relative z-10 w-3 h-3" />
                             </button>
                           </>
                         )}
@@ -1408,8 +1620,8 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
             )}
           </div>
 
-          {/* Action Controls Immediately to the Right of the Playlist Dropdown */}
-          <div className="flex items-center gap-1.5 shrink-0">
+          {/* Retro Hardware Action Push-Buttons Immediately to the Right of the Playlist Dropdown */}
+          <div className="flex items-end gap-1.5 shrink-0">
             {needsInitialSpotifyConnect && shouldAnimateGuidance && onOpenSpotifyModal && (
               <button
                 id="spotify-hand-pointer"
@@ -1419,91 +1631,75 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
                   triggerButtonHaptic(lowPowerMode);
                   onOpenSpotifyModal();
                 }}
-                className="hand-pointer-nudge hifi-btn px-2 gap-1 border-[#1ed760] text-[#1ed760] font-bold text-xs whitespace-nowrap"
+                className="hand-pointer-nudge relative h-[32px] px-2 rounded-[3px] overflow-hidden border border-[#1ed760] text-[#17130f] font-bold text-xs flex items-center justify-center shadow-md cursor-pointer"
               >
-                <Pointer strokeWidth={1.75} className="hifi-icon rotate-90" />
+                <img
+                  src="/console/metal-plate.webp"
+                  alt=""
+                  aria-hidden="true"
+                  draggable={false}
+                  className="pointer-events-none absolute inset-0 w-full h-full object-cover"
+                />
+                <Pointer strokeWidth={2.2} className="relative z-10 w-4 h-4 rotate-90 text-[#17130f]" />
               </button>
             )}
 
             {onOpenSpotifyModal && (
-              <button
+              <PlaylistHardwarePushButton
                 id="spotify-connect-btn"
-                type="button"
-                onClick={() => {
-                  triggerButtonHaptic(lowPowerMode);
-                  onOpenSpotifyModal();
-                }}
-                data-blinking={shouldAnimateGuidance ? 'true' : 'false'}
-                aria-label="Connect Spotify Account and Select Playlist"
+                label="SPOTIFY"
+                ariaLabel="Connect Spotify Account and Select Playlist"
                 title={
                   spotifyConnected
                     ? `Spotify Connected (${spotifyUserLabel})`
                     : 'Connect Spotify'
                 }
-                style={
-                  !spotifyConnected && !needsInitialSpotifyConnect
-                    ? { color: themePalette.lightHex }
-                    : undefined
-                }
-                className={`hifi-btn shrink-0 ${
-                  needsInitialSpotifyConnect
-                    ? `${
-                        shouldAnimateGuidance ? 'spotify-connect-blink ' : ''
-                      }px-2.5 gap-1.5 bg-[#1ed760] text-[#12100e] font-bold text-xs border-white whitespace-nowrap`
-                    : spotifyConnected
-                    ? 'hifi-square-control text-emerald-300 border-emerald-400/50'
-                    : 'hifi-square-control'
-                }`}
+                isPressed={spotifyConnected}
+                isBlinking={shouldAnimateGuidance}
+                highlightEmerald={spotifyConnected || needsInitialSpotifyConnect}
+                onClick={() => {
+                  triggerButtonHaptic(lowPowerMode);
+                  onOpenSpotifyModal();
+                }}
               >
                 <svg
                   viewBox="0 0 24 24"
-                  className="hifi-icon fill-current"
+                  className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current"
                   aria-hidden="true"
                 >
                   <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm4.586 14.424c-.18.295-.563.387-.857.207-2.35-1.434-5.305-1.76-8.786-.963-.335.077-.67-.133-.746-.469-.077-.334.132-.67.469-.745 3.809-.87 7.076-.496 9.713 1.115.293.18.386.563.207.855zm1.224-2.722c-.226.367-.706.482-1.072.257-2.687-1.652-6.785-2.131-9.965-1.166-.413.127-.848-.106-.973-.517-.125-.413.108-.848.52-.973 3.632-1.102 8.147-.568 11.234 1.328.366.226.48.707.256 1.071zm.105-2.835C14.692 8.95 9.375 8.775 6.297 9.71c-.493.15-1.016-.129-1.166-.623-.148-.495.13-1.015.625-1.166 3.532-1.073 9.404-.866 13.115 1.337.445.264.59.838.327 1.282-.264.443-.838.59-1.283.327z" />
                 </svg>
-                {needsInitialSpotifyConnect && <span>Spotify</span>}
-              </button>
+              </PlaylistHardwarePushButton>
             )}
 
-            <button
-              type="button"
+            <PlaylistHardwarePushButton
+              id="playlist-shuffle-btn"
+              label="SHUF"
               disabled={!hasTracks}
+              isPressed={shuffleEnabled}
+              ariaLabel="Shuffle Playlist"
+              title={shuffleEnabled ? 'Shuffle On' : 'Shuffle Playlist'}
               onClick={() => {
                 triggerButtonHaptic(lowPowerMode);
                 onToggleShuffle();
               }}
-              data-pressed={shuffleEnabled ? 'true' : 'false'}
-              aria-label="Shuffle Playlist"
-              aria-pressed={shuffleEnabled}
-              title={shuffleEnabled ? 'Shuffle On' : 'Shuffle Playlist'}
-              style={
-                shuffleEnabled
-                  ? {
-                      borderColor: themePalette.borderRgba,
-                      color: themePalette.lightHex,
-                    }
-                  : undefined
-              }
-              className="hifi-square-control hifi-btn text-amber-100/85"
             >
-              <Shuffle strokeWidth={1.75} className="hifi-icon" />
-            </button>
+              <Shuffle strokeWidth={2.2} className="w-3.5 h-3.5" />
+            </PlaylistHardwarePushButton>
 
-            <button
-              type="button"
+            <PlaylistHardwarePushButton
+              id="playlist-next-btn"
+              label="NEXT"
               disabled={!hasTracks}
+              ariaLabel="Play Next Song Now"
+              title="Next Track"
               onClick={() => {
                 triggerButtonHaptic(lowPowerMode);
                 onNextTrack();
               }}
-              aria-label="Play Next Song Now"
-              title="Next Track"
-              style={{ color: themePalette.lightHex }}
-              className="hifi-square-control hifi-btn"
             >
-              <SkipForward strokeWidth={1.75} className="hifi-icon" />
-            </button>
+              <SkipForward strokeWidth={2.2} className="w-3.5 h-3.5" />
+            </PlaylistHardwarePushButton>
           </div>
         </div>
 
@@ -1617,3 +1813,4 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
     );
   }
 );
+

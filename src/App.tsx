@@ -816,15 +816,37 @@ export default function App() {
 
   // Manual track selection / skip: resolves strictly by unique track ID against the ORIGINAL unfiltered tracks array
   const handleSelectTrack = useCallback((trackId: string) => {
-    const { activePlaylist: curPlaylist, effectiveRate: rate } = stateRef.current;
+    const {
+      activePlaylist: curPlaylist,
+      activeTrack: prevTrack,
+      effectiveRate: rate,
+      isPlaying: wasPlaying,
+      crossfadeSec: curCrossfadeSec,
+      lowPowerMode: curLowPower,
+    } = stateRef.current;
     const { track: nextTrack } = resolveTrackById(curPlaylist.tracks, trackId);
     if (!nextTrack) return;
+    const isSwitchingDifferentTrack = prevTrack && prevTrack.id !== nextTrack.id;
     crossfadingTrackIdRef.current = null;
     setCurrentTrackId(nextTrack.id);
     playbackClockStore.setTrackDuration(nextTrack.durationSec);
     playbackClockStore.setTime(0, true);
     setIsPlaying(true);
-    retroAudio.startPlayback(nextTrack, rate, 0);
+
+    if (isSwitchingDifferentTrack) {
+      retroAudio.triggerTrackChangeHandlingCue(1260);
+    }
+
+    if (wasPlaying && isSwitchingDifferentTrack) {
+      retroAudio.crossfadeToTrack(
+        nextTrack,
+        rate,
+        Math.max(0.8, Math.min(2, curCrossfadeSec)),
+        curLowPower
+      );
+    } else {
+      retroAudio.startPlayback(nextTrack, rate, 0);
+    }
   }, []);
 
   const handleNextTrack = useCallback(() => {
@@ -1126,7 +1148,7 @@ export default function App() {
               {/* Mobile Portrait Order: TV Section FIRST at Top (with Spinning Vinyl Brand Header) */}
               <div
                 id="retro-tv"
-                className="w-full h-[250px] flex flex-col justify-stretch shrink-0"
+                className="w-full h-auto flex flex-col justify-stretch shrink-0"
               >
                 <RetroTvTable
                   track={activeTrack}

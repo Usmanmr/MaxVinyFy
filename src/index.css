@@ -61,8 +61,8 @@
     display: grid;
     height: 100%;
     min-height: 0;
-    grid-template-columns: clamp(235px, 36%, 340px) minmax(0, 1fr);
-    grid-template-rows: minmax(0, 46%) minmax(0, 1fr);
+    grid-template-columns: clamp(200px, 28vw, 245px) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     gap: 6px 10px;
   }
 
@@ -70,7 +70,7 @@
     grid-column: 1;
     grid-row: 1;
     min-height: 0;
-    height: 100%;
+    height: auto;
   }
 
   .deck-slot-playlist {
@@ -103,8 +103,8 @@
     display: grid;
     height: 100%;
     min-height: 0;
-    grid-template-columns: clamp(300px, 41vw, 550px) minmax(0, 1fr);
-    grid-template-rows: minmax(0, clamp(200px, 39dvh, 350px)) minmax(0, 1fr);
+    grid-template-columns: clamp(290px, 36vw, 480px) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     gap: clamp(8px, 1.1vw, 14px);
   }
 
@@ -112,7 +112,7 @@
     grid-column: 1;
     grid-row: 1;
     min-height: 0;
-    height: 100%;
+    height: auto;
   }
 
   .deck-slot-playlist {
@@ -130,11 +130,11 @@
   }
 }
 
-/* Car-screen / short tablet aspect ratio (e.g. 1024x600): taller playlist + ideal console proportion */
+/* Car-screen / short tablet aspect ratio (e.g. 1024x600): proportional 16:10 TV + tall playlist */
 @media (min-width: 768px) and (min-height: 501px) and (max-height: 640px) {
   .main-deck-grid {
-    grid-template-columns: clamp(320px, 46vw, 500px) minmax(0, 1fr);
-    grid-template-rows: minmax(0, 42dvh) minmax(0, 1fr);
+    grid-template-columns: clamp(280px, 34vw, 355px) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
 }
 

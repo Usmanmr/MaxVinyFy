@@ -280,6 +280,68 @@ export class RetroAudioEngine {
     noiseSrc.stop(now + durationSec + 0.01);
   }
 
+  /**
+   * Plays a brief vinyl-handling sound effect during track-change transitions:
+   * 1) Immediate light stylus-lift scratch + warm paper-sleeve surface static
+   * 2) Needle-drop thump + groove crackle scheduled when the tonearm lowers onto the new record
+   */
+  public triggerTrackChangeHandlingCue(needleLowerDelayMs = 1260) {
+    if (!this.needleDropCrackle) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+
+    const now = this.ctx.currentTime;
+
+    // 1. Brief stylus-lift chirp
+    const liftOsc = this.ctx.createOscillator();
+    const liftFilter = this.ctx.createBiquadFilter();
+    const liftGain = this.ctx.createGain();
+    liftOsc.type = 'triangle';
+    liftOsc.frequency.setValueAtTime(190, now);
+    liftOsc.frequency.exponentialRampToValueAtTime(420, now + 0.08);
+    liftFilter.type = 'bandpass';
+    liftFilter.frequency.setValueAtTime(1350, now);
+    liftFilter.Q.setValueAtTime(3.0, now);
+    liftGain.gain.setValueAtTime(0.001, now);
+    liftGain.gain.linearRampToValueAtTime(0.11, now + 0.018);
+    liftGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+    liftOsc.connect(liftFilter);
+    liftFilter.connect(liftGain);
+    liftGain.connect(this.masterGain);
+    liftOsc.start(now);
+    liftOsc.stop(now + 0.12);
+
+    // 2. Soft vinyl-sleeve handling static rustle (0.45s)
+    const sleeveDur = 0.45;
+    const bufferSize = Math.floor(this.ctx.sampleRate * sleeveDur);
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      const env = Math.sin((i / bufferSize) * Math.PI);
+      data[i] = (Math.random() * 2 - 1) * 0.08 * env;
+    }
+    const sleeveNoise = this.ctx.createBufferSource();
+    sleeveNoise.buffer = buffer;
+    const sleeveFilter = this.ctx.createBiquadFilter();
+    sleeveFilter.type = 'bandpass';
+    sleeveFilter.frequency.setValueAtTime(1600, now);
+    sleeveFilter.Q.setValueAtTime(1.1, now);
+    const sleeveGain = this.ctx.createGain();
+    sleeveGain.gain.setValueAtTime(0.14, now);
+    sleeveNoise.connect(sleeveFilter);
+    sleeveFilter.connect(sleeveGain);
+    sleeveGain.connect(this.masterGain);
+    sleeveNoise.start(now + 0.05);
+    sleeveNoise.stop(now + 0.05 + sleeveDur);
+
+    // 3. Needle-drop thump when tonearm lowers onto the new record
+    window.setTimeout(() => {
+      if (this.isPlaying) {
+        this.triggerNeedleDrop(false);
+      }
+    }, Math.max(120, Math.min(1800, needleLowerDelayMs)));
+  }
+
   public getActiveTrackId(): string {
     return this.activeTrackId;
   }
