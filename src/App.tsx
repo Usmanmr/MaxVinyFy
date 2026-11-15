@@ -1,25 +1,34 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { DEFAULT_PLAYLISTS, buildYouTubeFramesForTrack } from './utils/defaultPlaylists';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { DEFAULT_PLAYLISTS } from './utils/defaultPlaylists';
 import {
   clampSeekTime,
-  getNextTrackIndex,
-  getShuffledNextTrackIndex,
-  getPreviousAction,
+  resolveTrackById,
+  getNextTrackId,
+  getPreviousTrackIdAction,
   calculatePlaybackRate,
   computeDominantAccentFromRgbSamples,
+  shouldEnableLowPowerByHardware,
+  classifyViewportLayout,
+  shouldTriggerTrackCrossfade,
+  removePlaylistById,
+  resolveActiveArtworkState,
   EMPTY_STANDBY_TRACK,
   EMPTY_STANDBY_PLAYLIST,
   type PlaylistPack,
   type TrackItem,
+  type TrackImageCandidate,
   type YouTubeGrabFrame,
   type DominantThemePalette,
+  type ViewportLayoutMode,
 } from './utils/playerLogic';
 import { retroAudio } from './utils/retroAudioEngine';
+import { playbackClockStore } from './utils/playbackStore';
 import { TurntableDeck } from './components/TurntableDeck';
 import { RetroTvTable, PlaylistQueueBox } from './components/RetroTvTable';
-import { TransportAndQueueDeck } from './components/TransportAndQueueDeck';
 import { SpotifyConnectModal } from './components/SpotifyConnectModal';
 import { AndroidAppModal } from './components/AndroidAppModal';
+
+const SAVED_PLAYLISTS_STORAGE_KEY = 'mvf_saved_playlists_v1';
 
 const SYNTH_PRESETS: TrackItem['synthPreset'][] = [
   'midnight-synth',
@@ -34,43 +43,226 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 }
 
+interface WakeLockSentinelLike {
+  release: () => Promise<void>;
+}
+
 export default function App() {
-  // First-load state: no playlist or song is loaded until user connects Spotify or loads a playlist
-  const [playlists, setPlaylists] = useState<PlaylistPack[]>([]);
-  const [activePlaylistId, setActivePlaylistId] = useState<string>('');
-  const [currentTrackIndex, setCurrentTrackIndex] = useState<number>(0);
-  const [currentTimeSec, setCurrentTimeSec] = useState<number>(0);
+  // Initialize with curated/saved playlists so active track and album art render immediately
+  const [playlists, setPlaylists] = useState<PlaylistPack[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = window.localStorage.getItem(SAVED_PLAYLISTS_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      } catch {
+        // ignore storage parse errors
+      }
+    }
+    return DEFAULT_PLAYLISTS;
+  });
+  const [activePlaylistId, setActivePlaylistId] = useState<string>(
+    () => DEFAULT_PLAYLISTS[0]?.id || ''
+  );
+  const [currentTrackId, setCurrentTrackId] = useState<string>(
+    () => DEFAULT_PLAYLISTS[0]?.tracks[0]?.id || ''
+  );
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [repeatOne, setRepeatOne] = useState<boolean>(false);
   const [shuffleEnabled, setShuffleEnabled] = useState<boolean>(false);
   const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
+  const [isLoadingPlaylist, setIsLoadingPlaylist] = useState<boolean>(false);
 
-  // Turntable hardware state
+  // Responsive viewport classification (desktop-tablet | mobile-landscape | mobile-portrait)
+  const [viewportLayout, setViewportLayout] = useState<ViewportLayoutMode>(() =>
+    typeof window !== 'undefined'
+      ? classifyViewportLayout(window.innerWidth, window.innerHeight)
+      : 'desktop-tablet'
+  );
+
+  // Power, Visibility, Night Mode & Motion Preference states
+  const [isDocumentHidden, setIsDocumentHidden] = useState<boolean>(() =>
+    typeof document !== 'undefined' ? document.visibilityState === 'hidden' : false
+  );
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState<boolean>(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false
+  );
+  const [lowPowerMode, setLowPowerMode] = useState<boolean>(() =>
+    typeof navigator !== 'undefined'
+      ? shouldEnableLowPowerByHardware(navigator.hardwareConcurrency)
+      : false
+  );
+  const [nightMode, setNightMode] = useState<boolean>(false);
+  const [guidanceActive, setGuidanceActive] = useState<boolean>(true);
+
+  // Turntable console hardware state
+  const [rpm, setRpm] = useState<33 | 45>(33);
   const [pitchPercent, setPitchPercent] = useState<number>(0);
   const [volume, setVolume] = useState<number>(0.8);
-  const [crackleLevel, setCrackleLevel] = useState<number>(0.25);
-  const [vuLevels, setVuLevels] = useState<{ left: number; right: number }>({ left: 0.08, right: 0.08 });
+  const [vinylCrackle, setVinylCrackle] = useState<boolean>(true);
+  const [needleDropCrackle, setNeedleDropCrackle] = useState<boolean>(true);
+  const [crossfadeSec, setCrossfadeSec] = useState<number>(3);
 
-  // Simple 1-Click Spotify Login state (Zero API keys required)
+  // Simple 1-Click Spotify Login state
   const [isSpotifyModalOpen, setIsSpotifyModalOpen] = useState<boolean>(false);
   const [spotifyConnected, setSpotifyConnected] = useState<boolean>(false);
   const [spotifyUserLabel, setSpotifyUserLabel] = useState<string>('Connect Spotify Account');
 
   // Android Standalone App Install state
   const [isAndroidModalOpen, setIsAndroidModalOpen] = useState<boolean>(false);
-  const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [deferredInstallPrompt, setDeferredInstallPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
   const [isStandaloneApp, setIsStandaloneApp] = useState<boolean>(false);
 
   const activePlaylist =
     playlists.find((p) => p.id === activePlaylistId) || playlists[0] || EMPTY_STANDBY_PLAYLIST;
+  const resolvedActive = resolveTrackById(activePlaylist.tracks, currentTrackId);
   const activeTrack =
-    activePlaylist.tracks[currentTrackIndex] || activePlaylist.tracks[0] || EMPTY_STANDBY_TRACK;
+    resolvedActive.track || activePlaylist.tracks[0] || EMPTY_STANDBY_TRACK;
   const needsInitialSpotifyConnect = !spotifyConnected && playlists.length === 0;
-  const effectiveRate = calculatePlaybackRate(33, pitchPercent);
+  const effectiveRate = calculatePlaybackRate(rpm, pitchPercent);
 
   const [themePalette, setThemePalette] = useState<DominantThemePalette>(() =>
     computeDominantAccentFromRgbSamples([[24, 182, 224]], 'MaxVinyFy')
   );
+
+  const crossfadingTrackIdRef = useRef<string | null>(null);
+  const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
+
+  // Keep refs synchronized so event handlers maintain stable references
+  const stateRef = useRef({
+    activePlaylist,
+    activeTrack,
+    currentTrackId: activeTrack.id,
+    isPlaying,
+    repeatOne,
+    shuffleEnabled,
+    effectiveRate,
+    crossfadeSec,
+    lowPowerMode,
+  });
+  stateRef.current = {
+    activePlaylist,
+    activeTrack,
+    currentTrackId: activeTrack.id,
+    isPlaying,
+    repeatOne,
+    shuffleEnabled,
+    effectiveRate,
+    crossfadeSec,
+    lowPowerMode,
+  };
+
+  // Sync active track duration to external playback clock store
+  useEffect(() => {
+    crossfadingTrackIdRef.current = null;
+    playbackClockStore.setTrackDuration(activeTrack.durationSec);
+  }, [activeTrack.id, activeTrack.durationSec]);
+
+  // Screen Wake Lock while playing, released on pause or tab hidden
+  useEffect(() => {
+    const releaseWakeLock = async () => {
+      if (wakeLockRef.current) {
+        try {
+          await wakeLockRef.current.release();
+        } catch {
+          // ignore
+        }
+        wakeLockRef.current = null;
+      }
+    };
+
+    if (!isPlaying || isDocumentHidden) {
+      releaseWakeLock();
+      return;
+    }
+
+    let cancelled = false;
+    const requestWakeLock = async () => {
+      try {
+        const nav = navigator as unknown as {
+          wakeLock?: { request: (type: 'screen') => Promise<WakeLockSentinelLike> };
+        };
+        if (nav.wakeLock && typeof nav.wakeLock.request === 'function') {
+          const sentinel = await nav.wakeLock.request('screen');
+          if (cancelled) {
+            await sentinel.release();
+          } else {
+            wakeLockRef.current = sentinel;
+          }
+        }
+      } catch {
+        // WakeLock may be disallowed by browser permissions policy in iframes
+      }
+    };
+
+    requestWakeLock();
+    return () => {
+      cancelled = true;
+      releaseWakeLock();
+    };
+  }, [isPlaying, isDocumentHidden]);
+
+  // Responsive Viewport & Orientation Listener
+  useEffect(() => {
+    const syncViewport = () => {
+      setViewportLayout(classifyViewportLayout(window.innerWidth, window.innerHeight));
+    };
+    syncViewport();
+    window.addEventListener('resize', syncViewport, { passive: true });
+    window.addEventListener('orientationchange', syncViewport, { passive: true });
+    return () => {
+      window.removeEventListener('resize', syncViewport);
+      window.removeEventListener('orientationchange', syncViewport);
+    };
+  }, []);
+
+  // Visibility & Reduced-Motion listeners: pause all active loops when hidden
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const hidden = document.visibilityState === 'hidden';
+      setIsDocumentHidden(hidden);
+      retroAudio.setDocumentHidden(hidden);
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    let mediaQuery: MediaQueryList | null = null;
+    const handleMotionChange = (e: MediaQueryListEvent) => {
+      setPrefersReducedMotion(e.matches);
+    };
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+      mediaQuery.addEventListener?.('change', handleMotionChange);
+    }
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      mediaQuery?.removeEventListener?.('change', handleMotionChange);
+    };
+  }, []);
+
+  // Stop initial "Connect Spotify" blink and hand-pointer nudge after 10 seconds OR after first user interaction
+  useEffect(() => {
+    if (!guidanceActive) return;
+
+    const stopGuidance = () => setGuidanceActive(false);
+    const timeoutId = window.setTimeout(stopGuidance, 10000);
+
+    window.addEventListener('pointerdown', stopGuidance, { once: true, passive: true });
+    window.addEventListener('keydown', stopGuidance, { once: true, passive: true });
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('pointerdown', stopGuidance);
+      window.removeEventListener('keydown', stopGuidance);
+    };
+  }, [guidanceActive]);
 
   // Detect Android standalone mode & capture native beforeinstallprompt
   useEffect(() => {
@@ -98,7 +290,7 @@ export default function App() {
     };
   }, []);
 
-  const handleTriggerAndroidInstall = async () => {
+  const handleTriggerAndroidInstall = useCallback(async () => {
     if (!deferredInstallPrompt) return;
     await deferredInstallPrompt.prompt();
     const choice = await deferredInstallPrompt.userChoice;
@@ -106,7 +298,7 @@ export default function App() {
       setDeferredInstallPrompt(null);
       setIsAndroidModalOpen(false);
     }
-  };
+  }, [deferredInstallPrompt]);
 
   // Extract dominant color from the active track's album cover image via offscreen canvas
   useEffect(() => {
@@ -126,9 +318,15 @@ export default function App() {
       root.style.setProperty('--tv-outer-border', palette.tvCabinetBorderHex);
     };
 
-    const seedFallback = computeDominantAccentFromRgbSamples([], `${activeTrack.id}-${activeTrack.title}`);
+    const seedFallback = computeDominantAccentFromRgbSamples(
+      [],
+      `${activeTrack.id}-${activeTrack.title}`
+    );
 
-    if (!activeTrack.artworkUrl) {
+    const primaryArtUrl =
+      resolveActiveArtworkState(activeTrack, 0).activeUrl || activeTrack.artworkUrl;
+
+    if (!primaryArtUrl) {
       applyPaletteVariables(seedFallback);
       return;
     }
@@ -166,12 +364,12 @@ export default function App() {
     img.onerror = () => {
       if (!cancelled) applyPaletteVariables(seedFallback);
     };
-    img.src = activeTrack.artworkUrl;
+    img.src = primaryArtUrl;
 
     return () => {
       cancelled = true;
     };
-  }, [activeTrack.id, activeTrack.title, activeTrack.artworkUrl]);
+  }, [activeTrack]);
 
   useEffect(() => {
     const onFsChange = () => {
@@ -181,7 +379,7 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);
 
-  const handleToggleFullScreen = () => {
+  const handleToggleFullScreen = useCallback(() => {
     if (document.fullscreenElement) {
       document.exitFullscreen?.().catch(() => {});
       setIsFullScreen(false);
@@ -189,7 +387,15 @@ export default function App() {
       document.documentElement.requestFullscreen?.().catch(() => {});
       setIsFullScreen((prev) => !prev);
     }
-  };
+  }, []);
+
+  const handleToggleLowPowerMode = useCallback(() => {
+    setLowPowerMode((prev) => !prev);
+  }, []);
+
+  const handleToggleNightMode = useCallback(() => {
+    setNightMode((prev) => !prev);
+  }, []);
 
   const mapRawTracksToTrackItems = useCallback(
     (
@@ -202,6 +408,7 @@ export default function App() {
         bpm: number;
         year: number;
         artworkUrl: string;
+        images?: TrackImageCandidate[];
         spotifyUri?: string;
         previewAudioUrl?: string;
       }>,
@@ -215,9 +422,25 @@ export default function App() {
             ...prebuilt,
             previewAudioUrl: raw.previewAudioUrl || prebuilt.previewAudioUrl,
             artworkUrl: raw.artworkUrl || prebuilt.artworkUrl,
+            images:
+              Array.isArray(raw.images) && raw.images.length > 0
+                ? [...raw.images, ...(prebuilt.images || [])]
+                : prebuilt.images,
           };
         }
-        const defaultYtId = '7IBDa53IsvI';
+        const defaultFallbackImg = DEFAULT_PLAYLISTS[0].tracks[idx % DEFAULT_PLAYLISTS[0].tracks.length]?.images?.[1]?.url || '/turntable/vinyl-label-paper.webp';
+        const resolvedArt =
+          raw.artworkUrl || fallbackCoverUrl || DEFAULT_PLAYLISTS[0].tracks[0].artworkUrl;
+        const candidateImages: TrackImageCandidate[] =
+          Array.isArray(raw.images) && raw.images.length > 0
+            ? [...raw.images, { url: defaultFallbackImg, width: 300, height: 300 }]
+            : [
+                { url: resolvedArt, width: 640, height: 640 },
+                ...(fallbackCoverUrl && fallbackCoverUrl !== resolvedArt
+                  ? [{ url: fallbackCoverUrl, width: 300, height: 300 }]
+                  : []),
+                { url: defaultFallbackImg, width: 64, height: 64 },
+              ];
         return {
           id: raw.id,
           title: raw.title,
@@ -226,64 +449,99 @@ export default function App() {
           durationSec: raw.durationSec || 180,
           bpm: raw.bpm || 110,
           year: raw.year || 2024,
-          artworkUrl: raw.artworkUrl || fallbackCoverUrl || DEFAULT_PLAYLISTS[0].tracks[0].artworkUrl,
+          artworkUrl: resolvedArt,
+          images: candidateImages,
           spotifyUri: raw.spotifyUri,
           previewAudioUrl: raw.previewAudioUrl,
-          youtubeVideoId: defaultYtId,
+          youtubeVideoId: '',
           synthPreset: SYNTH_PRESETS[idx % SYNTH_PRESETS.length],
-          tvFrames: buildYouTubeFramesForTrack(defaultYtId, raw.title, raw.artist),
+          tvFrames: [],
         };
       });
     },
     []
   );
 
-  // Thermal Optimization: Only run interval timer when isPlaying is true (0% CPU when paused)
+  // External 1Hz Playback Clock Timer: updates playbackClockStore once per second ONLY when playing & visible
+  // Also triggers Web Audio GainNode linearRampToValueAtTime crossfade when approaching track end!
   useEffect(() => {
-    if (!isPlaying || activeTrack.id === 'standby-empty' || activeTrack.durationSec <= 0) return;
+    if (
+      !isPlaying ||
+      isDocumentHidden ||
+      activeTrack.id === 'standby-empty' ||
+      activeTrack.durationSec <= 0
+    ) {
+      return;
+    }
 
     const interval = window.setInterval(() => {
-      setVuLevels(retroAudio.getVuLevels());
+      const {
+        activeTrack: curTrack,
+        activePlaylist: curPlaylist,
+        repeatOne: isRepeat,
+        shuffleEnabled: isShuffle,
+        effectiveRate: rate,
+        crossfadeSec: fadeSec,
+        lowPowerMode: lowPwr,
+      } = stateRef.current;
 
-      setCurrentTimeSec((prev) => {
-        // Sync with real full-length audio element currentTime when available
-        const realAudioSec = retroAudio.getCurrentAudioTime();
-        const nextSec =
-          realAudioSec !== null && Math.abs(realAudioSec - prev) < 3
-            ? realAudioSec
-            : prev + 0.25 * effectiveRate;
+      const prevSec = playbackClockStore.getCurrentTimeSec();
+      const realAudioSec = retroAudio.getCurrentAudioTime();
+      const nextSec =
+        realAudioSec !== null && Math.abs(realAudioSec - prevSec) < 3
+          ? realAudioSec
+          : prevSec + 1 * rate;
 
-        if (nextSec >= activeTrack.durationSec) {
-          const nextIdx = repeatOne
-            ? currentTrackIndex
-            : shuffleEnabled
-            ? getShuffledNextTrackIndex(currentTrackIndex, activePlaylist.tracks.length)
-            : getNextTrackIndex(currentTrackIndex, activePlaylist.tracks.length, false);
-          if (nextIdx !== currentTrackIndex) {
-            setCurrentTrackIndex(nextIdx);
-            const nextTrack = activePlaylist.tracks[nextIdx];
-            if (nextTrack) {
-              retroAudio.startPlayback(nextTrack, effectiveRate, 0);
-            }
-          } else {
-            retroAudio.startPlayback(activeTrack, effectiveRate, 0);
-          }
-          return 0;
+      // Check whether to trigger Web Audio linearRampToValueAtTime crossfade into next track
+      if (
+        shouldTriggerTrackCrossfade({
+          currentTimeSec: nextSec,
+          durationSec: curTrack.durationSec,
+          crossfadeSec: fadeSec,
+          lowPowerMode: lowPwr,
+          isManualSkip: false,
+          alreadyCrossfading: crossfadingTrackIdRef.current === curTrack.id,
+        })
+      ) {
+        crossfadingTrackIdRef.current = curTrack.id;
+        const nextTrackId = getNextTrackId(
+          curPlaylist.tracks,
+          curTrack.id,
+          isRepeat,
+          isShuffle
+        );
+        const nextTrack = resolveTrackById(curPlaylist.tracks, nextTrackId).track || curTrack;
+        playbackClockStore.setTrackDuration(nextTrack.durationSec);
+        playbackClockStore.setTime(0, true);
+        setCurrentTrackId(nextTrack.id);
+        retroAudio.crossfadeToTrack(nextTrack, rate, fadeSec, lowPwr);
+        return;
+      }
+
+      if (nextSec >= curTrack.durationSec) {
+        const nextTrackId = getNextTrackId(
+          curPlaylist.tracks,
+          curTrack.id,
+          isRepeat,
+          isShuffle
+        );
+        const nextTrack = resolveTrackById(curPlaylist.tracks, nextTrackId).track || curTrack;
+        playbackClockStore.setTime(0, true);
+        if (nextTrack.id !== curTrack.id) {
+          playbackClockStore.setTrackDuration(nextTrack.durationSec);
+          setCurrentTrackId(nextTrack.id);
+          retroAudio.startPlayback(nextTrack, rate, 0);
+        } else {
+          retroAudio.startPlayback(curTrack, rate, 0);
         }
-        return nextSec;
-      });
-    }, 250);
+        return;
+      }
 
-    return () => clearInterval(interval);
-  }, [
-    isPlaying,
-    effectiveRate,
-    activeTrack,
-    currentTrackIndex,
-    activePlaylist.tracks,
-    repeatOne,
-    shuffleEnabled,
-  ]);
+      playbackClockStore.setTime(nextSec);
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [isPlaying, isDocumentHidden, activeTrack.id, activeTrack.durationSec]);
 
   // Cache resolved YouTube video IDs and Spotify track artwork into state when RetroTvTable searches YouTube
   const handleResolvedTrackMetadata = useCallback(
@@ -307,7 +565,6 @@ export default function App() {
     []
   );
 
-  // Fetch all tracks (e.g. all 75 songs) for a specific Spotify playlist ID
   const fetchTracksForSpotifyPlaylistId = useCallback(
     async (spotifyPlaylistId: string): Promise<{ name: string; tracks: TrackItem[] } | null> => {
       const res = await fetch(`/api/spotify/playlist?id=${encodeURIComponent(spotifyPlaylistId)}`);
@@ -323,71 +580,77 @@ export default function App() {
     [mapRawTracksToTrackItems]
   );
 
-  // Simple 1-Click Spotify Login: Auto-connects user account & loads all their Spotify playlists (including all 75 songs of car playlist)
   const handleOneClickSpotifyLogin = useCallback(
     async (accountHint?: string) => {
-      const params = new URLSearchParams();
-      if (accountHint) {
-        params.set('account', accountHint);
-      }
-      const res = await fetch(`/api/spotify/quick-login?${params.toString()}`);
-      if (!res.ok) {
-        throw new Error('Could not connect to Spotify right now. Please try again.');
-      }
-      const data = (await res.json()) as {
-        user?: { id: string; displayName: string };
-        playlists?: Array<{
-          id: string;
-          spotifyPlaylistId?: string;
-          name: string;
-          subtitle: string;
-          coverUrl: string;
-          tracks?: Array<{
+      setGuidanceActive(false);
+      setIsLoadingPlaylist(true);
+      try {
+        const params = new URLSearchParams();
+        if (accountHint) {
+          params.set('account', accountHint);
+        }
+        const res = await fetch(`/api/spotify/quick-login?${params.toString()}`);
+        if (!res.ok) {
+          throw new Error('Could not connect to Spotify right now. Please try again.');
+        }
+        const data = (await res.json()) as {
+          user?: { id: string; displayName: string };
+          playlists?: Array<{
             id: string;
-            title: string;
-            artist: string;
-            album: string;
-            durationSec: number;
-            bpm: number;
-            year: number;
-            artworkUrl: string;
-            spotifyUri?: string;
-            previewAudioUrl?: string;
+            spotifyPlaylistId?: string;
+            name: string;
+            subtitle: string;
+            coverUrl: string;
+            tracks?: Array<{
+              id: string;
+              title: string;
+              artist: string;
+              album: string;
+              durationSec: number;
+              bpm: number;
+              year: number;
+              artworkUrl: string;
+              spotifyUri?: string;
+              previewAudioUrl?: string;
+            }>;
           }>;
-        }>;
-      };
+        };
 
-      const displayName = data.user?.displayName || accountHint || 'Spotify Account';
-      setSpotifyUserLabel(displayName);
-      setSpotifyConnected(true);
+        const displayName = data.user?.displayName || accountHint || 'Spotify Account';
+        setSpotifyUserLabel(displayName);
+        setSpotifyConnected(true);
 
-      if (Array.isArray(data.playlists) && data.playlists.length > 0) {
-        const syncedPacks: PlaylistPack[] = data.playlists.map((pl) => {
-          const cleanSpotifyId = pl.spotifyPlaylistId || pl.id;
-          const mappedTracks =
-            Array.isArray(pl.tracks) && pl.tracks.length > 0
-              ? mapRawTracksToTrackItems(pl.tracks, pl.coverUrl || '')
-              : DEFAULT_PLAYLISTS[0].tracks.slice(0, 1);
-          return {
-            id: `spotify-user-${cleanSpotifyId}`,
-            spotifyPlaylistId: cleanSpotifyId,
-            name: pl.name.startsWith('Spotify ·') ? pl.name : `Spotify · ${pl.name}`,
-            subtitle: pl.subtitle || 'Spotify Playlist',
-            source: 'spotify-live',
-            tracks: mappedTracks,
-          };
-        });
+        if (Array.isArray(data.playlists) && data.playlists.length > 0) {
+          const syncedPacks: PlaylistPack[] = data.playlists.map((pl) => {
+            const cleanSpotifyId = pl.spotifyPlaylistId || pl.id;
+            const mappedTracks =
+              Array.isArray(pl.tracks) && pl.tracks.length > 0
+                ? mapRawTracksToTrackItems(pl.tracks, pl.coverUrl || '')
+                : DEFAULT_PLAYLISTS[0].tracks.slice(0, 1);
+            return {
+              id: `spotify-user-${cleanSpotifyId}`,
+              spotifyPlaylistId: cleanSpotifyId,
+              name: pl.name.startsWith('Spotify ·') ? pl.name : `Spotify · ${pl.name}`,
+              subtitle: pl.subtitle || 'Spotify Playlist',
+              source: 'spotify-live',
+              tracks: mappedTracks,
+            };
+          });
 
-        setPlaylists(syncedPacks);
-        setActivePlaylistId(syncedPacks[0].id);
-        setCurrentTrackIndex(0);
-        setCurrentTimeSec(0);
+          const firstTrack = syncedPacks[0].tracks[0];
+          setPlaylists(syncedPacks);
+          setActivePlaylistId(syncedPacks[0].id);
+          setCurrentTrackId(firstTrack?.id || '');
+          playbackClockStore.setTrackDuration(firstTrack?.durationSec || 0);
+          playbackClockStore.setTime(0, true);
+        }
+      } finally {
+        setIsLoadingPlaylist(false);
       }
     },
     [mapRawTracksToTrackItems]
   );
 
-  // Listen for popup login completion if opened via /auth/spotify-login
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'SPOTIFY_QUICK_AUTH_SUCCESS') {
@@ -398,270 +661,528 @@ export default function App() {
     return () => window.removeEventListener('message', handleMessage);
   }, [handleOneClickSpotifyLogin]);
 
-  const handleLoadPlaylistByIdOrUrl = async (idOrUrl: string) => {
-    const matchUrl = idOrUrl.match(/playlist\/([a-zA-Z0-9]+)/);
-    const cleanId = matchUrl ? matchUrl[1] : idOrUrl.replace(/[^a-zA-Z0-9]/g, '');
-    if (!cleanId) {
-      throw new Error('Invalid Spotify Playlist URL or ID.');
-    }
+  const handleLoadPlaylistByIdOrUrl = useCallback(
+    async (idOrUrl: string) => {
+      setGuidanceActive(false);
+      const matchUrl = idOrUrl.match(/playlist\/([a-zA-Z0-9]+)/);
+      const cleanId = matchUrl ? matchUrl[1] : idOrUrl.replace(/[^a-zA-Z0-9]/g, '');
+      if (!cleanId) {
+        throw new Error('Invalid Spotify Playlist URL or ID.');
+      }
 
-    const loaded = await fetchTracksForSpotifyPlaylistId(cleanId);
-    if (!loaded || loaded.tracks.length === 0) {
-      throw new Error('Could not load tracks from that Spotify playlist.');
-    }
+      setIsLoadingPlaylist(true);
+      try {
+        const loaded = await fetchTracksForSpotifyPlaylistId(cleanId);
+        if (!loaded || loaded.tracks.length === 0) {
+          throw new Error('Could not load tracks from that Spotify playlist.');
+        }
 
-    const newPackId = `spotify-pl-${cleanId}`;
-    const newPack: PlaylistPack = {
-      id: newPackId,
-      spotifyPlaylistId: cleanId,
-      name: loaded.name,
-      subtitle: `${loaded.tracks.length} tracks · Spotify`,
-      source: 'spotify-live',
-      tracks: loaded.tracks,
-    };
+        const newPackId = `spotify-pl-${cleanId}`;
+        const newPack: PlaylistPack = {
+          id: newPackId,
+          spotifyPlaylistId: cleanId,
+          name: loaded.name,
+          subtitle: `${loaded.tracks.length} tracks · Spotify`,
+          source: 'spotify-live',
+          tracks: loaded.tracks,
+        };
 
-    setSpotifyConnected(true);
-    setPlaylists((prev) => [newPack, ...prev.filter((p) => p.id !== newPackId)]);
-    setActivePlaylistId(newPackId);
-    setCurrentTrackIndex(0);
-    setCurrentTimeSec(0);
-    if (isPlaying && loaded.tracks[0]) {
-      retroAudio.startPlayback(loaded.tracks[0], effectiveRate, 0);
-    }
-  };
+        const firstTrack = loaded.tracks[0];
+        setSpotifyConnected(true);
+        setPlaylists((prev) => [newPack, ...prev.filter((p) => p.id !== newPackId)]);
+        setActivePlaylistId(newPackId);
+        setCurrentTrackId(firstTrack?.id || '');
+        playbackClockStore.setTrackDuration(firstTrack?.durationSec || 0);
+        playbackClockStore.setTime(0, true);
+        if (stateRef.current.isPlaying && firstTrack) {
+          retroAudio.startPlayback(firstTrack, stateRef.current.effectiveRate, 0);
+        }
+      } finally {
+        setIsLoadingPlaylist(false);
+      }
+    },
+    [fetchTracksForSpotifyPlaylistId]
+  );
 
-  const handleTogglePlay = () => {
-    if (activeTrack.id === 'standby-empty' || activeTrack.durationSec <= 0) {
+  const handleTogglePlay = useCallback(() => {
+    const { activeTrack: curTrack, effectiveRate: rate } = stateRef.current;
+    if (curTrack.id === 'standby-empty' || curTrack.durationSec <= 0) {
       setIsSpotifyModalOpen(true);
       return;
     }
     setIsPlaying((prev) => {
       const next = !prev;
       if (next) {
-        retroAudio.startPlayback(activeTrack, effectiveRate, currentTimeSec);
+        retroAudio.startPlayback(curTrack, rate, playbackClockStore.getCurrentTimeSec());
       } else {
         retroAudio.pausePlayback();
       }
       return next;
     });
-  };
+  }, []);
 
-  const handleStopPlayback = () => {
+  const handleStopPlayback = useCallback(() => {
     setIsPlaying(false);
-    setCurrentTimeSec(0);
+    playbackClockStore.setTime(0, true);
     retroAudio.pausePlayback();
     retroAudio.seekTo(0);
-  };
+  }, []);
 
-  const handleSelectPlaylist = async (playlistId: string) => {
-    const targetPl = playlists.find((p) => p.id === playlistId);
-    if (!targetPl) return;
-    setActivePlaylistId(playlistId);
-    setCurrentTrackIndex(0);
-    setCurrentTimeSec(0);
+  const handleSelectPlaylist = useCallback(
+    async (playlistId: string) => {
+      const targetPl = playlists.find((p) => p.id === playlistId);
+      if (!targetPl) return;
+      const initialTrack = targetPl.tracks[0];
+      setActivePlaylistId(playlistId);
+      setCurrentTrackId(initialTrack?.id || '');
+      playbackClockStore.setTrackDuration(initialTrack?.durationSec || 0);
+      playbackClockStore.setTime(0, true);
 
-    if (targetPl.spotifyPlaylistId && targetPl.tracks.length <= 1) {
-      const loaded = await fetchTracksForSpotifyPlaylistId(targetPl.spotifyPlaylistId);
-      if (loaded && loaded.tracks.length > 0) {
-        setPlaylists((prev) =>
-          prev.map((pl) => (pl.id === playlistId ? { ...pl, tracks: loaded.tracks } : pl))
-        );
-        if (isPlaying && loaded.tracks[0]) {
-          retroAudio.startPlayback(loaded.tracks[0], effectiveRate, 0);
+      if (targetPl.spotifyPlaylistId && targetPl.tracks.length <= 1) {
+        setIsLoadingPlaylist(true);
+        try {
+          const loaded = await fetchTracksForSpotifyPlaylistId(targetPl.spotifyPlaylistId);
+          if (loaded && loaded.tracks.length > 0) {
+            setPlaylists((prev) =>
+              prev.map((pl) => (pl.id === playlistId ? { ...pl, tracks: loaded.tracks } : pl))
+            );
+            if (stateRef.current.activePlaylist.id === playlistId) {
+              const firstLoadedTrack = loaded.tracks[0];
+              setCurrentTrackId(firstLoadedTrack?.id || '');
+              playbackClockStore.setTrackDuration(firstLoadedTrack?.durationSec || 0);
+              playbackClockStore.setTime(0, true);
+              if (stateRef.current.isPlaying && firstLoadedTrack) {
+                retroAudio.startPlayback(firstLoadedTrack, stateRef.current.effectiveRate, 0);
+              }
+            }
+            return;
+          }
+        } finally {
+          setIsLoadingPlaylist(false);
         }
-        return;
       }
-    }
 
-    if (isPlaying && targetPl.tracks[0]) {
-      retroAudio.startPlayback(targetPl.tracks[0], effectiveRate, 0);
-    }
-  };
+      if (stateRef.current.isPlaying && initialTrack) {
+        retroAudio.startPlayback(initialTrack, stateRef.current.effectiveRate, 0);
+      }
+    },
+    [playlists, fetchTracksForSpotifyPlaylistId]
+  );
 
-  const handleSelectTrack = (trackIndex: number) => {
-    const nextTrack = activePlaylist.tracks[trackIndex];
+  // Persist playlists to localStorage whenever modified
+  useEffect(() => {
+    try {
+      if (playlists.length > 0) {
+        window.localStorage.setItem(SAVED_PLAYLISTS_STORAGE_KEY, JSON.stringify(playlists));
+      } else {
+        window.localStorage.removeItem(SAVED_PLAYLISTS_STORAGE_KEY);
+      }
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [playlists]);
+
+  const handleDeletePlaylist = useCallback(
+    (playlistIdToDelete: string) => {
+      setPlaylists((prev) => {
+        const { remaining, nextActiveId } = removePlaylistById(
+          prev,
+          playlistIdToDelete,
+          stateRef.current.activePlaylist.id
+        );
+        setActivePlaylistId(nextActiveId);
+        const nextPlaylist =
+          remaining.find((p) => p.id === nextActiveId) || remaining[0] || null;
+        const nextTrack = nextPlaylist?.tracks[0] || null;
+        if (nextTrack) {
+          setCurrentTrackId(nextTrack.id);
+          playbackClockStore.setTrackDuration(nextTrack.durationSec);
+          playbackClockStore.setTime(0, true);
+          if (stateRef.current.isPlaying) {
+            retroAudio.startPlayback(nextTrack, stateRef.current.effectiveRate, 0);
+          }
+        } else {
+          setCurrentTrackId('');
+          setIsPlaying(false);
+          playbackClockStore.setTrackDuration(0);
+          playbackClockStore.setTime(0, true);
+          retroAudio.pausePlayback();
+        }
+        return remaining;
+      });
+    },
+    []
+  );
+
+  // Manual track selection / skip: resolves strictly by unique track ID against the ORIGINAL unfiltered tracks array
+  const handleSelectTrack = useCallback((trackId: string) => {
+    const { activePlaylist: curPlaylist, effectiveRate: rate } = stateRef.current;
+    const { track: nextTrack } = resolveTrackById(curPlaylist.tracks, trackId);
     if (!nextTrack) return;
-    setCurrentTrackIndex(trackIndex);
-    setCurrentTimeSec(0);
+    crossfadingTrackIdRef.current = null;
+    setCurrentTrackId(nextTrack.id);
+    playbackClockStore.setTrackDuration(nextTrack.durationSec);
+    playbackClockStore.setTime(0, true);
     setIsPlaying(true);
-    retroAudio.startPlayback(nextTrack, effectiveRate, 0);
-  };
+    retroAudio.startPlayback(nextTrack, rate, 0);
+  }, []);
 
-  const handleNextTrack = () => {
-    if (activePlaylist.tracks.length === 0) return;
-    const nextIdx = shuffleEnabled
-      ? getShuffledNextTrackIndex(currentTrackIndex, activePlaylist.tracks.length)
-      : getNextTrackIndex(currentTrackIndex, activePlaylist.tracks.length, false);
-    handleSelectTrack(nextIdx);
-  };
+  const handleNextTrack = useCallback(() => {
+    const {
+      activePlaylist: curPlaylist,
+      activeTrack: curTrack,
+      shuffleEnabled: isShuffle,
+    } = stateRef.current;
+    if (curPlaylist.tracks.length === 0) return;
+    const nextTrackId = getNextTrackId(curPlaylist.tracks, curTrack.id, false, isShuffle);
+    if (nextTrackId) {
+      handleSelectTrack(nextTrackId);
+    }
+  }, [handleSelectTrack]);
 
-  const handleToggleShuffle = () => {
+  const handleToggleShuffle = useCallback(() => {
     setShuffleEnabled((prev) => !prev);
-  };
+  }, []);
 
-  const handlePreviousTrack = (forcePrevious = false) => {
-    if (activePlaylist.tracks.length === 0) return;
-    const action = getPreviousAction(
-      currentTrackIndex,
-      activePlaylist.tracks.length,
-      currentTimeSec,
-      forcePrevious
-    );
-    if (action.action === 'restart') {
-      setCurrentTimeSec(0);
-      retroAudio.seekTo(0);
-    } else {
-      handleSelectTrack(action.targetIndex);
-    }
-  };
+  const handleToggleRepeatOne = useCallback(() => {
+    setRepeatOne((r) => !r);
+  }, []);
 
-  const handleSeek = (targetSec: number) => {
-    if (activeTrack.id === 'standby-empty' || activeTrack.durationSec <= 0) return;
-    const clamped = clampSeekTime(targetSec, activeTrack.durationSec);
-    setCurrentTimeSec(clamped);
+  const handlePreviousTrack = useCallback(
+    (forcePrevious = false) => {
+      const { activePlaylist: curPlaylist, activeTrack: curTrack } = stateRef.current;
+      if (curPlaylist.tracks.length === 0) return;
+      const action = getPreviousTrackIdAction(
+        curPlaylist.tracks,
+        curTrack.id,
+        playbackClockStore.getCurrentTimeSec(),
+        forcePrevious
+      );
+      if (action.action === 'restart') {
+        playbackClockStore.setTime(0, true);
+        retroAudio.seekTo(0);
+      } else if (action.targetTrackId) {
+        handleSelectTrack(action.targetTrackId);
+      }
+    },
+    [handleSelectTrack]
+  );
+
+  const handleSeek = useCallback((targetSec: number) => {
+    const { activeTrack: curTrack } = stateRef.current;
+    if (curTrack.id === 'standby-empty' || curTrack.durationSec <= 0) return;
+    const clamped = clampSeekTime(targetSec, curTrack.durationSec);
+    playbackClockStore.setTime(clamped, true);
     retroAudio.seekTo(clamped);
-  };
+  }, []);
 
-  // Dragging the playing head above the vinyl record seeks and plays the track from that exact location
-  const handleDragTonearmToTime = (targetSec: number) => {
-    if (activeTrack.id === 'standby-empty' || activeTrack.durationSec <= 0) return;
-    const clamped = clampSeekTime(targetSec, activeTrack.durationSec);
-    setCurrentTimeSec(clamped);
+  const handleDragTonearmToTime = useCallback((targetSec: number) => {
+    const { activeTrack: curTrack, isPlaying: playing, effectiveRate: rate } = stateRef.current;
+    if (curTrack.id === 'standby-empty' || curTrack.durationSec <= 0) return;
+    const clamped = clampSeekTime(targetSec, curTrack.durationSec);
+    playbackClockStore.setTime(clamped, true);
     retroAudio.seekTo(clamped);
-    if (!isPlaying) {
+    if (!playing) {
       setIsPlaying(true);
-      retroAudio.startPlayback(activeTrack, effectiveRate, clamped);
+      retroAudio.startPlayback(curTrack, rate, clamped);
     }
-  };
+  }, []);
 
-  const handleChangePitch = (nextPitch: number) => {
-    setPitchPercent(nextPitch);
-    const nextRate = calculatePlaybackRate(33, nextPitch);
-    retroAudio.setPlaybackRate(nextRate);
-  };
+  const handleChangeRpm = useCallback(
+    (nextRpm: 33 | 45) => {
+      setRpm(nextRpm);
+      const nextRate = calculatePlaybackRate(nextRpm, pitchPercent);
+      retroAudio.setPlaybackRate(nextRate);
+    },
+    [pitchPercent]
+  );
 
-  const handleScratch = (intensity: 'light' | 'classic' | 'backspin') => {
+  const handleChangePitch = useCallback(
+    (nextPitch: number) => {
+      setPitchPercent(nextPitch);
+      const nextRate = calculatePlaybackRate(rpm, nextPitch);
+      retroAudio.setPlaybackRate(nextRate);
+    },
+    [rpm]
+  );
+
+  const handleScratch = useCallback((intensity: 'light' | 'classic' | 'backspin') => {
     retroAudio.triggerVinylScratch(intensity);
-    setVuLevels({ left: 0.94, right: 0.91 });
-  };
+  }, []);
 
-  const handleChangeVolume = (nextVol: number) => {
+  const handleChangeVolume = useCallback((nextVol: number) => {
     setVolume(nextVol);
     retroAudio.setVolume(nextVol);
-  };
+  }, []);
 
-  const handleChangeCrackle = (nextCrackle: number) => {
-    setCrackleLevel(nextCrackle);
-    retroAudio.setCrackleLevel(nextCrackle);
-  };
+  const handleToggleVinylCrackle = useCallback(() => {
+    setVinylCrackle((prev) => {
+      const next = !prev;
+      retroAudio.setCrackleLevel(next ? 0.25 : 0);
+      return next;
+    });
+  }, []);
+
+  const handleToggleNeedleDropCrackle = useCallback(() => {
+    setNeedleDropCrackle((prev) => {
+      const next = !prev;
+      retroAudio.setNeedleDropCrackle(next);
+      return next;
+    });
+  }, []);
+
+  const handleChangeCrossfadeSec = useCallback((sec: number) => {
+    setCrossfadeSec(Math.max(1, Math.min(5, Math.round(sec))));
+  }, []);
+
+  const handleOpenSpotifyModal = useCallback(() => {
+    setGuidanceActive(false);
+    setIsSpotifyModalOpen(true);
+  }, []);
+
+  const unifiedConsoleElement = (
+    <TurntableDeck
+      track={activeTrack}
+      isPlaying={isPlaying}
+      isDocumentHidden={isDocumentHidden}
+      lowPowerMode={lowPowerMode}
+      nightMode={nightMode}
+      prefersReducedMotion={prefersReducedMotion}
+      rpm={rpm}
+      pitchPercent={pitchPercent}
+      volume={volume}
+      vinylCrackle={vinylCrackle}
+      needleDropCrackle={needleDropCrackle}
+      crossfadeSec={crossfadeSec}
+      repeatOne={repeatOne}
+      shuffleEnabled={shuffleEnabled}
+      isFullScreen={isFullScreen}
+      spotifyConnected={spotifyConnected}
+      viewportLayout={viewportLayout}
+      themePalette={themePalette}
+      onTogglePlay={handleTogglePlay}
+      onStop={handleStopPlayback}
+      onPrevious={() => handlePreviousTrack(true)}
+      onNext={handleNextTrack}
+      onSeek={handleSeek}
+      onChangeRpm={handleChangeRpm}
+      onChangePitch={handleChangePitch}
+      onChangeVolume={handleChangeVolume}
+      onChangeCrossfadeSec={handleChangeCrossfadeSec}
+      onToggleRepeatOne={handleToggleRepeatOne}
+      onToggleShuffle={handleToggleShuffle}
+      onToggleVinylCrackle={handleToggleVinylCrackle}
+      onToggleNeedleDropCrackle={handleToggleNeedleDropCrackle}
+      onToggleLowPowerMode={handleToggleLowPowerMode}
+      onToggleNightMode={handleToggleNightMode}
+      onToggleFullScreen={handleToggleFullScreen}
+      onOpenSpotifyModal={handleOpenSpotifyModal}
+      onScratch={handleScratch}
+      onDragTonearmToTime={handleDragTonearmToTime}
+    />
+  );
 
   return (
     <div
       data-theme-primary={themePalette.primaryHex}
-      className="relative w-full min-h-screen landscape:h-dvh lg:w-screen lg:h-screen overflow-y-auto overflow-x-hidden landscape:overflow-hidden lg:overflow-hidden bg-[#12100e] text-[#f5efe6] flex flex-col justify-between select-none"
+      data-low-power={lowPowerMode ? 'true' : 'false'}
+      data-night-mode={nightMode ? 'true' : 'false'}
+      data-viewport-layout={viewportLayout}
+      className={`app-viewport-shell relative bg-[#12100e] text-[#f5efe6] flex flex-col select-none ${
+        nightMode ? 'night-driving-mode' : ''
+      }`}
     >
-      {/* Thermal-Optimized Background Ambient Gradient (Zero Heavy Gaussian Blur Layers) */}
+      {/* Thermal-Optimized Static Ambient Gradient */}
       <div
         aria-hidden="true"
         style={{
-          background: `radial-gradient(circle at 22% 15%, ${themePalette.softBgRgba} 0%, transparent 52%), radial-gradient(circle at 78% 85%, ${themePalette.softBgRgba} 0%, transparent 52%)`,
+          background: nightMode
+            ? 'radial-gradient(circle at 22% 15%, rgba(245, 158, 11, 0.14) 0%, transparent 55%)'
+            : `radial-gradient(circle at 22% 15%, ${themePalette.softBgRgba} 0%, transparent 52%), radial-gradient(circle at 78% 85%, ${themePalette.softBgRgba} 0%, transparent 52%)`,
         }}
         className="pointer-events-none fixed inset-0 z-0"
       />
 
-      {/* Responsive Layout:
-          - Portrait Mobile: Scrollable Full-Width Stack -> 1) Vinyl & Album Art on top, 2) Control Card, 3) Playlist, 4) TV Screen at bottom
-          - Mobile Landscape (`landscape:`) & Desktop (`lg:`): Synchronized 2x2 Cockpit -> Left: Brand + TV on top of Playlist | Right: Vinyl/Album Art + Vertical Control Icons on top of Play/Pause Control Card */}
-      <main className="relative z-10 flex-1 w-full max-w-[1440px] mx-auto px-3.5 landscape:px-3 lg:px-5 pt-4 pb-8 landscape:py-1.5 lg:pt-5 lg:pb-4 min-h-0 landscape:overflow-hidden lg:overflow-hidden">
-        <div className="flex flex-col gap-5 landscape:grid landscape:grid-cols-12 landscape:grid-rows-[50%_1fr] landscape:gap-2 lg:grid lg:grid-cols-12 lg:grid-rows-[53%_1fr] lg:gap-4 w-full landscape:h-full lg:h-full min-h-0">
-          {/* 1st on Mobile Portrait (order-1) | Top-Right on Mobile Landscape & Desktop: Vinyl & Album Art + Synced Lyrics + Vertical Control & Pitch Cards */}
-          <div
-            id="turntable"
-            className="order-1 landscape:order-none lg:order-none w-full landscape:col-span-8 landscape:col-start-5 landscape:row-start-1 lg:col-span-8 lg:col-start-5 lg:row-start-1 flex flex-col justify-stretch min-h-0 landscape:h-full lg:h-full"
-          >
-            <TurntableDeck
-              track={activeTrack}
-              currentTimeSec={currentTimeSec}
-              isPlaying={isPlaying}
-              pitchPercent={pitchPercent}
-              isFullScreen={isFullScreen}
-              themePalette={themePalette}
-              onTogglePlay={handleTogglePlay}
-              onChangePitch={handleChangePitch}
-              onScratch={handleScratch}
-              onSeek={handleSeek}
-              onDragTonearmToTime={handleDragTonearmToTime}
-              onToggleFullScreen={handleToggleFullScreen}
-            />
-          </div>
+      <main className="relative z-10 flex-1 min-h-0 w-full flex flex-col">
+        <div className="main-deck-grid">
+          {viewportLayout === 'desktop-tablet' && (
+            <>
+              <div
+                id="retro-tv"
+                className="deck-slot-tv flex flex-col justify-stretch min-h-0"
+              >
+                <RetroTvTable
+                  track={activeTrack}
+                  isPlaying={isPlaying}
+                  isDocumentHidden={isDocumentHidden}
+                  volume={volume}
+                  lowPowerMode={lowPowerMode}
+                  prefersReducedMotion={prefersReducedMotion}
+                  themePalette={themePalette}
+                  onChangeVolume={handleChangeVolume}
+                  onResolvedTrackMetadata={handleResolvedTrackMetadata}
+                />
+              </div>
 
-          {/* 2nd on Mobile Portrait (order-2) | Bottom-Right on Mobile Landscape & Desktop: Playback Control Card & Physics VU Meter */}
-          <div
-            id="up-next"
-            className="order-2 landscape:order-none lg:order-none w-full landscape:col-span-8 landscape:col-start-5 landscape:row-start-2 lg:col-span-8 lg:col-start-5 lg:row-start-2 flex flex-col justify-stretch rounded-3xl min-h-0 landscape:h-full lg:h-full"
-          >
-            <TransportAndQueueDeck
-              playlists={playlists}
-              activePlaylist={activePlaylist}
-              activeTrack={activeTrack}
-              currentTrackIndex={currentTrackIndex}
-              currentTimeSec={currentTimeSec}
-              isPlaying={isPlaying}
-              repeatOne={repeatOne}
-              volume={volume}
-              crackleLevel={crackleLevel}
-              vuLevels={vuLevels}
-              themePalette={themePalette}
-              spotifyConnected={spotifyConnected}
-              spotifyUserLabel={spotifyUserLabel}
-              needsInitialSpotifyConnect={needsInitialSpotifyConnect}
-              onOpenSpotifyModal={() => setIsSpotifyModalOpen(true)}
-              onOpenAndroidModal={() => setIsAndroidModalOpen(true)}
-              onSelectPlaylist={handleSelectPlaylist}
-              onTogglePlay={handleTogglePlay}
-              onStop={handleStopPlayback}
-              onPrevious={handlePreviousTrack}
-              onNext={handleNextTrack}
-              onSeek={handleSeek}
-              onToggleRepeatOne={() => setRepeatOne((r) => !r)}
-              onChangeVolume={handleChangeVolume}
-              onChangeCrackle={handleChangeCrackle}
-            />
-          </div>
+              <div
+                id="playlist-queue"
+                className="deck-slot-playlist flex flex-col justify-stretch rounded-[3px] min-h-0"
+              >
+                <PlaylistQueueBox
+                  playlists={playlists}
+                  activePlaylist={activePlaylist}
+                  activeTrackId={activeTrack.id}
+                  isPlaying={isPlaying}
+                  shuffleEnabled={shuffleEnabled}
+                  lowPowerMode={lowPowerMode}
+                  isLoadingPlaylist={isLoadingPlaylist}
+                  spotifyConnected={spotifyConnected}
+                  spotifyUserLabel={spotifyUserLabel}
+                  needsInitialSpotifyConnect={needsInitialSpotifyConnect}
+                  guidanceActive={guidanceActive}
+                  isDocumentHidden={isDocumentHidden}
+                  prefersReducedMotion={prefersReducedMotion}
+                  themePalette={themePalette}
+                  onSelectPlaylist={handleSelectPlaylist}
+                  onDeletePlaylist={handleDeletePlaylist}
+                  onSelectTrack={handleSelectTrack}
+                  onToggleShuffle={handleToggleShuffle}
+                  onNextTrack={handleNextTrack}
+                  onOpenSpotifyModal={handleOpenSpotifyModal}
+                />
+              </div>
 
-          {/* 3rd on Mobile Portrait (order-3) | Bottom-Left on Mobile Landscape & Desktop: Spotify Playlist Queue Card */}
-          <div
-            id="playlist-queue"
-            className="order-3 landscape:order-none lg:order-none w-full landscape:col-span-4 landscape:col-start-1 landscape:row-start-2 lg:col-span-4 lg:col-start-1 lg:row-start-2 flex flex-col justify-stretch rounded-3xl min-h-0 landscape:h-full lg:h-full"
-          >
-            <PlaylistQueueBox
-              activePlaylist={activePlaylist}
-              currentTrackIndex={currentTrackIndex}
-              shuffleEnabled={shuffleEnabled}
-              themePalette={themePalette}
-              onSelectTrack={handleSelectTrack}
-              onToggleShuffle={handleToggleShuffle}
-              onNextTrack={handleNextTrack}
-            />
-          </div>
+              {/* Right Pane Contains ONLY the Unified 3D Wooden Console */}
+              <div
+                id="turntable"
+                className="deck-slot-turntable flex flex-col justify-stretch min-h-0"
+              >
+                {unifiedConsoleElement}
+              </div>
+            </>
+          )}
 
-          {/* 4th on Mobile Portrait (order-4) | Top-Left on Mobile Landscape & Desktop: MVF Brand Header + Retro CRT TV Screen with Side-Mounted Channel Dial */}
-          <div
-            id="retro-tv"
-            className="order-4 landscape:order-none lg:order-none w-full landscape:col-span-4 landscape:col-start-1 landscape:row-start-1 lg:col-span-4 lg:col-start-1 lg:row-start-1 flex flex-col justify-stretch min-h-0 landscape:h-full lg:h-full"
-          >
-            <RetroTvTable
-              track={activeTrack}
-              currentTimeSec={currentTimeSec}
-              isPlaying={isPlaying}
-              themePalette={themePalette}
-              onResolvedTrackMetadata={handleResolvedTrackMetadata}
-            />
-          </div>
+          {viewportLayout === 'mobile-landscape' && (
+            <>
+              <div
+                id="retro-tv"
+                className="deck-slot-tv flex flex-col justify-stretch min-h-0"
+              >
+                <RetroTvTable
+                  track={activeTrack}
+                  isPlaying={isPlaying}
+                  isDocumentHidden={isDocumentHidden}
+                  volume={volume}
+                  lowPowerMode={lowPowerMode}
+                  prefersReducedMotion={prefersReducedMotion}
+                  compactLandscape={true}
+                  themePalette={themePalette}
+                  onChangeVolume={handleChangeVolume}
+                  onResolvedTrackMetadata={handleResolvedTrackMetadata}
+                />
+              </div>
+
+              <div
+                id="playlist-queue"
+                className="deck-slot-playlist flex flex-col justify-stretch rounded-[3px] min-h-0"
+              >
+                <PlaylistQueueBox
+                  playlists={playlists}
+                  activePlaylist={activePlaylist}
+                  activeTrackId={activeTrack.id}
+                  isPlaying={isPlaying}
+                  shuffleEnabled={shuffleEnabled}
+                  lowPowerMode={lowPowerMode}
+                  isLoadingPlaylist={isLoadingPlaylist}
+                  spotifyConnected={spotifyConnected}
+                  spotifyUserLabel={spotifyUserLabel}
+                  needsInitialSpotifyConnect={needsInitialSpotifyConnect}
+                  guidanceActive={guidanceActive}
+                  isDocumentHidden={isDocumentHidden}
+                  prefersReducedMotion={prefersReducedMotion}
+                  showCompactBrandHeader={false}
+                  themePalette={themePalette}
+                  onSelectPlaylist={handleSelectPlaylist}
+                  onDeletePlaylist={handleDeletePlaylist}
+                  onSelectTrack={handleSelectTrack}
+                  onToggleShuffle={handleToggleShuffle}
+                  onNextTrack={handleNextTrack}
+                  onOpenSpotifyModal={handleOpenSpotifyModal}
+                />
+              </div>
+
+              {/* Right Pane Contains ONLY the Unified 3D Wooden Console */}
+              <div
+                id="turntable"
+                className="deck-slot-turntable flex flex-col justify-stretch min-h-0"
+              >
+                {unifiedConsoleElement}
+              </div>
+            </>
+          )}
+
+          {viewportLayout === 'mobile-portrait' && (
+            <>
+              {/* Mobile Portrait Order: TV Section FIRST at Top (with Spinning Vinyl Brand Header) */}
+              <div
+                id="retro-tv"
+                className="w-full h-[250px] flex flex-col justify-stretch shrink-0"
+              >
+                <RetroTvTable
+                  track={activeTrack}
+                  isPlaying={isPlaying}
+                  isDocumentHidden={isDocumentHidden}
+                  volume={volume}
+                  lowPowerMode={lowPowerMode}
+                  prefersReducedMotion={prefersReducedMotion}
+                  themePalette={themePalette}
+                  onChangeVolume={handleChangeVolume}
+                  onResolvedTrackMetadata={handleResolvedTrackMetadata}
+                />
+              </div>
+
+              {/* Mobile Portrait: Unified 3D Wooden Turntable Console Directly Below TV */}
+              <div
+                id="turntable"
+                className="w-full h-[clamp(540px,70dvh,610px)] flex flex-col justify-stretch shrink-0"
+              >
+                {unifiedConsoleElement}
+              </div>
+
+              {/* Mobile Portrait: Taller Playlist Queue Directly Below Console */}
+              <div
+                id="playlist-queue"
+                className="w-full flex flex-col justify-stretch rounded-[3px] h-[420px] min-h-[340px] shrink-0"
+              >
+                <PlaylistQueueBox
+                  playlists={playlists}
+                  activePlaylist={activePlaylist}
+                  activeTrackId={activeTrack.id}
+                  isPlaying={isPlaying}
+                  shuffleEnabled={shuffleEnabled}
+                  lowPowerMode={lowPowerMode}
+                  isLoadingPlaylist={isLoadingPlaylist}
+                  spotifyConnected={spotifyConnected}
+                  spotifyUserLabel={spotifyUserLabel}
+                  needsInitialSpotifyConnect={needsInitialSpotifyConnect}
+                  guidanceActive={guidanceActive}
+                  isDocumentHidden={isDocumentHidden}
+                  prefersReducedMotion={prefersReducedMotion}
+                  showCompactBrandHeader={false}
+                  themePalette={themePalette}
+                  onSelectPlaylist={handleSelectPlaylist}
+                  onDeletePlaylist={handleDeletePlaylist}
+                  onSelectTrack={handleSelectTrack}
+                  onToggleShuffle={handleToggleShuffle}
+                  onNextTrack={handleNextTrack}
+                  onOpenSpotifyModal={handleOpenSpotifyModal}
+                />
+              </div>
+            </>
+          )}
         </div>
       </main>
 
-      {/* Simple 1-Click Spotify Login & Playlist Browser Modal (Zero API Keys Required) */}
       <SpotifyConnectModal
         isOpen={isSpotifyModalOpen}
         isConnected={spotifyConnected}
@@ -675,7 +1196,6 @@ export default function App() {
         onLoadPlaylistByIdOrUrl={handleLoadPlaylistByIdOrUrl}
       />
 
-      {/* Standalone Android App (WebAPK + Native Capacitor Project) Modal */}
       <AndroidAppModal
         isOpen={isAndroidModalOpen}
         isStandalone={isStandaloneApp}

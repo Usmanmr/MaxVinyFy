@@ -61,6 +61,7 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
     try {
       await onLoadPlaylistByIdOrUrl(playlistUrlInput.trim());
       setStatusMessage('Loaded complete Spotify playlist (all songs) onto the turntable!');
+      onClose();
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Failed to load Spotify playlist.');
     } finally {
@@ -93,9 +94,9 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Close Spotify Modal"
-            className="glass-button w-9 h-9 rounded-xl text-white/75 hover:text-white flex items-center justify-center"
+            className="hifi-btn text-white/80"
           >
-            <X className="w-5 h-5" />
+            <X strokeWidth={1.75} className="hifi-icon" />
           </button>
         </div>
 
@@ -118,7 +119,7 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
                 type="button"
                 onClick={() => handleSimpleLogin()}
                 disabled={isLoading}
-                className="glass-button px-3 py-1.5 rounded-xl text-xs font-medium text-white/85 hover:text-white"
+                className="hifi-btn px-3 text-xs font-medium text-white/90"
               >
                 Refresh Playlists
               </button>
@@ -133,15 +134,15 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
                   onChange={(e) => setAccountNameInput(e.target.value)}
                   placeholder="Spotify username or email"
                   aria-label="Spotify username or email"
-                  className="flex-1 px-3.5 py-2.5 rounded-xl bg-black/55 border border-white/15 text-xs text-white focus:outline-none focus:border-[#1ed760]"
+                  className="flex-1 min-h-[44px] px-3.5 py-2.5 rounded-xl bg-black/55 border border-white/15 text-xs text-white focus:outline-none focus:border-[#1ed760]"
                 />
                 <button
                   id="spotify-one-click-login-btn"
                   type="submit"
                   disabled={isLoading}
-                  className="px-5 py-2.5 rounded-xl bg-[#1ed760] hover:bg-[#1fdf64] text-black font-bold text-xs flex items-center justify-center gap-2 transition-transform active:scale-98 cursor-pointer shrink-0"
+                  className="min-h-[44px] px-5 py-2.5 rounded-xl bg-[#1ed760] hover:bg-[#1fdf64] text-black font-bold text-xs flex items-center justify-center gap-2 transition-transform active:translate-y-[1px] cursor-pointer shrink-0"
                 >
-                  <LogIn className="w-4 h-4" />
+                  <LogIn strokeWidth={1.75} className="w-4 h-4" />
                   <span>{isLoading ? 'Signing in...' : 'Log in with Spotify'}</span>
                 </button>
               </div>
@@ -189,7 +190,7 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
                           }
                         : undefined
                     }
-                    className={`px-3.5 py-2.5 rounded-xl flex items-center justify-between gap-2 text-left border transition-all ${
+                    className={`min-h-[44px] px-3.5 py-2.5 rounded-xl flex items-center justify-between gap-2 text-left border transition-[transform,opacity] cursor-pointer ${
                       isSelected
                         ? 'text-white'
                         : 'glass-button text-white/80 hover:text-white border-transparent'
@@ -225,16 +226,16 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
             placeholder="Or paste any Spotify playlist link..."
             value={playlistUrlInput}
             onChange={(e) => setPlaylistUrlInput(e.target.value)}
-            className="flex-1 px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-xs text-white focus:outline-none"
+            className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-xs text-white focus:outline-none"
           />
           <button
             id="spotify-load-playlist-btn"
             type="submit"
             disabled={isLoading}
             style={{ color: themePalette.lightHex }}
-            className="glass-button px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
+            className="hifi-btn px-3.5 gap-2 font-semibold text-xs shrink-0"
           >
-            <PlusCircle className="w-4 h-4" />
+            <PlusCircle strokeWidth={1.75} className="hifi-icon" />
             <span>Load Playlist</span>
           </button>
         </form>

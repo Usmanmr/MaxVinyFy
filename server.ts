@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
+import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 
 dotenv.config();
 
@@ -13,7 +14,12 @@ const __dirname = path.dirname(__filename);
 // In-memory caches to keep server responses instantaneous and lightweight
 const youtubeSearchCache = new Map<
   string,
-  { videoId: string; secondaryVideoId: string; lyricVideoId: string }
+  {
+    videoId: string;
+    secondaryVideoId: string;
+    lyricVideoId: string;
+    videoIds: string[];
+  }
 >();
 const spotifyArtCache = new Map<string, string>();
 const spotifyPlaylistCache = new Map<string, unknown>();
@@ -25,29 +31,68 @@ function base64UrlEncode(buf: Buffer): string {
 
 async function searchYouTubeBySongTitle(
   query: string
-): Promise<{ videoId: string; secondaryVideoId: string; lyricVideoId: string }> {
+): Promise<{
+  videoId: string;
+  secondaryVideoId: string;
+  lyricVideoId: string;
+  videoIds: string[];
+}> {
   const key = query.toLowerCase().trim();
   if (youtubeSearchCache.has(key)) {
     return youtubeSearchCache.get(key)!;
   }
   try {
-    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(
-      query + ' official music video live'
+    // 1. Official video search + 2. View-count-sorted search (sp=CAMSAhAB = sort by view count)
+    const officialUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(
+      `${query} official video`
     )}`;
-    const res = await fetch(searchUrl, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      },
-    });
-    const html = await res.text();
-    const matches = [...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)].map((m) => m[1]);
-    const uniqueIds = [...new Set(matches)];
-    if (uniqueIds.length > 0) {
+    const viewCountSortedUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(
+      query
+    )}&sp=CAMSAhAB`;
+
+    const headers = {
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    };
+
+    const [officialHtml, sortedHtml] = await Promise.all([
+      fetch(officialUrl, { headers }).then((r) => (r.ok ? r.text() : '')).catch(() => ''),
+      fetch(viewCountSortedUrl, { headers }).then((r) => (r.ok ? r.text() : '')).catch(() => ''),
+    ]);
+
+    const officialIds = [...officialHtml.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)].map(
+      (m) => m[1]
+    );
+    const sortedIds = [...sortedHtml.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)].map(
+      (m) => m[1]
+    );
+
+    const primaryOfficialId = officialIds[0] || sortedIds[0];
+    if (primaryOfficialId) {
+      const alternates: string[] = [];
+      const seen = new Set<string>([primaryOfficialId]);
+      for (const candidateId of [...sortedIds, ...officialIds]) {
+        if (!seen.has(candidateId)) {
+          seen.add(candidateId);
+          alternates.push(candidateId);
+          if (alternates.length >= 4) break;
+        }
+      }
+      const fallbackPool = ['7IBDa53IsvI', 'Ryjx5sL2ci0', 'MV_3Dpw-BRY', 'x-PvBG9akKQ', 'vX2cDW8LUWk'];
+      for (const fb of fallbackPool) {
+        if (alternates.length >= 4) break;
+        if (!seen.has(fb)) {
+          seen.add(fb);
+          alternates.push(fb);
+        }
+      }
+
+      const videoIds = [primaryOfficialId, ...alternates.slice(0, 4)];
       const result = {
-        videoId: uniqueIds[0],
-        secondaryVideoId: uniqueIds[1] || uniqueIds[0],
-        lyricVideoId: uniqueIds[2] || uniqueIds[1] || uniqueIds[0],
+        videoId: videoIds[0],
+        secondaryVideoId: videoIds[1] || videoIds[0],
+        lyricVideoId: videoIds[2] || videoIds[1] || videoIds[0],
+        videoIds,
       };
       youtubeSearchCache.set(key, result);
       return result;
@@ -55,10 +100,12 @@ async function searchYouTubeBySongTitle(
   } catch (err) {
     console.error('YouTube search error:', err);
   }
+  const defaultIds = ['7IBDa53IsvI', 'Ryjx5sL2ci0', 'MV_3Dpw-BRY', 'x-PvBG9akKQ', 'vX2cDW8LUWk'];
   return {
-    videoId: '7IBDa53IsvI',
-    secondaryVideoId: 'Ryjx5sL2ci0',
-    lyricVideoId: 'MV_3Dpw-BRY',
+    videoId: defaultIds[0],
+    secondaryVideoId: defaultIds[1],
+    lyricVideoId: defaultIds[2],
+    videoIds: defaultIds,
   };
 }
 
@@ -192,6 +239,13 @@ async function fetchPublicSpotifyPlaylistById(playlistId: string) {
             ? await fetchSpotifyTrackArtwork(trackId, playlistCover)
             : spotifyArtCache.get(trackId) || playlistCover;
 
+        const images = [
+          ...(artworkUrl ? [{ url: artworkUrl, width: 640, height: 640 }] : []),
+          ...(playlistCover && playlistCover !== artworkUrl
+            ? [{ url: playlistCover, width: 300, height: 300 }]
+            : []),
+        ];
+
         return {
           id: trackId,
           title,
@@ -201,6 +255,7 @@ async function fetchPublicSpotifyPlaylistById(playlistId: string) {
           bpm: 108 + (idx % 16),
           year: 2024,
           artworkUrl,
+          images,
           spotifyUri: item.uri || `spotify:track:${trackId}`,
           previewAudioUrl,
         };
@@ -421,7 +476,7 @@ async function startServer() {
         <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm4.586 14.424c-.18.295-.563.387-.857.207-2.35-1.434-5.305-1.76-8.786-.963-.335.077-.67-.133-.746-.469-.077-.334.132-.67.469-.745 3.809-.87 7.076-.496 9.713 1.115.293.18.386.563.207.855zm1.224-2.722c-.226.367-.706.482-1.072.257-2.687-1.652-6.785-2.131-9.965-1.166-.413.127-.848-.106-.973-.517-.125-.413.108-.848.52-.973 3.632-1.102 8.147-.568 11.234 1.328.366.226.48.707.256 1.071zm.105-2.835C14.692 8.95 9.375 8.775 6.297 9.71c-.493.15-1.016-.129-1.166-.623-.148-.495.13-1.015.625-1.166 3.532-1.073 9.404-.866 13.115 1.337.445.264.59.838.327 1.282-.264.443-.838.59-1.283.327z" />
       </svg>
       <h1>Connect to Spotify</h1>
-      <p>Sign in to automatically load all your Spotify playlists into VinylDrive.</p>
+      <p>Sign in to automatically load all your Spotify playlists into MaxVinyFy.</p>
       <form id="loginForm">
         <input id="accountInput" type="text" placeholder="Spotify username or email" value="usmanmr" required />
         <button type="submit" class="btn">Log In & Load My Playlists</button>
@@ -527,7 +582,7 @@ async function startServer() {
   <body style="background:#12100e;color:#f5efe6;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
     <div style="text-align:center;max-width:360px;padding:24px;border:1px solid #3d332a;border-radius:12px;background:#1c1815;">
       <h2 style="margin:0 0 8px 0;color:#1ed760;">Spotify Connected</h2>
-      <p style="margin:0;color:#b8aca0;font-size:14px;">Syncing your playlists to VinylDrive...</p>
+      <p style="margin:0;color:#b8aca0;font-size:14px;">Syncing your playlists to MaxVinyFy...</p>
     </div>
     <script>
       (function() {
@@ -639,7 +694,7 @@ async function startServer() {
     }
   });
 
-  // 8. Multi-Channel YouTube Visual Theme Grabs for RetroTvTable Side-Mounted Dial
+  // 8. Multi-Channel YouTube Video Search (Index 0 = Official, 1..4 = Top-Viewed Alternate Videos)
   app.get('/api/youtube/search-grabs', async (req, res) => {
     const title = String(req.query.title || '').trim();
     const artist = String(req.query.artist || '').trim();
@@ -647,65 +702,91 @@ async function startServer() {
     const fallbackVideoId = String(req.query.videoId || '7IBDa53IsvI').trim();
 
     const searchQuery = `${title} ${artist}`.trim();
-    const { videoId, secondaryVideoId, lyricVideoId } = searchQuery
+    const { videoId, secondaryVideoId, lyricVideoId, videoIds } = searchQuery
       ? await searchYouTubeBySongTitle(searchQuery)
       : {
           videoId: fallbackVideoId,
           secondaryVideoId: fallbackVideoId,
           lyricVideoId: fallbackVideoId,
+          videoIds: [fallbackVideoId, 'Ryjx5sL2ci0', 'MV_3Dpw-BRY', 'x-PvBG9akKQ', 'vX2cDW8LUWk'],
         };
 
     const artworkUrl = trackId ? await fetchSpotifyTrackArtwork(trackId, '') : '';
     const secId = secondaryVideoId || videoId;
     const lyrId = lyricVideoId || secId;
 
-    const frames = [
-      {
-        id: `${videoId}-hq`,
-        label: 'CH 01 · Official Music Video',
-        timestampSec: 0,
-        timestampLabel: '00:15',
-        imageUrl: `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`,
-        caption: `CH 01 Official MV · ${title} — ${artist}`,
-      },
-      {
-        id: `${secId}-live`,
-        label: 'CH 02 · Live Stage Broadcast',
-        timestampSec: 35,
-        timestampLabel: '00:48',
-        imageUrl: `https://i.ytimg.com/vi/${encodeURIComponent(secId)}/hqdefault.jpg`,
-        caption: `CH 02 Live Broadcast · ${title}`,
-      },
-      {
-        id: `${videoId}-vhs`,
-        label: 'CH 03 · 1980s VHS Retro Tape',
-        timestampSec: 75,
-        timestampLabel: '01:24',
-        imageUrl: `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/1.jpg`,
-        caption: `CH 03 80s VHS Tape · ${title}`,
-      },
-      {
-        id: `${lyrId}-neon`,
-        label: 'CH 04 · Neon Synth Visuals',
-        timestampSec: 115,
-        timestampLabel: '02:05',
-        imageUrl: `https://i.ytimg.com/vi/${encodeURIComponent(lyrId)}/hqdefault.jpg`,
-        caption: `CH 04 Neon Synth · ${title}`,
-      },
-      {
-        id: `${secId}-noir`,
-        label: 'CH 05 · Studio Noir B&W',
-        timestampSec: 145,
-        timestampLabel: '02:35',
-        imageUrl: `https://i.ytimg.com/vi/${encodeURIComponent(secId)}/2.jpg`,
-        caption: `CH 05 Studio Noir B&W · ${title} (${artist})`,
-      },
+    const channelRoles = [
+      'Official Video',
+      'Most Viewed Live / Alternate #1',
+      'Popular Cover / Dance #2',
+      'Lyric / Fan Video #3',
+      'Alternate Performance #4',
     ];
+
+    const channels = videoIds.slice(0, 5).map((vid, idx) => {
+      const chNum = idx + 1;
+      const roleLabel = channelRoles[idx] || `Alternate Video #${idx}`;
+      const chFrames = [
+        {
+          id: `${vid}-ch${chNum}-hq`,
+          label: `CH ${chNum} · ${roleLabel}`,
+          timestampSec: 0,
+          timestampLabel: '00:15',
+          imageUrl: `https://i.ytimg.com/vi/${encodeURIComponent(vid)}/hqdefault.jpg`,
+          caption: `CH ${chNum} ${roleLabel} · ${title} — ${artist}`,
+        },
+        {
+          id: `${vid}-ch${chNum}-1`,
+          label: `CH ${chNum} · Scene #1`,
+          timestampSec: 35,
+          timestampLabel: '00:48',
+          imageUrl: `https://i.ytimg.com/vi/${encodeURIComponent(vid)}/1.jpg`,
+          caption: `CH ${chNum} · ${title}`,
+        },
+        {
+          id: `${vid}-ch${chNum}-2`,
+          label: `CH ${chNum} · Scene #2`,
+          timestampSec: 75,
+          timestampLabel: '01:24',
+          imageUrl: `https://i.ytimg.com/vi/${encodeURIComponent(vid)}/2.jpg`,
+          caption: `CH ${chNum} · ${title}`,
+        },
+        {
+          id: `${vid}-ch${chNum}-3`,
+          label: `CH ${chNum} · Scene #3`,
+          timestampSec: 115,
+          timestampLabel: '02:05',
+          imageUrl: `https://i.ytimg.com/vi/${encodeURIComponent(vid)}/3.jpg`,
+          caption: `CH ${chNum} · ${title}`,
+        },
+      ];
+      return {
+        channelNumber: chNum,
+        code: `CH ${chNum}`,
+        label: roleLabel,
+        videoId: vid,
+        title: `${title} (${roleLabel})`,
+        isOfficial: idx === 0,
+        imageUrl: chFrames[0].imageUrl,
+        frames: chFrames,
+      };
+    });
+
+    const frames = channels.map((ch, idx) => ({
+      id: `${ch.videoId}-hq-${idx}`,
+      label: `CH 0${ch.channelNumber} · ${ch.label}`,
+      timestampSec: idx * 35,
+      timestampLabel: `0${Math.floor((idx * 35) / 60)}:${String((idx * 35) % 60).padStart(2, '0')}`,
+      imageUrl: ch.imageUrl,
+      caption: `${ch.code} ${ch.label} · ${title} — ${artist}`,
+    }));
 
     res.json({
       videoId,
       secondaryVideoId: secId,
       lyricVideoId: lyrId,
+      videoIds,
+      channels,
       title,
       artist,
       artworkUrl,
@@ -713,47 +794,243 @@ async function startServer() {
     });
   });
 
-  // 9. Fetch Time-Synced LRC Lyrics for the Active Song via LRCLIB
-  const lyricsCache = new Map<string, string | null>();
+  // 9. Fetch Time-Synced or Plain Lyrics for the Active Song via LRCLIB (https://lrclib.net/api/get)
+  const lyricsCache = new Map<
+    string,
+    { syncedLyrics: string | null; plainLyrics: string | null }
+  >();
+
   app.get('/api/lyrics', async (req, res) => {
-    const rawTitle = String(req.query.title || '').trim();
-    const rawArtist = String(req.query.artist || '').trim();
+    const trackId = String(req.query.trackId || '').trim();
+    const rawTitle = String(req.query.track_name || req.query.title || '').trim();
+    const rawArtist = String(req.query.artist_name || req.query.artist || '').trim();
+    const rawAlbum = String(req.query.album_name || req.query.album || '').trim();
+    const rawDuration = Math.max(1, Math.round(Number(req.query.duration) || 180));
+
     const cleanTitle = rawTitle.replace(/\s*\(From.*?\)/i, '').trim() || rawTitle;
     const primaryArtist = rawArtist.split(',')[0].trim() || rawArtist;
-    const cacheKey = `${cleanTitle}::${primaryArtist}`.toLowerCase();
+    const cleanAlbum = rawAlbum.replace(/^Spotify\s*·\s*/i, '').trim() || rawAlbum;
 
+    const cacheKey = (trackId || `${cleanTitle}::${primaryArtist}::${rawDuration}`).toLowerCase();
     if (lyricsCache.has(cacheKey)) {
-      res.json({ syncedLyrics: lyricsCache.get(cacheKey) });
+      res.json(lyricsCache.get(cacheKey));
       return;
     }
 
-    try {
-      const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(
-        `${cleanTitle} ${primaryArtist}`
-      )}`;
-      const response = await fetch(searchUrl, {
-        headers: { 'User-Agent': 'VinylDrive/1.0' },
+    const tryLrclibGet = async (
+      tName: string,
+      aName: string,
+      albName: string,
+      dur: number
+    ): Promise<{ syncedLyrics: string | null; plainLyrics: string | null } | null> => {
+      if (!tName || !aName) return null;
+      const params = new URLSearchParams({
+        track_name: tName,
+        artist_name: aName,
+        album_name: albName || tName,
+        duration: String(dur),
       });
-      if (response.ok) {
-        const items = (await response.json()) as Array<{
+      const getUrl = `https://lrclib.net/api/get?${params.toString()}`;
+      const response = await fetch(getUrl, {
+        headers: { 'User-Agent': 'MaxVinyFy/1.0' },
+      });
+      if (!response.ok) return null;
+      const item = (await response.json()) as {
+        syncedLyrics?: string | null;
+        plainLyrics?: string | null;
+      };
+      if (item.syncedLyrics || item.plainLyrics) {
+        return {
+          syncedLyrics: item.syncedLyrics || null,
+          plainLyrics: item.plainLyrics || null,
+        };
+      }
+      return null;
+    };
+
+    try {
+      // 1. Primary LRCLIB /api/get call with track_name, artist_name, album_name and duration
+      const exactHit =
+        (await tryLrclibGet(rawTitle, rawArtist, rawAlbum, rawDuration)) ||
+        (cleanTitle !== rawTitle || primaryArtist !== rawArtist
+          ? await tryLrclibGet(cleanTitle, primaryArtist, cleanAlbum, rawDuration)
+          : null);
+
+      if (exactHit) {
+        lyricsCache.set(cacheKey, exactHit);
+        res.json(exactHit);
+        return;
+      }
+
+      // 2. Fallback to LRCLIB /api/search when Spotify playlist album_name differs from LRCLIB album metadata
+      const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(
+        `${cleanTitle} ${primaryArtist}`.trim()
+      )}`;
+      const searchRes = await fetch(searchUrl, {
+        headers: { 'User-Agent': 'MaxVinyFy/1.0' },
+      });
+      if (searchRes.ok) {
+        const items = (await searchRes.json()) as Array<{
           syncedLyrics?: string | null;
           plainLyrics?: string | null;
+          duration?: number;
         }>;
         const matchWithSynced = items.find(
           (item) => item.syncedLyrics && item.syncedLyrics.includes('[')
         );
         if (matchWithSynced?.syncedLyrics) {
-          lyricsCache.set(cacheKey, matchWithSynced.syncedLyrics);
-          res.json({ syncedLyrics: matchWithSynced.syncedLyrics });
+          const payload = {
+            syncedLyrics: matchWithSynced.syncedLyrics,
+            plainLyrics: matchWithSynced.plainLyrics || null,
+          };
+          lyricsCache.set(cacheKey, payload);
+          res.json(payload);
+          return;
+        }
+        const matchWithPlain = items.find(
+          (item) => item.plainLyrics && item.plainLyrics.trim().length > 0
+        );
+        if (matchWithPlain?.plainLyrics) {
+          const payload = {
+            syncedLyrics: null,
+            plainLyrics: matchWithPlain.plainLyrics,
+          };
+          lyricsCache.set(cacheKey, payload);
+          res.json(payload);
           return;
         }
       }
     } catch {
-      // Fallback handled on client
+      // Handled below
     }
 
-    lyricsCache.set(cacheKey, null);
-    res.json({ syncedLyrics: null });
+    const emptyPayload = { syncedLyrics: null, plainLyrics: null };
+    lyricsCache.set(cacheKey, emptyPayload);
+    res.json(emptyPayload);
+  });
+
+  // 9b. Server-Side Gemini API Line-by-Line Lyrics Romanization & English Meaning Translation
+  const lyricsConversionCache = new Map<string, string[]>();
+
+  app.post('/api/lyrics/convert', async (req, res) => {
+    const trackId = String(req.body?.trackId || '').trim();
+    const mode = req.body?.mode === 'english_meaning' ? 'english_meaning' : 'romanized';
+    const rawLines: unknown[] = Array.isArray(req.body?.lines) ? req.body.lines : [];
+    const lines = rawLines.map((l) => String(l ?? '').trim());
+
+    if (lines.length === 0) {
+      res.status(400).json({ error: 'No lyric lines provided for conversion.' });
+      return;
+    }
+
+    const cacheKey = `${trackId || 'anon'}::${mode}::${lines.length}`;
+    if (trackId && lyricsConversionCache.has(cacheKey)) {
+      res.json({ lines: lyricsConversionCache.get(cacheKey)! });
+      return;
+    }
+
+    const apiKey = (process.env.GEMINI_API_KEY || '').trim();
+    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+      res.status(503).json({
+        error: 'Gemini API key is not configured. Please check Settings > Secrets.',
+      });
+      return;
+    }
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
+      const indexedInput = lines.map((text, index) => ({ index, text }));
+      const systemInstruction =
+        mode === 'romanized'
+          ? 'You are a precise song lyrics transliterator. Convert each input line into Romanized English letters (phonetic transliteration of the original words in Latin script, keeping existing English words intact). Return a JSON object with a "lines" array containing the EXACT same number of items in the EXACT same index order. Never merge, split, omit, or reorder lines.'
+          : 'You are a precise song lyrics translator. Translate each input line into natural, clear English meaning line by line. Return a JSON object with a "lines" array containing the EXACT same number of items in the EXACT same index order. Never merge, split, omit, or reorder lines.';
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: JSON.stringify({
+          task:
+            mode === 'romanized'
+              ? 'Transliterate every line into Romanized English letters (Latin script) 1-to-1.'
+              : 'Translate every line into English meaning 1-to-1.',
+          lineCount: lines.length,
+          lines: indexedInput,
+        }),
+        config: {
+          systemInstruction,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              lines: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    index: {
+                      type: Type.INTEGER,
+                      description: 'Zero-based line index matching the input line.',
+                    },
+                    text: {
+                      type: Type.STRING,
+                      description: 'Converted line text in English letters with no line breaks.',
+                    },
+                  },
+                  required: ['index', 'text'],
+                },
+              },
+            },
+            required: ['lines'],
+          },
+        },
+      });
+
+      const rawText = (response.text ?? '').trim();
+      const parsed = JSON.parse(rawText) as {
+        lines?: Array<{ index?: number; text?: string } | string>;
+      };
+
+      if (!parsed || !Array.isArray(parsed.lines) || parsed.lines.length === 0) {
+        res.status(502).json({ error: 'Invalid conversion response from Gemini.' });
+        return;
+      }
+
+      const byIndex = new Map<number, string>();
+      parsed.lines.forEach((item, posIdx) => {
+        if (typeof item === 'string') {
+          const clean = item.replace(/\s*\r?\n\s*/g, ' ').trim();
+          if (clean) byIndex.set(posIdx, clean);
+        } else if (item && typeof item === 'object') {
+          const idx = typeof item.index === 'number' ? item.index : posIdx;
+          const clean = String(item.text ?? '')
+            .replace(/\s*\r?\n\s*/g, ' ')
+            .trim();
+          if (clean) byIndex.set(idx, clean);
+        }
+      });
+
+      if (byIndex.size === 0) {
+        res.status(502).json({ error: 'Empty conversion response from Gemini.' });
+        return;
+      }
+
+      const aligned = lines.map((orig, idx) => byIndex.get(idx) || orig);
+      if (trackId) {
+        lyricsConversionCache.set(cacheKey, aligned);
+      }
+      res.json({ lines: aligned });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Gemini lyrics conversion failed.';
+      res.status(502).json({ error: message });
+    }
   });
 
   // 10. Resolve Full-Length Song Audio Stream URL (Prevents 30-second preview looping)
@@ -787,7 +1064,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`VinylDrive server listening on http://localhost:${PORT}`);
+    console.log(`MaxVinyFy server listening on http://localhost:${PORT}`);
   });
 }
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'vinyldrive-android-v1';
+const CACHE_NAME = 'maxvinyfy-android-v1';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',

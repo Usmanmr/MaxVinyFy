@@ -14,6 +14,12 @@ export interface SyncedLyricLine {
   text: string;
 }
 
+export interface TrackImageCandidate {
+  url: string;
+  width?: number;
+  height?: number;
+}
+
 export interface TrackItem {
   id: string;
   title: string;
@@ -23,6 +29,7 @@ export interface TrackItem {
   bpm: number;
   year: number;
   artworkUrl: string;
+  images?: TrackImageCandidate[];
   spotifyUri?: string;
   previewAudioUrl?: string;
   youtubeVideoId: string;
@@ -86,6 +93,91 @@ export function getShuffledNextTrackIndex(
   return (currentIndex + offset) % totalTracks;
 }
 
+/**
+ * Finds the exact index of a track by its unique Spotify track ID inside the original unfiltered tracks array.
+ * Returns -1 when not found.
+ */
+export function findTrackIndexById(tracks: TrackItem[], trackId: string): number {
+  if (!Array.isArray(tracks) || tracks.length === 0 || !trackId) return -1;
+  return tracks.findIndex((t) => t.id === trackId);
+}
+
+/**
+ * Resolves a clicked/requested track strictly by its unique track ID against the ORIGINAL unfiltered tracks array,
+ * preventing off-by-one or index-mismatch bugs from visual sorting, shuffle mapping, or filtered views.
+ */
+export function resolveTrackById(
+  tracks: TrackItem[],
+  trackId: string
+): { track: TrackItem | null; index: number } {
+  const index = findTrackIndexById(tracks, trackId);
+  if (index < 0) {
+    return { track: null, index: -1 };
+  }
+  return { track: tracks[index], index };
+}
+
+/**
+ * Resolves the next track ID from the original unfiltered tracks array using ID-based lookup.
+ */
+export function getNextTrackId(
+  tracks: TrackItem[],
+  currentTrackId: string,
+  repeatOne = false,
+  shuffleEnabled = false,
+  randomFraction = Math.random()
+): string {
+  if (!Array.isArray(tracks) || tracks.length === 0) return '';
+  const currentIndex = findTrackIndexById(tracks, currentTrackId);
+  const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+  if (repeatOne) {
+    return tracks[safeIndex].id;
+  }
+  const nextIndex = shuffleEnabled
+    ? getShuffledNextTrackIndex(safeIndex, tracks.length, randomFraction)
+    : getNextTrackIndex(safeIndex, tracks.length, false);
+  return tracks[nextIndex]?.id || tracks[0].id;
+}
+
+/**
+ * Computes previous track action and target track ID against the original unfiltered tracks array.
+ */
+export function getPreviousTrackIdAction(
+  tracks: TrackItem[],
+  currentTrackId: string,
+  currentTimeSec: number,
+  forcePreviousTrack = false
+): { action: 'restart' | 'previous'; targetTrackId: string } {
+  if (!Array.isArray(tracks) || tracks.length === 0) {
+    return { action: 'restart', targetTrackId: '' };
+  }
+  const currentIndex = findTrackIndexById(tracks, currentTrackId);
+  const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+  if (!forcePreviousTrack && currentTimeSec > 3) {
+    return { action: 'restart', targetTrackId: tracks[safeIndex].id };
+  }
+  const prevIndex = (safeIndex - 1 + tracks.length) % tracks.length;
+  return { action: 'previous', targetTrackId: tracks[prevIndex].id };
+}
+
+/**
+ * Returns the ordered "Up Next" queue starting after currentTrackId in the original unfiltered tracks array.
+ */
+export function getUpNextQueueById(
+  tracks: TrackItem[],
+  currentTrackId: string
+): Array<{ track: TrackItem; originalIndex: number }> {
+  if (!Array.isArray(tracks) || tracks.length === 0) return [];
+  const currentIndex = findTrackIndexById(tracks, currentTrackId);
+  const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+  const result: Array<{ track: TrackItem; originalIndex: number }> = [];
+  for (let offset = 1; offset < tracks.length; offset++) {
+    const idx = (safeIndex + offset) % tracks.length;
+    result.push({ track: tracks[idx], originalIndex: idx });
+  }
+  return result;
+}
+
 export const EMPTY_STANDBY_TRACK: TrackItem = {
   id: 'standby-empty',
   title: 'No Song Loaded',
@@ -107,6 +199,43 @@ export const EMPTY_STANDBY_PLAYLIST: PlaylistPack = {
   source: 'spotify-live',
   tracks: [],
 };
+
+export const TONEARM_REST_ANGLE_DEG = -8;
+
+export type TonearmMotionPhase =
+  | 'rest'
+  | 'lifting-to-play'
+  | 'swinging-to-groove'
+  | 'dropping-to-groove'
+  | 'playing'
+  | 'lifting-to-rest'
+  | 'returning-to-rest'
+  | 'dragging';
+
+/**
+ * Returns pre-blurred shadow offset, opacity, and lift scale for each tonearm cueing phase.
+ * Shadow moves further away and fades slightly when lifted, then settles back when dropped.
+ */
+export function getTonearmShadowPose(phase: TonearmMotionPhase): {
+  offsetXpx: number;
+  offsetYpx: number;
+  opacity: number;
+  armScale: number;
+} {
+  switch (phase) {
+    case 'lifting-to-play':
+    case 'swinging-to-groove':
+    case 'lifting-to-rest':
+    case 'returning-to-rest':
+    case 'dragging':
+      return { offsetXpx: 10, offsetYpx: 13, opacity: 0.44, armScale: 1.016 };
+    case 'dropping-to-groove':
+    case 'playing':
+    case 'rest':
+    default:
+      return { offsetXpx: 3, offsetYpx: 5, opacity: 0.78, armScale: 1 };
+  }
+}
 
 /**
  * Computes the exact tonearm angle and vinyl groove landing radius as a function of song duration and current playback time.
@@ -519,7 +648,7 @@ function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: n
  */
 export function computeDominantAccentFromRgbSamples(
   rgbSamples: Array<[number, number, number]>,
-  fallbackSeed = 'vinyldrive'
+  fallbackSeed = 'maxvinyfy'
 ): DominantThemePalette {
   const numBins = 12;
   const binWeights = new Array<number>(numBins).fill(0);
@@ -668,6 +797,8 @@ export const TV_VISUAL_CHANNELS: TvVisualChannelTheme[] = [
   },
 ];
 
+export const TV_CHANNEL_CHANGE_MS = 300;
+
 /**
  * Returns the YouTube visual theme channel configuration for a given dial index.
  */
@@ -684,5 +815,683 @@ export function getNextTvChannelIndex(currentChannelIndex: number): number {
   const total = TV_VISUAL_CHANNELS.length;
   return (((Math.floor(currentChannelIndex) + 1) % total) + total) % total;
 }
+
+/**
+ * Maps normalized audio volume [0, 1] to rotary knob angle [-135 deg, +135 deg].
+ */
+export function getTvVolumeKnobAngle(volume: number): number {
+  const clamped = Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 0.8;
+  return Math.round(-135 + clamped * 270);
+}
+
+/**
+ * Steps rotary TV volume knob through ergonomic hardware detents (0 -> 0.25 -> 0.5 -> 0.75 -> 1 -> 0).
+ */
+export function getNextSteppedVolume(currentVolume: number): number {
+  const detents = [0, 0.25, 0.5, 0.75, 1];
+  const safe = Number.isFinite(currentVolume) ? Math.max(0, Math.min(1, currentVolume)) : 0.8;
+  const next = detents.find((d) => d > safe + 0.05);
+  return next !== undefined ? next : 0;
+}
+
+/**
+ * Builds a clean, chrome-free YouTube nocookie embed URL with zero player controls or hover overlays.
+ */
+export function buildCleanYouTubeEmbedUrl(
+  videoId: string,
+  isPlaying: boolean,
+  startSec: number
+): string {
+  const safeId = encodeURIComponent(videoId || '7IBDa53IsvI');
+  const safeStart = Math.max(0, Math.floor(Number.isFinite(startSec) ? startSec : 0));
+  const autoplay = isPlaying ? 1 : 0;
+  return `https://www.youtube-nocookie.com/embed/${safeId}?enablejsapi=1&autoplay=${autoplay}&start=${safeStart}&mute=1&controls=0&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1&disablekb=1`;
+}
+
+/**
+ * Auto-enables Low Power Mode when navigator.hardwareConcurrency <= 4.
+ */
+export function shouldEnableLowPowerByHardware(hardwareConcurrency?: number | null): boolean {
+  return typeof hardwareConcurrency === 'number' && hardwareConcurrency > 0 && hardwareConcurrency <= 4;
+}
+
+/**
+ * Returns true only when active playback animation loops should run (never when paused or hidden).
+ */
+export function shouldRunActiveAnimationLoops(
+  isPlaying: boolean,
+  isDocumentHidden: boolean,
+  prefersReducedMotion = false,
+  lowPowerMode = false
+): boolean {
+  return isPlaying && !isDocumentHidden && !prefersReducedMotion && !lowPowerMode;
+}
+
+/**
+ * Quantizes playback time into 5-second buckets so CRT TV frames change at most once every 5 seconds.
+ */
+export function quantizeTvFrameTime(currentTimeSec: number, bucketSec = 5): number {
+  if (!Number.isFinite(currentTimeSec) || currentTimeSec < 0) return 0;
+  const step = Math.max(4, Math.floor(bucketSec));
+  return Math.floor(currentTimeSec / step) * step;
+}
+
+/**
+ * Returns CSS animation-timing-function for vinyl spin: smooth linear normally, or 12fps stepped in Low Power Mode.
+ */
+export function calculateVinylSpinTiming(spinDurationSec: number, lowPowerMode: boolean): string {
+  if (!lowPowerMode) return 'linear';
+  const safeDuration = Number.isFinite(spinDurationSec) && spinDurationSec > 0 ? spinDurationSec : 1.8;
+  const stepsCount = Math.max(1, Math.round(safeDuration * 12));
+  return `steps(${stepsCount}, end)`;
+}
+
+export type ViewportLayoutMode = 'mobile-landscape' | 'mobile-portrait' | 'desktop-tablet';
+
+/**
+ * Classifies screen dimensions into mobile-landscape (orientation: landscape & height <= 500),
+ * mobile-portrait (width <= 767 & portrait), or desktop-tablet (tablets, car screens, desktop).
+ */
+export function classifyViewportLayout(width: number, height: number): ViewportLayoutMode {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return 'desktop-tablet';
+  }
+  if (width > height && height <= 500) {
+    return 'mobile-landscape';
+  }
+  if (height >= width && width <= 767) {
+    return 'mobile-portrait';
+  }
+  return 'desktop-tablet';
+}
+
+/**
+ * Triggers tactile navigator.vibrate() haptic feedback during vinyl scratching unless Low Power Mode is active.
+ */
+export function triggerScratchHaptic(
+  lowPowerMode: boolean,
+  intensity: 'light' | 'classic' | 'backspin',
+  vibrateFn?: ((pattern: number | number[]) => boolean) | null
+): boolean {
+  if (lowPowerMode) return false;
+  const fn =
+    vibrateFn !== undefined
+      ? vibrateFn
+      : typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function'
+      ? navigator.vibrate.bind(navigator)
+      : null;
+  if (!fn) return false;
+
+  const pattern: number | number[] =
+    intensity === 'backspin' ? [18, 16, 26] : intensity === 'classic' ? 22 : 10;
+  try {
+    fn(pattern);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export type LyricsDisplayLanguageMode = 'romanized' | 'english_meaning';
+
+/**
+ * Builds the canonical LRCLIB /api/get URL with track_name, artist_name, album_name, and duration.
+ */
+export function buildLrclibGetUrl(params: {
+  trackName: string;
+  artistName: string;
+  albumName: string;
+  durationSec: number;
+}): string {
+  const searchParams = new URLSearchParams({
+    track_name: (params.trackName || '').trim(),
+    artist_name: (params.artistName || '').trim(),
+    album_name: (params.albumName || '').trim(),
+    duration: String(Math.max(1, Math.round(params.durationSec || 180))),
+  });
+  return `https://lrclib.net/api/get?${searchParams.toString()}`;
+}
+
+/**
+ * Parses plain unsynced lyrics into non-empty trimmed lines in their original order.
+ */
+export function parsePlainLyrics(plainText?: string | null): string[] {
+  if (!plainText || typeof plainText !== 'string') return [];
+  return plainText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+/**
+ * Detects whether a string contains any non-Latin script characters
+ * (e.g., Gurmukhi, Devanagari, Arabic/Urdu, Cyrillic, CJK, Tamil, etc.).
+ * Punctuation, numbers, symbols, and accented Latin letters return false.
+ */
+export function containsNonLatinScript(text: string): boolean {
+  if (!text || typeof text !== 'string') return false;
+  return /(?=[\p{L}])[^\p{Script=Latin}]/u.test(text);
+}
+
+/**
+ * Detects whether any line in a lyrics array contains non-Latin script characters.
+ */
+export function lyricsContainNonLatinScript(lines: string[]): boolean {
+  if (!Array.isArray(lines) || lines.length === 0) return false;
+  return lines.some((line) => containsNonLatinScript(line));
+}
+
+/**
+ * Aligns and validates line-by-line converted lyrics returned by Gemini so that:
+ * - The output has the EXACT same number of lines as originalLines
+ * - Every line stays in the EXACT same index order (preserving original timestamps)
+ * - No line contains embedded newlines (no split or merged lines)
+ * Returns null if the conversion payload is empty or invalid.
+ */
+export function alignConvertedLyricLines(
+  originalLines: string[],
+  rawResult: unknown
+): string[] | null {
+  if (!Array.isArray(originalLines) || originalLines.length === 0) return null;
+
+  let candidateArray: unknown[] | null = null;
+  if (Array.isArray(rawResult)) {
+    candidateArray = rawResult;
+  } else if (
+    rawResult &&
+    typeof rawResult === 'object' &&
+    Array.isArray((rawResult as { lines?: unknown[] }).lines)
+  ) {
+    candidateArray = (rawResult as { lines: unknown[] }).lines;
+  }
+
+  if (!candidateArray || candidateArray.length === 0) {
+    return null;
+  }
+
+  // Support both string[] and Array<{ index: number; text: string }>
+  const indexedMap = new Map<number, string>();
+  let nonEmptyCount = 0;
+
+  candidateArray.forEach((entry, positionalIdx) => {
+    if (typeof entry === 'string') {
+      const cleaned = entry.replace(/\s*\r?\n\s*/g, ' ').trim();
+      if (cleaned) {
+        indexedMap.set(positionalIdx, cleaned);
+        nonEmptyCount++;
+      }
+    } else if (entry && typeof entry === 'object') {
+      const obj = entry as { index?: unknown; text?: unknown; line?: unknown };
+      const idx =
+        typeof obj.index === 'number' && Number.isInteger(obj.index)
+          ? obj.index
+          : positionalIdx;
+      const rawText = typeof obj.text === 'string' ? obj.text : typeof obj.line === 'string' ? obj.line : '';
+      const cleaned = rawText.replace(/\s*\r?\n\s*/g, ' ').trim();
+      if (cleaned) {
+        indexedMap.set(idx, cleaned);
+        nonEmptyCount++;
+      }
+    }
+  });
+
+  if (nonEmptyCount === 0) {
+    return null;
+  }
+
+  // If plain string array was returned with a mismatched line count and no explicit indices, reject
+  const allStrings = candidateArray.every((item) => typeof item === 'string');
+  if (allStrings && candidateArray.length !== originalLines.length) {
+    return null;
+  }
+
+  return originalLines.map((orig, idx) => indexedMap.get(idx) || orig);
+}
+
+/**
+ * Calculates the delay in milliseconds for the single setTimeout scheduled for the next lyric line's timestamp.
+ * Returns null when there is no subsequent line.
+ */
+export function calculateNextLyricTimeoutMs(
+  lines: SyncedLyricLine[],
+  activeIndex: number,
+  currentTimeSec: number,
+  playbackRate = 1
+): number | null {
+  if (!Array.isArray(lines) || lines.length === 0) return null;
+  const nextIdx = Math.max(0, activeIndex) + 1;
+  if (nextIdx >= lines.length) return null;
+
+  const nextLine = lines[nextIdx];
+  const safeCurrent = Number.isFinite(currentTimeSec) ? Math.max(0, currentTimeSec) : 0;
+  const safeRate =
+    Number.isFinite(playbackRate) && playbackRate > 0 ? Math.max(0.5, playbackRate) : 1;
+  const deltaSec = nextLine.startTimeSec - safeCurrent;
+
+  if (deltaSec <= 0) return 16;
+  return Math.max(16, Math.round((deltaSec / safeRate) * 1000));
+}
+
+/**
+ * Computes the vertical translateY offset (in px) so the active lyric line is vertically centred
+ * inside the lyrics viewport without using scrollTop animations.
+ */
+export function calculateCenteredLyricTranslateY(
+  viewportHeightPx: number,
+  activeLineOffsetTopPx: number,
+  activeLineHeightPx: number
+): number {
+  if (!Number.isFinite(viewportHeightPx) || viewportHeightPx <= 0) return 0;
+  const safeTop = Number.isFinite(activeLineOffsetTopPx) ? activeLineOffsetTopPx : 0;
+  const safeHeight = Number.isFinite(activeLineHeightPx) ? activeLineHeightPx : 0;
+  return Math.round(viewportHeightPx / 2 - (safeTop + safeHeight / 2));
+}
+
+/**
+ * Steps the record-sleeve lyric font size scale between 0 (compact) and 3 (extra-large).
+ */
+export function stepLyricFontSize(currentStep: number, delta: -1 | 1): number {
+  const safe = Number.isFinite(currentStep) ? Math.round(currentStep) : 1;
+  return Math.max(0, Math.min(3, safe + delta));
+}
+
+/**
+ * Returns Tailwind typography classes for active, surrounding synced, and plain unsynced lyrics
+ * at the given user font size step [0..3].
+ */
+export function getLyricFontSizeClasses(step: number): {
+  activeClass: string;
+  neighborClass: string;
+  distantClass: string;
+  plainClass: string;
+} {
+  const clamped = Math.max(0, Math.min(3, Math.round(step)));
+  switch (clamped) {
+    case 0:
+      return {
+        activeClass: 'text-[12px] sm:text-[13px] leading-snug',
+        neighborClass: 'text-[10.5px] sm:text-[11px] leading-snug',
+        distantClass: 'text-[10px] sm:text-[10.5px] leading-snug',
+        plainClass: 'text-[11px] sm:text-[12px] leading-relaxed',
+      };
+    case 2:
+      return {
+        activeClass: 'text-[15px] sm:text-[17px] leading-snug',
+        neighborClass: 'text-[12.5px] sm:text-[13.5px] leading-snug',
+        distantClass: 'text-[11.5px] sm:text-[12.5px] leading-snug',
+        plainClass: 'text-[13.5px] sm:text-[15px] leading-relaxed',
+      };
+    case 3:
+      return {
+        activeClass: 'text-[17px] sm:text-[19px] leading-snug',
+        neighborClass: 'text-[14px] sm:text-[15px] leading-snug',
+        distantClass: 'text-[12.5px] sm:text-[13.5px] leading-snug',
+        plainClass: 'text-[15px] sm:text-[16.5px] leading-relaxed',
+      };
+    case 1:
+    default:
+      return {
+        activeClass: 'text-[13.5px] sm:text-[15px] leading-snug',
+        neighborClass: 'text-[11.5px] sm:text-[12.5px] leading-snug',
+        distantClass: 'text-[11px] sm:text-[11.5px] leading-snug',
+        plainClass: 'text-[12px] sm:text-[13.5px] leading-relaxed',
+      };
+  }
+}
+
+export const CROSSFADE_DETENT_SECONDS = [1, 2, 3, 4, 5] as const;
+
+/**
+ * Cycles the front-face X-FADE rotary knob through detented positions 1..5 seconds.
+ */
+export function stepCrossfadeSeconds(currentSec: number): number {
+  const clamped = Math.max(1, Math.min(5, Math.round(Number.isFinite(currentSec) ? currentSec : 3)));
+  return clamped >= 5 ? 1 : clamped + 1;
+}
+
+/**
+ * Maps crossfade duration [1..5] seconds to a physical rotary knob angle [-110 deg .. +110 deg].
+ */
+export function getCrossfadeKnobAngle(seconds: number): number {
+  const clamped = Math.max(1, Math.min(5, Math.round(Number.isFinite(seconds) ? seconds : 3)));
+  return (clamped - 3) * 55;
+}
+
+/**
+ * Determines whether automatic Web Audio gain-ramp crossfade should start for the current track.
+ * Automatically disabled in Low Power Mode or during manual track skips.
+ */
+export function shouldTriggerTrackCrossfade(params: {
+  currentTimeSec: number;
+  durationSec: number;
+  crossfadeSec: number;
+  lowPowerMode: boolean;
+  isManualSkip?: boolean;
+  alreadyCrossfading?: boolean;
+}): boolean {
+  if (params.lowPowerMode || params.isManualSkip || params.alreadyCrossfading) {
+    return false;
+  }
+  const safeDuration = Number.isFinite(params.durationSec) ? params.durationSec : 0;
+  const safeFade = Math.max(1, Math.min(5, Math.round(params.crossfadeSec || 3)));
+  if (safeDuration <= safeFade + 2) {
+    return false;
+  }
+  const remaining = safeDuration - params.currentTimeSec;
+  return remaining <= safeFade && remaining > 0.15;
+}
+
+/**
+ * Maps top-surface rotary knob states to physical rotation angles in degrees.
+ */
+export function getSpeedKnobAngle(rpm: 33 | 45): number {
+  return rpm === 45 ? 45 : -45;
+}
+
+export function getPitchKnobAngle(pitchPercent: number): number {
+  const clamped = Math.max(-12, Math.min(12, Number.isFinite(pitchPercent) ? pitchPercent : 0));
+  return Math.round((clamped / 12) * 130);
+}
+
+export function stepPitchKnobDetent(currentPitch: number): number {
+  const detents = [-12, -8, -4, 0, 4, 8, 12];
+  const safe = Number.isFinite(currentPitch) ? currentPitch : 0;
+  const next = detents.find((d) => d > safe + 1);
+  return next !== undefined ? next : detents[0];
+}
+
+export function getEffectsKnobAngle(modeIndex: number): number {
+  const safe = ((Math.floor(modeIndex) % 4) + 4) % 4;
+  return -90 + safe * 60;
+}
+
+export function getBinaryKnobAngle(enabled: boolean): number {
+  return enabled ? 45 : -45;
+}
+
+/**
+ * Triggers a short 12ms tactile haptic pulse on hardware button/knob presses unless Low Power Mode is active.
+ */
+export function triggerButtonHaptic(
+  lowPowerMode: boolean,
+  vibrateFn?: ((pattern: number | number[]) => boolean) | null
+): boolean {
+  if (lowPowerMode) return false;
+  const fn =
+    vibrateFn !== undefined
+      ? vibrateFn
+      : typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function'
+      ? navigator.vibrate.bind(navigator)
+      : null;
+  if (!fn) return false;
+  try {
+    fn(12);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns an ordered, deduplicated list of candidate album artwork URLs for a resolved TrackItem.
+ * When `track.images` is present, sorts images from largest area (width * height) to smallest
+ * so the highest-resolution image is tried first and `onError` falls back to the next largest image,
+ * followed by `track.artworkUrl` and any YouTube HQ thumbnail fallback.
+ */
+export function getOrderedTrackArtworkUrls(track: TrackItem | null | undefined): string[] {
+  if (!track || track.id === 'standby-empty') return [];
+
+  const result: string[] = [];
+  const seen = new Set<string>();
+  const pushUrl = (raw?: string | null) => {
+    const trimmed = typeof raw === 'string' ? raw.trim() : '';
+    if (trimmed && !seen.has(trimmed)) {
+      seen.add(trimmed);
+      result.push(trimmed);
+    }
+  };
+
+  if (Array.isArray(track.images) && track.images.length > 0) {
+    const indexed = track.images.map((item, idx) => ({
+      url: typeof item?.url === 'string' ? item.url.trim() : '',
+      area:
+        Number.isFinite(item?.width) &&
+        Number.isFinite(item?.height) &&
+        (item.width as number) > 0 &&
+        (item.height as number) > 0
+          ? (item.width as number) * (item.height as number)
+          : -1,
+      idx,
+    }));
+
+    indexed.sort((a, b) => {
+      if (b.area !== a.area) return b.area - a.area;
+      return a.idx - b.idx;
+    });
+
+    for (const candidate of indexed) {
+      pushUrl(candidate.url);
+    }
+  }
+
+  pushUrl(track.artworkUrl);
+
+  if (track.youtubeVideoId && track.youtubeVideoId.trim()) {
+    pushUrl(`https://i.ytimg.com/vi/${encodeURIComponent(track.youtubeVideoId.trim())}/hqdefault.jpg`);
+  }
+
+  if (Array.isArray(track.tvFrames)) {
+    for (const frame of track.tvFrames) {
+      pushUrl(frame?.imageUrl);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Resolves the active album artwork URL for the current `failedAttemptCount` (0 = primary/largest,
+ * 1 = second largest onError fallback, etc.), or marks `isPlaceholder: true` when all URLs fail.
+ */
+export function resolveActiveArtworkState(
+  track: TrackItem | null | undefined,
+  failedAttemptCount: number
+): {
+  activeUrl: string | null;
+  candidates: string[];
+  isPlaceholder: boolean;
+  attemptIndex: number;
+} {
+  const candidates = getOrderedTrackArtworkUrls(track);
+  const safeIndex = Math.max(0, Math.floor(Number.isFinite(failedAttemptCount) ? failedAttemptCount : 0));
+  if (candidates.length === 0 || safeIndex >= candidates.length) {
+    return {
+      activeUrl: null,
+      candidates,
+      isPlaceholder: true,
+      attemptIndex: safeIndex,
+    };
+  }
+  return {
+    activeUrl: candidates[safeIndex],
+    candidates,
+    isPlaceholder: false,
+    attemptIndex: safeIndex,
+  };
+}
+
+export const ALBUM_ART_SPINDLE_SNAP_RADIUS_PX = 16;
+
+/**
+ * Determines whether the draggable circular album art is centered on the vinyl spindle
+ * (and should therefore rotate in sync with the vinyl record) or dragged off-center onto the board
+ * (where it remains static and does not rotate).
+ */
+export function isAlbumArtSyncedToSpindle(
+  offsetX: number,
+  offsetY: number,
+  snapRadiusPx = ALBUM_ART_SPINDLE_SNAP_RADIUS_PX
+): boolean {
+  const safeX = Number.isFinite(offsetX) ? offsetX : 0;
+  const safeY = Number.isFinite(offsetY) ? offsetY : 0;
+  return Math.hypot(safeX, safeY) <= Math.max(0, snapRadiusPx);
+}
+
+/**
+ * Clamps a dragged album art offset (relative to the vinyl spindle center) to stay strictly
+ * within the wooden board's bounding box, snapping cleanly to `{0, 0}` when near the spindle center.
+ */
+export function clampAlbumArtDragOffset(
+  paramsOrOffsetX:
+    | {
+        offsetX: number;
+        offsetY: number;
+        boardWidth: number;
+        boardHeight: number;
+        discDiameter: number;
+        spindleCenterX: number;
+        spindleCenterY: number;
+      }
+    | number,
+  offsetYArg?: number,
+  boundsArg?: { minX: number; maxX: number; minY: number; maxY: number },
+  snapRadiusPx = ALBUM_ART_SPINDLE_SNAP_RADIUS_PX
+): { offsetX: number; offsetY: number; isCenteredOnSpindle: boolean } {
+  let rawX = 0;
+  let rawY = 0;
+  let minX = -200;
+  let maxX = 200;
+  let minY = -200;
+  let maxY = 200;
+
+  if (typeof paramsOrOffsetX === 'object' && paramsOrOffsetX !== null) {
+    rawX = paramsOrOffsetX.offsetX;
+    rawY = paramsOrOffsetX.offsetY;
+    const radius = Math.max(16, paramsOrOffsetX.discDiameter / 2);
+    const pad = 4;
+    minX = radius + pad - paramsOrOffsetX.spindleCenterX;
+    maxX = paramsOrOffsetX.boardWidth - radius - pad - paramsOrOffsetX.spindleCenterX;
+    minY = radius + pad - paramsOrOffsetX.spindleCenterY;
+    maxY = paramsOrOffsetX.boardHeight - radius - pad - paramsOrOffsetX.spindleCenterY;
+  } else {
+    rawX = Number(paramsOrOffsetX);
+    rawY = Number(offsetYArg ?? 0);
+    if (boundsArg) {
+      minX = boundsArg.minX;
+      maxX = boundsArg.maxX;
+      minY = boundsArg.minY;
+      maxY = boundsArg.maxY;
+    }
+  }
+
+  const clampedX = Math.round(
+    Math.max(minX, Math.min(maxX, Number.isFinite(rawX) ? rawX : 0))
+  );
+  const clampedY = Math.round(
+    Math.max(minY, Math.min(maxY, Number.isFinite(rawY) ? rawY : 0))
+  );
+  if (isAlbumArtSyncedToSpindle(clampedX, clampedY, snapRadiusPx)) {
+    return { offsetX: 0, offsetY: 0, isCenteredOnSpindle: true };
+  }
+  return { offsetX: clampedX, offsetY: clampedY, isCenteredOnSpindle: false };
+}
+
+export interface TvSongVideoChannel {
+  channelNumber: number;
+  code: string;
+  label: string;
+  videoId: string;
+  title: string;
+  viewCount?: number;
+  isOfficial?: boolean;
+  imageUrl: string;
+  frames: YouTubeGrabFrame[];
+}
+
+export interface CrtTintPreset {
+  id: 'color' | 'amber' | 'cool' | 'bw';
+  code: string;
+  label: string;
+  filterCss: string;
+  overlayRgba: string;
+}
+
+export const CRT_TINT_PRESETS: CrtTintPreset[] = [
+  {
+    id: 'color',
+    code: 'CLR',
+    label: 'Color Broadcast',
+    filterCss: 'contrast(1.06) saturate(1.12)',
+    overlayRgba: 'rgba(0, 0, 0, 0)',
+  },
+  {
+    id: 'amber',
+    code: 'AMB',
+    label: 'Warm Amber Phosphor',
+    filterCss: 'sepia(0.75) contrast(1.22) saturate(1.45) brightness(0.96)',
+    overlayRgba: 'rgba(245, 158, 11, 0.16)',
+  },
+  {
+    id: 'cool',
+    code: 'CYN',
+    label: 'Cool Broadcast Cyan',
+    filterCss: 'contrast(1.2) saturate(1.35) hue-rotate(155deg)',
+    overlayRgba: 'rgba(14, 165, 233, 0.14)',
+  },
+  {
+    id: 'bw',
+    code: 'B&W',
+    label: '1970s Monochrome',
+    filterCss: 'grayscale(1) contrast(1.32) brightness(0.95)',
+    overlayRgba: 'rgba(255, 255, 255, 0.03)',
+  },
+];
+
+export function getNextCrtTintIndex(currentIndex: number): number {
+  const safe = Number.isFinite(currentIndex) && currentIndex >= 0 ? Math.floor(currentIndex) : 0;
+  return (safe + 1) % CRT_TINT_PRESETS.length;
+}
+
+/**
+ * Removes a saved playlist by ID and resolves the next active playlist ID cleanly.
+ */
+export function removePlaylistById(
+  playlists: PlaylistPack[],
+  playlistIdToRemove: string,
+  currentActivePlaylistId: string
+): {
+  playlists: PlaylistPack[];
+  remaining: PlaylistPack[];
+  nextActivePlaylistId: string;
+  nextActiveId: string;
+} {
+  if (!Array.isArray(playlists) || playlists.length === 0) {
+    return {
+      playlists: [],
+      remaining: [],
+      nextActivePlaylistId: '',
+      nextActiveId: '',
+    };
+  }
+  const remaining = playlists.filter((pl) => pl.id !== playlistIdToRemove);
+  if (remaining.length === 0) {
+    return {
+      playlists: [],
+      remaining: [],
+      nextActivePlaylistId: '',
+      nextActiveId: '',
+    };
+  }
+  const activeStillExists = remaining.some((pl) => pl.id === currentActivePlaylistId);
+  const nextActivePlaylistId = activeStillExists ? currentActivePlaylistId : remaining[0].id;
+  return {
+    playlists: remaining,
+    remaining,
+    nextActivePlaylistId,
+    nextActiveId: nextActivePlaylistId,
+  };
+}
+
+
 
 

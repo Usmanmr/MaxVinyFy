@@ -1,6 +1,6 @@
 {
-  "appId": "com.vinyldrive.retroplayer",
-  "appName": "VinylDrive",
+  "appId": "com.maxvinyfy.retroplayer",
+  "appName": "MaxVinyFy",
   "webDir": "dist",
   "bundledWebRuntime": false,
   "server": {
