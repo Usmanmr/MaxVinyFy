@@ -33,10 +33,10 @@ export const AndroidAppModal: React.FC<AndroidAppModalProps> = ({
             </div>
             <div>
               <h2 id="android-modal-title" className="font-display text-lg font-bold text-white">
-                MaxVinyFy Android App
+                MaxYoutify Android App
               </h2>
               <p className="text-xs text-white/60">
-                Standalone Android App (`com.maxvinyfy.retroplayer`) · Thermal-Optimized
+                Standalone Android App (`com.maxyoutify.retroplayer`) · Thermal-Optimized
               </p>
             </div>
           </div>
@@ -66,7 +66,7 @@ export const AndroidAppModal: React.FC<AndroidAppModalProps> = ({
             {isStandalone ? (
               <div className="flex items-center gap-2.5 text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-500/30 rounded-xl px-3.5 py-2.5">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>MaxVinyFy is currently running in full-screen standalone Android mode.</span>
+                <span>MaxYoutify is currently running in full-screen standalone Android mode.</span>
               </div>
             ) : canPromptInstall ? (
               <button
@@ -76,7 +76,7 @@ export const AndroidAppModal: React.FC<AndroidAppModalProps> = ({
                 className="w-full py-3 px-4 rounded-xl bg-[#f59e0b] hover:bg-[#fbbf24] text-[#12100e] font-bold text-sm flex items-center justify-center gap-2 shadow-lg transition-[transform,opacity] cursor-pointer"
               >
                 <Download className="w-4 h-4" />
-                Install MaxVinyFy Android App Now
+                Install MaxYoutify Android App Now
               </button>
             ) : (
               <div className="space-y-2 text-xs text-white/80 leading-relaxed">
@@ -92,7 +92,7 @@ export const AndroidAppModal: React.FC<AndroidAppModalProps> = ({
                     <strong className="text-amber-300">&ldquo;Install app&rdquo;</strong> (or &ldquo;Add to Home screen&rdquo;).
                   </li>
                   <li>
-                    Android compiles and installs the standalone <strong className="text-white">MaxVinyFy WebAPK</strong> with full-screen landscape &amp; portrait support and zero browser bars.
+                    Android compiles and installs the standalone <strong className="text-white">MaxYoutify WebAPK</strong> with full-screen landscape &amp; portrait support and zero browser bars.
                   </li>
                 </ol>
               </div>
@@ -118,7 +118,7 @@ export const AndroidAppModal: React.FC<AndroidAppModalProps> = ({
               </div>
               <p className="text-[11px] text-white/60 leading-relaxed">
                 Includes <code className="text-white/80">capacitor.config.json</code> &amp;{' '}
-                <code className="text-white/80">AndroidManifest.xml</code> (<code className="text-white/80">com.maxvinyfy.retroplayer</code>) for Android Studio APK builds.
+                <code className="text-white/80">AndroidManifest.xml</code> (<code className="text-white/80">com.maxyoutify.retroplayer</code>) for Android Studio APK builds.
               </p>
             </div>
           </div>

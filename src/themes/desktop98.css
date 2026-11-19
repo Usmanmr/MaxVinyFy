@@ -1,0 +1,213 @@
+/* ==========================================================================
+   Theme: "'98 Desktop Player" (1997-2002 Skinned PC Audio-Player Era)
+   Steel-blue window chrome (#3A4A5C -> #1E2733), bevel light (#6E8298),
+   bevel shadow (#10161F), display glass near-black (#0A0F0A),
+   LED/visualizer green (#00E36D), peak-caps (#B8FFD9),
+   playlist text (#00C853 on #000D06, selected #1F3B2A, active white),
+   title-bar accent gold (#D8A01D), button face (#27313E).
+   Zero impact on other registered themes.
+   ========================================================================== */
+
+[data-theme="desktop-98"] {
+  --font-display: 'Silkscreen', monospace;
+  --font-sans: 'VT323', monospace;
+  --font-mono: 'VT323', monospace;
+  --d98-steel-top: #3A4A5C;
+  --d98-steel-bot: #1E2733;
+  --d98-bevel-light: #6E8298;
+  --d98-bevel-dark: #10161F;
+  --d98-glass: #0A0F0A;
+  --d98-led: #00E36D;
+  --d98-peak: #B8FFD9;
+  --d98-pl-text: #00C853;
+  --d98-pl-bg: #000D06;
+  --d98-pl-sel: #1F3B2A;
+  --d98-gold: #D8A01D;
+  --d98-btn: #27313E;
+}
+
+[data-theme="desktop-98"].app-viewport-shell {
+  background-color: #0b1118;
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(58, 74, 92, 0.25) 0%, transparent 50%),
+    linear-gradient(180deg, #121b26 0%, #0b1118 100%);
+  color: #00E36D;
+  font-family: 'VT323', monospace;
+}
+
+[data-theme="desktop-98"] #app-brand-title {
+  color: #D8A01D;
+  font-family: 'Silkscreen', monospace;
+  letter-spacing: 0.02em;
+  text-shadow: 1px 1px 0 #10161F;
+}
+
+/* Chunky Beveled Steel-Blue Skinned Window Frame */
+[data-theme="desktop-98"] .d98-window {
+  background: linear-gradient(180deg, #3A4A5C 0%, #273342 52%, #1E2733 100%);
+  border-top: 2px solid #6E8298;
+  border-left: 2px solid #6E8298;
+  border-right: 2px solid #10161F;
+  border-bottom: 2px solid #10161F;
+  border-radius: 2px;
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.14),
+    inset -1px -1px 0 rgba(0, 0, 0, 0.55),
+    0 8px 20px rgba(0, 0, 0, 0.65);
+}
+
+/* Horizontal Gradient Title Bar with Gold Accent & Pixel Grip Lines */
+[data-theme="desktop-98"] .d98-titlebar {
+  background: linear-gradient(90deg, #1E2733 0%, #3A4A5C 24%, #52667D 50%, #3A4A5C 76%, #1E2733 100%);
+  border-top: 1px solid #6E8298;
+  border-bottom: 1px solid #10161F;
+  padding: 2px 5px;
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+[data-theme="desktop-98"] .d98-grip-lines {
+  flex: 1;
+  height: 7px;
+  min-width: 12px;
+  background-image: repeating-linear-gradient(
+    180deg,
+    #D8A01D 0px,
+    #D8A01D 1px,
+    #10161F 1px,
+    #10161F 3px
+  );
+  opacity: 0.72;
+}
+
+[data-theme="desktop-98"] .d98-win-dot {
+  width: 7px;
+  height: 7px;
+  background-color: #27313E;
+  border-top: 1px solid #6E8298;
+  border-left: 1px solid #6E8298;
+  border-right: 1px solid #10161F;
+  border-bottom: 1px solid #10161F;
+  display: inline-block;
+}
+
+/* Recessed Near-Black Display Glass (#0A0F0A) */
+[data-theme="desktop-98"] .d98-lcd-well {
+  background-color: #0A0F0A;
+  border-top: 1.5px solid #10161F;
+  border-left: 1.5px solid #10161F;
+  border-right: 1.5px solid #6E8298;
+  border-bottom: 1.5px solid #6E8298;
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.9);
+}
+
+/* Beveled 3D-Pressed Hardware Button (#27313E) */
+[data-theme="desktop-98"] .d98-bevel-btn {
+  background: linear-gradient(180deg, #323F4F 0%, #27313E 65%, #1E2733 100%);
+  border-top: 1.5px solid #6E8298;
+  border-left: 1.5px solid #6E8298;
+  border-right: 1.5px solid #10161F;
+  border-bottom: 1.5px solid #10161F;
+  color: #D6E2F0;
+  font-family: 'Silkscreen', monospace;
+  transition: transform 60ms linear, opacity 60ms linear;
+}
+
+[data-theme="desktop-98"] .d98-bevel-btn:active,
+[data-theme="desktop-98"] .d98-bevel-btn[data-pressed="true"],
+[data-theme="desktop-98"] .d98-bevel-btn[aria-pressed="true"] {
+  background: linear-gradient(180deg, #1B232E 0%, #27313E 100%);
+  border-top: 1.5px solid #10161F;
+  border-left: 1.5px solid #10161F;
+  border-right: 1.5px solid #6E8298;
+  border-bottom: 1.5px solid #6E8298;
+  transform: translate3d(0.5px, 1px, 0);
+}
+
+/* Yellowed-Plastic Beige Desktop CRT Monitor Shell */
+[data-theme="desktop-98"] .d98-beige-crt-shell {
+  background: linear-gradient(168deg, #E5DEC9 0%, #CFC6B0 48%, #B2A890 100%);
+  border-top: 2px solid #F5EFE0;
+  border-left: 2px solid #EDE5D2;
+  border-right: 2px solid #6E6654;
+  border-bottom: 2px solid #595243;
+  border-radius: 6px;
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.55),
+    inset -2px -2px 4px rgba(68, 60, 46, 0.45),
+    0 12px 26px rgba(0, 0, 0, 0.7);
+}
+
+[data-theme="desktop-98"] .d98-beige-osd-btn {
+  background: linear-gradient(180deg, #DDD5C0 0%, #C2B8A0 100%);
+  border-top: 1.5px solid #F5EFE0;
+  border-left: 1.5px solid #F5EFE0;
+  border-right: 1.5px solid #5E5746;
+  border-bottom: 1.5px solid #5E5746;
+  color: #1F1D18;
+  font-family: 'Silkscreen', monospace;
+}
+
+[data-theme="desktop-98"] .d98-beige-osd-btn:active,
+[data-theme="desktop-98"] .d98-beige-osd-btn[data-pressed="true"],
+[data-theme="desktop-98"] .d98-beige-osd-btn[aria-pressed="true"] {
+  background: linear-gradient(180deg, #B3A992 0%, #CFC6B0 100%);
+  border-top: 1.5px solid #5E5746;
+  border-left: 1.5px solid #5E5746;
+  border-right: 1.5px solid #F5EFE0;
+  border-bottom: 1.5px solid #F5EFE0;
+  transform: translate3d(0.5px, 1px, 0);
+}
+
+/* Chunky Beveled Scrollbar for Playlist & Lyrics Windows */
+[data-theme="desktop-98"] .d98-chunky-scroll::-webkit-scrollbar {
+  width: 13px;
+  height: 13px;
+}
+
+[data-theme="desktop-98"] .d98-chunky-scroll::-webkit-scrollbar-track {
+  background: #10161F;
+  border-left: 1px solid #0A0F0A;
+}
+
+[data-theme="desktop-98"] .d98-chunky-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, #3A4A5C 0%, #27313E 100%);
+  border-top: 1.5px solid #6E8298;
+  border-left: 1.5px solid #6E8298;
+  border-right: 1.5px solid #10161F;
+  border-bottom: 1.5px solid #10161F;
+}
+
+/* Continuous Compositor-Only Marquee Loop */
+@keyframes d98MarqueeLoop {
+  0% {
+    transform: translate3d(0%, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+[data-theme="desktop-98"] .d98-marquee-strip {
+  display: inline-flex;
+  white-space: nowrap;
+  will-change: transform;
+  animation: d98MarqueeLoop 9.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="desktop-98"] .d98-marquee-strip {
+    animation: none !important;
+    transform: translate3d(0, 0, 0) !important;
+  }
+}
+
+/* Mobile portrait height for stacked Main + EQ + Lyrics + Floating Art Viewer windows */
+@media (max-width: 767px) and (orientation: portrait) {
+  [data-theme="desktop-98"] #turntable {
+    height: 560px;
+  }
+}

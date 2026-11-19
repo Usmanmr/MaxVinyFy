@@ -1,6 +1,6 @@
 {
-  "name": "VinylDrive — Retro Car Turntable & CRT Deck",
-  "description": "Landscape car-screen Spotify turntable player with interactive vinyl scratching, draggable modules, Up Next queue scrubbing, and a nostalgic CRT TV on a vintage table displaying YouTube song screen grabs.",
+  "name": "MaxYoutify — Retro Turntable & CRT Deck",
+  "description": "MaxYoutify — Retro vinyl turntable console and CRT TV video deck with interactive scratching, synced VFD lyrics, and Spotify playlist playback.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -97,22 +97,26 @@ export class RetroAudioEngine {
 
   private activePreviewUrl: string | null = null;
   private activeTrackId: string = '';
+  private lastLoadedTrackId: string = '';
   private fallbackPreviewUrl: string | null = null;
   private isUsingRealAudio = false;
   private currentRequestToken = 0;
 
   private isPlaying = false;
   private isDocumentHidden = false;
+  private isMuted = false;
   private volume = 0.8;
   private playbackRate = 1.0;
   private crackleLevel = 0.25;
   private needleDropCrackle = true;
+  private soundTheme: string = 'retro-turntable';
   private preset: SynthPreset = 'midnight-synth';
   private bpm = 110;
   private stepIndex = 0;
   private stepTimer: number | null = null;
   private levelPhase = 0;
   private lastSeekCrackMs = 0;
+  private trackChangeTimerIds: number[] = [];
 
   private ensureContext() {
     if (!this.ctx) {
@@ -121,7 +125,7 @@ export class RetroAudioEngine {
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.ctx = new AudioCtx();
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.value = this.volume;
+      this.masterGain.gain.value = this.isMuted ? 0 : this.volume;
       this.masterGain.connect(this.ctx.destination);
 
       this.synthGain = this.ctx.createGain();
@@ -216,10 +220,1415 @@ export class RetroAudioEngine {
     return this.needleDropCrackle;
   }
 
+  public cancelPendingThemeEffects() {
+    this.clearTrackChangeTimers();
+    if (this.audioEl && this.isUsingRealAudio) {
+      this.audioEl.playbackRate = this.playbackRate;
+    }
+  }
+
+  public setSoundTheme(themeId: string) {
+    const nextTheme = themeId || 'retro-turntable';
+    if (this.soundTheme !== nextTheme) {
+      this.cancelPendingThemeEffects();
+    }
+    this.soundTheme = nextTheme;
+    if (
+      this.soundTheme === 'reel-to-reel' ||
+      this.soundTheme === 'cassette-deck' ||
+      this.soundTheme === 'cd-hifi' ||
+      this.soundTheme === 'click-wheel' ||
+      this.soundTheme === 'squircle-pmp' ||
+      this.soundTheme === 'desktop-98' ||
+      this.soundTheme === 'streamline' ||
+      this.soundTheme === 'aurora-deck'
+    ) {
+      this.stopCrackleNode();
+    } else if (this.isPlaying && this.crackleLevel > 0) {
+      this.startCrackleNode();
+    }
+  }
+
+  public getSoundTheme(): string {
+    return this.soundTheme;
+  }
+
+  private clearTrackChangeTimers() {
+    this.trackChangeTimerIds.forEach((id) => window.clearTimeout(id));
+    this.trackChangeTimerIds = [];
+  }
+
+  /**
+   * Plays a crisp mechanical tape-transport engage click-clunk (ducked well under music).
+   */
+  public triggerReelStartCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Solenoid click
+    const clickOsc = this.ctx.createOscillator();
+    const clickGain = this.ctx.createGain();
+    clickOsc.type = 'square';
+    clickOsc.frequency.setValueAtTime(1180, now);
+    clickOsc.frequency.exponentialRampToValueAtTime(240, now + 0.032);
+    clickGain.gain.setValueAtTime(0.001, now);
+    clickGain.gain.linearRampToValueAtTime(0.075, now + 0.004);
+    clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.038);
+    clickOsc.connect(clickGain);
+    clickGain.connect(this.masterGain);
+    clickOsc.start(now);
+    clickOsc.stop(now + 0.045);
+
+    // 2. Pinch-roller rubber clunk
+    const clunkOsc = this.ctx.createOscillator();
+    const clunkGain = this.ctx.createGain();
+    clunkOsc.type = 'triangle';
+    clunkOsc.frequency.setValueAtTime(128, now + 0.015);
+    clunkOsc.frequency.exponentialRampToValueAtTime(48, now + 0.11);
+    clunkGain.gain.setValueAtTime(0.001, now + 0.015);
+    clunkGain.gain.linearRampToValueAtTime(0.11, now + 0.025);
+    clunkGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
+    clunkOsc.connect(clunkGain);
+    clunkGain.connect(this.masterGain);
+    clunkOsc.start(now + 0.015);
+    clunkOsc.stop(now + 0.14);
+
+    // 3. Subtle capstan motor spin-up hum (quiet)
+    const humOsc = this.ctx.createOscillator();
+    const humGain = this.ctx.createGain();
+    humOsc.type = 'sine';
+    humOsc.frequency.setValueAtTime(62, now + 0.02);
+    humOsc.frequency.exponentialRampToValueAtTime(112, now + 0.24);
+    humGain.gain.setValueAtTime(0.001, now + 0.02);
+    humGain.gain.linearRampToValueAtTime(0.045, now + 0.07);
+    humGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+    humOsc.connect(humGain);
+    humGain.connect(this.masterGain);
+    humOsc.start(now + 0.02);
+    humOsc.stop(now + 0.29);
+  }
+
+  /**
+   * Plays a heavy mechanical relay disengage clunk on Stop (ducked well under music).
+   */
+  public triggerReelStopCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    const clunkOsc = this.ctx.createOscillator();
+    const clunkGain = this.ctx.createGain();
+    clunkOsc.type = 'triangle';
+    clunkOsc.frequency.setValueAtTime(165, now);
+    clunkOsc.frequency.exponentialRampToValueAtTime(42, now + 0.12);
+    clunkGain.gain.setValueAtTime(0.001, now);
+    clunkGain.gain.linearRampToValueAtTime(0.11, now + 0.008);
+    clunkGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+    clunkOsc.connect(clunkGain);
+    clunkGain.connect(this.masterGain);
+    clunkOsc.start(now);
+    clunkOsc.stop(now + 0.15);
+  }
+
+  /**
+   * Plays Reel-to-Reel track change SFX (< 2s):
+   * 1) Motor spin-down hum
+   * 2) Brief fast-rewind tape squeal/chatter
+   * 3) Click-clunk engage sound
+   */
+  public triggerReelTrackChangeCue(engageDelayMs = 1380) {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+
+    this.clearTrackChangeTimers();
+    const now = this.ctx.currentTime;
+
+    // Stage 1: Motor spin-down hum
+    const downOsc = this.ctx.createOscillator();
+    const downGain = this.ctx.createGain();
+    downOsc.type = 'sine';
+    downOsc.frequency.setValueAtTime(155, now);
+    downOsc.frequency.exponentialRampToValueAtTime(52, now + 0.34);
+    downGain.gain.setValueAtTime(0.001, now);
+    downGain.gain.linearRampToValueAtTime(0.065, now + 0.04);
+    downGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.36);
+    downOsc.connect(downGain);
+    downGain.connect(this.masterGain);
+    downOsc.start(now);
+    downOsc.stop(now + 0.37);
+
+    // Stage 2: Brief fast-rewind tape squeal (0.34s -> 1.04s)
+    const t1 = window.setTimeout(() => {
+      if (!this.ctx || !this.masterGain || this.isMuted) return;
+      const t = this.ctx.currentTime;
+      const squealOsc = this.ctx.createOscillator();
+      const squealFilter = this.ctx.createBiquadFilter();
+      const squealGain = this.ctx.createGain();
+      squealOsc.type = 'sawtooth';
+      squealOsc.frequency.setValueAtTime(1150, t);
+      squealOsc.frequency.exponentialRampToValueAtTime(2650, t + 0.32);
+      squealOsc.frequency.exponentialRampToValueAtTime(980, t + 0.64);
+      squealFilter.type = 'bandpass';
+      squealFilter.frequency.setValueAtTime(2100, t);
+      squealFilter.Q.setValueAtTime(4.5, t);
+      squealGain.gain.setValueAtTime(0.001, t);
+      squealGain.gain.linearRampToValueAtTime(0.048, t + 0.08);
+      squealGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.66);
+      squealOsc.connect(squealFilter);
+      squealFilter.connect(squealGain);
+      squealGain.connect(this.masterGain);
+      squealOsc.start(t);
+      squealOsc.stop(t + 0.68);
+    }, 340);
+
+    // Stage 3: Click-clunk engage sound before playback resumes
+    const clampedDelay = Math.max(400, Math.min(1800, engageDelayMs));
+    const t2 = window.setTimeout(() => {
+      this.triggerReelStartCue();
+    }, clampedDelay);
+
+    this.trackChangeTimerIds.push(t1, t2);
+  }
+
+  /**
+   * Brief tape-capstan nudge / flutter effect (scratch equivalent for Reel-to-Reel).
+   */
+  public triggerReelTapeNudge(intensity: 'light' | 'classic' | 'backspin' = 'classic') {
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const duration = intensity === 'backspin' ? 0.45 : intensity === 'light' ? 0.18 : 0.28;
+
+    if (this.audioEl && this.isUsingRealAudio && !this.audioEl.paused) {
+      const baseRate = this.playbackRate;
+      this.audioEl.playbackRate = intensity === 'backspin' ? 0.65 : 1.28;
+      window.setTimeout(() => {
+        if (this.audioEl) {
+          this.audioEl.playbackRate = baseRate;
+        }
+      }, duration * 780);
+    }
+
+    if (this.isMuted || this.volume <= 0.01) return;
+    const now = this.ctx.currentTime;
+    const flutterOsc = this.ctx.createOscillator();
+    const flutterFilter = this.ctx.createBiquadFilter();
+    const flutterGain = this.ctx.createGain();
+    flutterOsc.type = 'triangle';
+    flutterOsc.frequency.setValueAtTime(320, now);
+    flutterOsc.frequency.exponentialRampToValueAtTime(140, now + duration * 0.5);
+    flutterOsc.frequency.exponentialRampToValueAtTime(260, now + duration);
+    flutterFilter.type = 'bandpass';
+    flutterFilter.frequency.setValueAtTime(680, now);
+    flutterFilter.Q.setValueAtTime(2.2, now);
+    flutterGain.gain.setValueAtTime(0.001, now);
+    flutterGain.gain.linearRampToValueAtTime(0.085, now + 0.02);
+    flutterGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    flutterOsc.connect(flutterFilter);
+    flutterFilter.connect(flutterGain);
+    flutterGain.connect(this.masterGain);
+    flutterOsc.start(now);
+    flutterOsc.stop(now + duration + 0.02);
+  }
+
+  /**
+   * Plays Cassette Deck Play mechanical transport clunk + brief capstan motor-engage hiss (ducked well under music).
+   */
+  public triggerCassetteStartCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Crisp piano-key latch click
+    const clickOsc = this.ctx.createOscillator();
+    const clickGain = this.ctx.createGain();
+    clickOsc.type = 'square';
+    clickOsc.frequency.setValueAtTime(1420, now);
+    clickOsc.frequency.exponentialRampToValueAtTime(320, now + 0.026);
+    clickGain.gain.setValueAtTime(0.001, now);
+    clickGain.gain.linearRampToValueAtTime(0.08, now + 0.003);
+    clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.032);
+    clickOsc.connect(clickGain);
+    clickGain.connect(this.masterGain);
+    clickOsc.start(now);
+    clickOsc.stop(now + 0.036);
+
+    // 2. Cassette head-bridge engagement clunk
+    const clunkOsc = this.ctx.createOscillator();
+    const clunkGain = this.ctx.createGain();
+    clunkOsc.type = 'triangle';
+    clunkOsc.frequency.setValueAtTime(175, now + 0.012);
+    clunkOsc.frequency.exponentialRampToValueAtTime(58, now + 0.095);
+    clunkGain.gain.setValueAtTime(0.001, now + 0.012);
+    clunkGain.gain.linearRampToValueAtTime(0.095, now + 0.02);
+    clunkGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+    clunkOsc.connect(clunkGain);
+    clunkGain.connect(this.masterGain);
+    clunkOsc.start(now + 0.012);
+    clunkOsc.stop(now + 0.12);
+
+    // 3. Brief subtle tape bias / motor-engage hiss (0.28s)
+    const hissDur = 0.28;
+    const bufferSize = Math.floor(this.ctx.sampleRate * hissDur);
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      const env = Math.sin((i / bufferSize) * Math.PI);
+      data[i] = (Math.random() * 2 - 1) * 0.12 * env;
+    }
+    const hissSrc = this.ctx.createBufferSource();
+    hissSrc.buffer = buffer;
+    const hissFilter = this.ctx.createBiquadFilter();
+    hissFilter.type = 'bandpass';
+    hissFilter.frequency.setValueAtTime(4200, now + 0.02);
+    hissFilter.Q.setValueAtTime(1.2, now + 0.02);
+    const hissGain = this.ctx.createGain();
+    hissGain.gain.setValueAtTime(0.06, now + 0.02);
+    hissSrc.connect(hissFilter);
+    hissFilter.connect(hissGain);
+    hissGain.connect(this.masterGain);
+    hissSrc.start(now + 0.02);
+    hissSrc.stop(now + 0.02 + hissDur);
+  }
+
+  /**
+   * Plays Cassette Deck mechanical piano-key latch click (press or release spring snap).
+   */
+  public triggerCassetteLatchClick(isRelease = false) {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = isRelease ? 'triangle' : 'square';
+    osc.frequency.setValueAtTime(isRelease ? 980 : 1240, now);
+    osc.frequency.exponentialRampToValueAtTime(isRelease ? 290 : 340, now + 0.028);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.055, now + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.032);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.036);
+  }
+
+  /**
+   * Plays a soft damped helical spring boing when the bottom-hinged door pops open.
+   */
+  public triggerCassetteDoorSpringBoing() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    const boingOsc = this.ctx.createOscillator();
+    const boingGain = this.ctx.createGain();
+    boingOsc.type = 'sine';
+    boingOsc.frequency.setValueAtTime(195, now);
+    boingOsc.frequency.exponentialRampToValueAtTime(118, now + 0.06);
+    boingOsc.frequency.exponentialRampToValueAtTime(162, now + 0.13);
+    boingOsc.frequency.exponentialRampToValueAtTime(92, now + 0.22);
+
+    boingGain.gain.setValueAtTime(0.001, now);
+    boingGain.gain.linearRampToValueAtTime(0.065, now + 0.012);
+    boingGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+    boingOsc.connect(boingGain);
+    boingGain.connect(this.masterGain);
+    boingOsc.start(now);
+    boingOsc.stop(now + 0.25);
+  }
+
+  /**
+   * Plays Cassette Deck piano-key release clack + upward latch spring sound on Stop.
+   */
+  public triggerCassetteStopCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Stop plunger clack
+    const latchOsc = this.ctx.createOscillator();
+    const latchGain = this.ctx.createGain();
+    latchOsc.type = 'triangle';
+    latchOsc.frequency.setValueAtTime(240, now);
+    latchOsc.frequency.exponentialRampToValueAtTime(64, now + 0.085);
+    latchGain.gain.setValueAtTime(0.001, now);
+    latchGain.gain.linearRampToValueAtTime(0.085, now + 0.006);
+    latchGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.095);
+    latchOsc.connect(latchGain);
+    latchGain.connect(this.masterGain);
+    latchOsc.start(now);
+    latchOsc.stop(now + 0.1);
+
+    // 2. Released latched-key spring snap
+    const springOsc = this.ctx.createOscillator();
+    const springGain = this.ctx.createGain();
+    springOsc.type = 'sine';
+    springOsc.frequency.setValueAtTime(340, now + 0.014);
+    springOsc.frequency.exponentialRampToValueAtTime(210, now + 0.11);
+    springGain.gain.setValueAtTime(0.001, now + 0.014);
+    springGain.gain.linearRampToValueAtTime(0.045, now + 0.022);
+    springGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+    springOsc.connect(springGain);
+    springGain.connect(this.masterGain);
+    springOsc.start(now + 0.014);
+    springOsc.stop(now + 0.13);
+  }
+
+  /**
+   * Plays full Cassette Deck track-change SFX (<= 2.1s):
+   * 1) Key unlatch click -> bottom-hinged door spring boing
+   * 2) Norelco polycarbonate case lid & shell clatter during organizer swap
+   * 3) Firm door compression clunk -> Play latch click -> capstan motor-engage hiss
+   */
+  public triggerCassetteTrackChangeCue(closeDelayMs = 1680) {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+
+    this.clearTrackChangeTimers();
+
+    // 0ms: Latched PLAY key pops up
+    this.triggerCassetteLatchClick(true);
+
+    // 170ms: Bottom-hinged smoked door springs open
+    const tDoorOpen = window.setTimeout(() => {
+      this.triggerCassetteDoorSpringBoing();
+    }, 170);
+
+    // 520ms: Norelco polycarbonate case lid & cassette plastic clatter in organizer rack
+    const tClatter = window.setTimeout(() => {
+      if (!this.ctx || !this.masterGain || this.isMuted) return;
+      const t = this.ctx.currentTime;
+      [0, 0.095, 0.24, 0.36].forEach((offset, idx) => {
+        if (!this.ctx || !this.masterGain) return;
+        const clickOsc = this.ctx.createOscillator();
+        const clickFilter = this.ctx.createBiquadFilter();
+        const clickGain = this.ctx.createGain();
+        clickOsc.type = 'square';
+        clickOsc.frequency.setValueAtTime(idx % 2 === 1 ? 740 : 540, t + offset);
+        clickOsc.frequency.exponentialRampToValueAtTime(210, t + offset + 0.045);
+        clickFilter.type = 'bandpass';
+        clickFilter.frequency.setValueAtTime(1750, t + offset);
+        clickFilter.Q.setValueAtTime(2.3, t + offset);
+        clickGain.gain.setValueAtTime(0.001, t + offset);
+        clickGain.gain.linearRampToValueAtTime(0.048, t + offset + 0.004);
+        clickGain.gain.exponentialRampToValueAtTime(0.0001, t + offset + 0.052);
+        clickOsc.connect(clickFilter);
+        clickFilter.connect(clickGain);
+        clickGain.connect(this.masterGain);
+        clickOsc.start(t + offset);
+        clickOsc.stop(t + offset + 0.06);
+      });
+    }, 520);
+
+    // ~1680ms: Firm door clunk + Play key latch + motor-engage hiss
+    const clampedDelay = Math.max(850, Math.min(2000, closeDelayMs));
+    const tDoorClose = window.setTimeout(() => {
+      this.triggerCassetteStartCue();
+    }, clampedDelay);
+
+    this.trackChangeTimerIds.push(tDoorOpen, tClatter, tDoorClose);
+  }
+
+  /**
+   * Cassette scratch equivalent ("Tape Chew"):
+   * Brief wow/flutter pitch wobble + muffled lowpass warble, then cleanly resumes.
+   */
+  public triggerCassetteTapeChew(intensity: 'light' | 'classic' | 'backspin' = 'classic') {
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+
+    const totalMs = intensity === 'backspin' ? 520 : intensity === 'light' ? 280 : 400;
+    if (this.audioEl && this.isUsingRealAudio && !this.audioEl.paused) {
+      const baseRate = this.playbackRate;
+      this.audioEl.playbackRate = 0.72;
+      const w1 = window.setTimeout(() => {
+        if (this.audioEl && this.isPlaying) this.audioEl.playbackRate = 1.18;
+      }, Math.round(totalMs * 0.28));
+      const w2 = window.setTimeout(() => {
+        if (this.audioEl && this.isPlaying) this.audioEl.playbackRate = 0.78;
+      }, Math.round(totalMs * 0.56));
+      const w3 = window.setTimeout(() => {
+        if (this.audioEl) this.audioEl.playbackRate = baseRate;
+      }, totalMs);
+      this.trackChangeTimerIds.push(w1, w2, w3);
+    }
+
+    if (this.isMuted || this.volume <= 0.01) return;
+    const now = this.ctx.currentTime;
+    const durSec = totalMs / 1000;
+
+    // Muffled wow/flutter tape warble synth cue
+    const osc = this.ctx.createOscillator();
+    const lfo = this.ctx.createOscillator();
+    const lfoGain = this.ctx.createGain();
+    const lpFilter = this.ctx.createBiquadFilter();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(195, now);
+    osc.frequency.linearRampToValueAtTime(115, now + durSec * 0.48);
+    osc.frequency.linearRampToValueAtTime(180, now + durSec);
+
+    lfo.type = 'sine';
+    lfo.frequency.setValueAtTime(13, now);
+    lfoGain.gain.setValueAtTime(36, now);
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+
+    lpFilter.type = 'lowpass';
+    lpFilter.frequency.setValueAtTime(480, now);
+    lpFilter.Q.setValueAtTime(2.8, now);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.085, now + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + durSec);
+
+    osc.connect(lpFilter);
+    lpFilter.connect(gain);
+    gain.connect(this.masterGain);
+
+    lfo.start(now);
+    osc.start(now);
+    lfo.stop(now + durSec + 0.02);
+    osc.stop(now + durSec + 0.02);
+  }
+
+  /**
+   * Generation-aware Click Wheel tick for every 15deg scroll detent or button press:
+   * - plastic-clack (Gen 1 mechanical wheel): dry polycarbonate detent snap
+   * - electronic-tick (Gen 2 Mono Touch): crisp subtle piezo pulse
+   * - soft-tick (Gen 3 Color Video): current soft electrostatic click
+   */
+  public triggerClickWheelTick(
+    accent = false,
+    soundProfile: 'plastic-clack' | 'electronic-tick' | 'soft-tick' = 'soft-tick'
+  ) {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    if (soundProfile === 'plastic-clack') {
+      // Dry mechanical polycarbonate clack detent
+      const dur = 0.022;
+      const bufSize = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
+      const buf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
+      const ch = buf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) {
+        ch[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufSize * 0.22));
+      }
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = buf;
+
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(accent ? 1650 : 1320, now);
+      bp.Q.setValueAtTime(2.6, now);
+
+      const nGain = this.ctx.createGain();
+      nGain.gain.setValueAtTime(accent ? 0.085 : 0.062, now);
+      nGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+      noise.connect(bp);
+      bp.connect(nGain);
+      nGain.connect(this.masterGain);
+      noise.start(now);
+      noise.stop(now + dur);
+
+      const bodyOsc = this.ctx.createOscillator();
+      const bodyGain = this.ctx.createGain();
+      bodyOsc.type = 'triangle';
+      bodyOsc.frequency.setValueAtTime(accent ? 1350 : 1080, now);
+      bodyOsc.frequency.exponentialRampToValueAtTime(340, now + 0.016);
+      bodyGain.gain.setValueAtTime(accent ? 0.065 : 0.048, now);
+      bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.018);
+      bodyOsc.connect(bodyGain);
+      bodyGain.connect(this.masterGain);
+      bodyOsc.start(now);
+      bodyOsc.stop(now + 0.02);
+      return;
+    }
+
+    if (soundProfile === 'electronic-tick') {
+      const osc = this.ctx.createOscillator();
+      const filter = this.ctx.createBiquadFilter();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(accent ? 2150 : 1780, now);
+      osc.frequency.exponentialRampToValueAtTime(accent ? 980 : 820, now + 0.011);
+
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(600, now);
+
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(accent ? 0.055 : 0.038, now + 0.0015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.013);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(now);
+      osc.stop(now + 0.015);
+      return;
+    }
+
+    // Default Gen 3 soft electrostatic tick
+    const osc = this.ctx.createOscillator();
+    const filter = this.ctx.createBiquadFilter();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(accent ? 2900 : 2400, now);
+    osc.frequency.exponentialRampToValueAtTime(accent ? 1100 : 860, now + 0.014);
+
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(2200, now);
+    filter.Q.setValueAtTime(1.8, now);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(accent ? 0.07 : 0.048, now + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.016);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.02);
+  }
+
+  /**
+   * Soft rubberized cradle drop thunk + subtle connect chime when docking player onto the white speaker dock.
+   */
+  public triggerClickWheelDockCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    // Cushioned rubber dock seat thud (volume-ducked)
+    const thudOsc = this.ctx.createOscillator();
+    const thudGain = this.ctx.createGain();
+    thudOsc.type = 'sine';
+    thudOsc.frequency.setValueAtTime(112, now);
+    thudOsc.frequency.exponentialRampToValueAtTime(42, now + 0.09);
+    thudGain.gain.setValueAtTime(0.001, now);
+    thudGain.gain.linearRampToValueAtTime(0.055, now + 0.008);
+    thudGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.105);
+    thudOsc.connect(thudGain);
+    thudGain.connect(this.masterGain);
+    thudOsc.start(now);
+    thudOsc.stop(now + 0.115);
+
+    // Gentle 2-note dock pin connect chime
+    [
+      { freq: 587.33, offset: 0.075, dur: 0.11 },
+      { freq: 880, offset: 0.14, dur: 0.14 },
+    ].forEach((note) => {
+      if (!this.ctx || !this.masterGain) return;
+      const chimeOsc = this.ctx.createOscillator();
+      const chimeGain = this.ctx.createGain();
+      chimeOsc.type = 'sine';
+      chimeOsc.frequency.setValueAtTime(note.freq, now + note.offset);
+      chimeGain.gain.setValueAtTime(0.001, now + note.offset);
+      chimeGain.gain.linearRampToValueAtTime(0.028, now + note.offset + 0.012);
+      chimeGain.gain.exponentialRampToValueAtTime(0.0001, now + note.offset + note.dur);
+      chimeOsc.connect(chimeGain);
+      chimeGain.connect(this.masterGain);
+      chimeOsc.start(now + note.offset);
+      chimeOsc.stop(now + note.offset + note.dur + 0.015);
+    });
+  }
+
+  /**
+   * Quiet micro-drive spin-up whisper + gentle digital beep on Click Wheel load.
+   */
+  public triggerClickWheelLoadingCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    // Gentle micro-drive spin-up hum
+    const spinOsc = this.ctx.createOscillator();
+    const spinGain = this.ctx.createGain();
+    spinOsc.type = 'sine';
+    spinOsc.frequency.setValueAtTime(210, now);
+    spinOsc.frequency.exponentialRampToValueAtTime(520, now + 0.24);
+    spinGain.gain.setValueAtTime(0.001, now);
+    spinGain.gain.linearRampToValueAtTime(0.032, now + 0.05);
+    spinGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+    spinOsc.connect(spinGain);
+    spinGain.connect(this.masterGain);
+    spinOsc.start(now);
+    spinOsc.stop(now + 0.3);
+
+    // Quiet confirmation chime
+    const beepOsc = this.ctx.createOscillator();
+    const beepGain = this.ctx.createGain();
+    beepOsc.type = 'sine';
+    beepOsc.frequency.setValueAtTime(1560, now + 0.14);
+    beepGain.gain.setValueAtTime(0.001, now + 0.14);
+    beepGain.gain.linearRampToValueAtTime(0.035, now + 0.155);
+    beepGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+    beepOsc.connect(beepGain);
+    beepGain.connect(this.masterGain);
+    beepOsc.start(now + 0.14);
+    beepOsc.stop(now + 0.25);
+  }
+
+  public triggerClickWheelStartCue(
+    soundProfile: 'plastic-clack' | 'electronic-tick' | 'soft-tick' = 'soft-tick'
+  ) {
+    this.triggerClickWheelTick(true, soundProfile);
+  }
+
+  public triggerClickWheelStopCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    this.triggerClickWheelTick(false);
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(720, now + 0.02);
+    osc.frequency.exponentialRampToValueAtTime(280, now + 0.11);
+    gain.gain.setValueAtTime(0.001, now + 0.02);
+    gain.gain.linearRampToValueAtTime(0.04, now + 0.032);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now + 0.02);
+    osc.stop(now + 0.13);
+  }
+
+  /**
+   * Track change cue (< 1s): soft click + quick clean airy UI slide whoosh.
+   */
+  public triggerClickWheelTrackChangeCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    this.triggerClickWheelTick(true);
+
+    const now = this.ctx.currentTime;
+    const whooshDur = 0.28;
+    const bufferSize = Math.floor(this.ctx.sampleRate * whooshDur);
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      const env = Math.sin((i / bufferSize) * Math.PI);
+      data[i] = (Math.random() * 2 - 1) * 0.14 * env;
+    }
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1400, now + 0.01);
+    filter.frequency.exponentialRampToValueAtTime(3400, now + 0.14);
+    filter.frequency.exponentialRampToValueAtTime(1100, now + whooshDur);
+    filter.Q.setValueAtTime(1.5, now + 0.01);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.055, now + 0.01);
+
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+    src.start(now + 0.01);
+    src.stop(now + 0.01 + whooshDur);
+  }
+
+  /**
+   * Double-press center button equivalent ("Skip-Stutter"):
+   * brief repeating buffer micro-slices cleanly tucked under playback.
+   */
+  public triggerClickWheelSkipStutter(intensity: 'light' | 'classic' | 'backspin' = 'classic') {
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+
+    const totalMs = intensity === 'backspin' ? 420 : intensity === 'light' ? 240 : 320;
+    if (this.audioEl && this.isUsingRealAudio && !this.audioEl.paused) {
+      const baseRate = this.playbackRate;
+      const baseTime = this.audioEl.currentTime;
+      this.audioEl.playbackRate = 1.24;
+      const s1 = window.setTimeout(() => {
+        if (this.audioEl && this.isPlaying) {
+          try {
+            this.audioEl.currentTime = Math.max(0, baseTime + 0.04);
+          } catch {
+            // ignore
+          }
+          this.audioEl.playbackRate = 0.85;
+        }
+      }, 95);
+      const s2 = window.setTimeout(() => {
+        if (this.audioEl) {
+          this.audioEl.playbackRate = baseRate;
+        }
+      }, totalMs);
+      this.trackChangeTimerIds.push(s1, s2);
+    }
+
+    if (this.isMuted || this.volume <= 0.01) return;
+    const now = this.ctx.currentTime;
+    [0, 0.085, 0.17].forEach((offset, idx) => {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(980 + idx * 180, now + offset);
+      osc.frequency.exponentialRampToValueAtTime(520, now + offset + 0.045);
+      gain.gain.setValueAtTime(0.001, now + offset);
+      gain.gain.linearRampToValueAtTime(0.055, now + offset + 0.004);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.055);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(now + offset);
+      osc.stop(now + offset + 0.06);
+    });
+  }
+
+  /**
+   * Soft deep matte "thip" tactile click for Squircle PMP D-pad and soft-touch buttons.
+   */
+  public triggerSquircleThip(accent = false) {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const filter = this.ctx.createBiquadFilter();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(accent ? 280 : 210, now);
+    osc.frequency.exponentialRampToValueAtTime(accent ? 76 : 62, now + 0.038);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(920, now);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(accent ? 0.095 : 0.068, now + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.044);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.05);
+  }
+
+  /**
+   * Quiet warm solid-state load chime on Squircle PMP mount.
+   */
+  public triggerSquircleLoadCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(240, now);
+    osc.frequency.exponentialRampToValueAtTime(360, now + 0.16);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.042, now + 0.024);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.24);
+  }
+
+  public triggerSquircleStartCue() {
+    this.triggerSquircleThip(true);
+  }
+
+  public triggerSquircleStopCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(190, now);
+    osc.frequency.exponentialRampToValueAtTime(58, now + 0.09);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.07, now + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.12);
+  }
+
+  /**
+   * Track change cue (< 1s): soft deep "thip" followed by short smooth twist-UI whoosh.
+   */
+  public triggerSquircleTrackChangeCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    this.triggerSquircleThip(true);
+
+    const now = this.ctx.currentTime;
+    const whooshDur = 0.26;
+    const bufferSize = Math.floor(this.ctx.sampleRate * whooshDur);
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      const env = Math.sin((i / bufferSize) * Math.PI);
+      data[i] = (Math.random() * 2 - 1) * 0.12 * env;
+    }
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(480, now + 0.02);
+    filter.frequency.exponentialRampToValueAtTime(1450, now + 0.15);
+    filter.frequency.exponentialRampToValueAtTime(420, now + whooshDur);
+    filter.Q.setValueAtTime(1.2, now + 0.02);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.055, now + 0.02);
+
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+    src.start(now + 0.02);
+    src.stop(now + 0.02 + whooshDur);
+  }
+
+  /**
+   * Long-press D-pad Left equivalent ("Stutter-Rewind"):
+   * brief backward-stepping micro-slices tucked smoothly under playback.
+   */
+  public triggerSquircleStutterRewind(intensity: 'light' | 'classic' | 'backspin' = 'backspin') {
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+
+    const totalMs = intensity === 'backspin' ? 420 : intensity === 'light' ? 240 : 320;
+    if (this.audioEl && this.isUsingRealAudio && !this.audioEl.paused) {
+      const baseRate = this.playbackRate;
+      const baseTime = this.audioEl.currentTime;
+      this.audioEl.playbackRate = 0.72;
+      const r1 = window.setTimeout(() => {
+        if (this.audioEl && this.isPlaying) {
+          try {
+            this.audioEl.currentTime = Math.max(0, baseTime - 0.18);
+          } catch {
+            // ignore
+          }
+          this.audioEl.playbackRate = 0.88;
+        }
+      }, 110);
+      const r2 = window.setTimeout(() => {
+        if (this.audioEl) {
+          this.audioEl.playbackRate = baseRate;
+        }
+      }, totalMs);
+      this.trackChangeTimerIds.push(r1, r2);
+    }
+
+    if (this.isMuted || this.volume <= 0.01) return;
+    const now = this.ctx.currentTime;
+    [0, 0.095, 0.19].forEach((offset, idx) => {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      const filter = this.ctx.createBiquadFilter();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(420 - idx * 80, now + offset);
+      osc.frequency.exponentialRampToValueAtTime(140, now + offset + 0.065);
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(780, now + offset);
+      gain.gain.setValueAtTime(0.001, now + offset);
+      gain.gain.linearRampToValueAtTime(0.068, now + offset + 0.006);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.07);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(now + offset);
+      osc.stop(now + offset + 0.075);
+    });
+  }
+
+  /**
+   * Short beveled 3D button click for '98 Desktop Player controls (ducked under music).
+   */
+  public triggerDesktop98Click(accent = false) {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(accent ? 1580 : 1240, now);
+    osc.frequency.exponentialRampToValueAtTime(340, now + 0.018);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(accent ? 0.068 : 0.048, now + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.022);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.025);
+  }
+
+  /**
+   * Soft hard-drive tick-tick + short click for '98 Desktop Player loading & track changes.
+   */
+  public triggerDesktop98LoadCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    // Soft IDE hard-drive actuator tick-tick
+    [0, 0.055, 0.12].forEach((offset, idx) => {
+      if (!this.ctx || !this.masterGain) return;
+      const tickOsc = this.ctx.createOscillator();
+      const tickFilter = this.ctx.createBiquadFilter();
+      const tickGain = this.ctx.createGain();
+
+      tickOsc.type = 'triangle';
+      tickOsc.frequency.setValueAtTime(idx === 2 ? 920 : 680 + idx * 90, now + offset);
+      tickOsc.frequency.exponentialRampToValueAtTime(180, now + offset + 0.022);
+
+      tickFilter.type = 'bandpass';
+      tickFilter.frequency.setValueAtTime(1450, now + offset);
+      tickFilter.Q.setValueAtTime(2.5, now + offset);
+
+      tickGain.gain.setValueAtTime(0.001, now + offset);
+      tickGain.gain.linearRampToValueAtTime(0.052, now + offset + 0.003);
+      tickGain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.026);
+
+      tickOsc.connect(tickFilter);
+      tickFilter.connect(tickGain);
+      tickGain.connect(this.masterGain);
+      tickOsc.start(now + offset);
+      tickOsc.stop(now + offset + 0.03);
+    });
+  }
+
+  public triggerDesktop98StartCue() {
+    this.triggerDesktop98Click(true);
+  }
+
+  public triggerDesktop98StopCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(640, now);
+    osc.frequency.exponentialRampToValueAtTime(160, now + 0.045);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.06, now + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.052);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.058);
+  }
+
+  public triggerDesktop98TrackChangeCue() {
+    this.triggerDesktop98LoadCue();
+  }
+
+  /**
+   * '98 Desktop Player scratch equivalent: stutters playback with a brief vinyl-crackle burst.
+   */
+  public triggerDesktop98ScratchBurst(intensity: 'light' | 'classic' | 'backspin' = 'classic') {
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+
+    const totalMs = intensity === 'backspin' ? 380 : intensity === 'light' ? 220 : 300;
+    if (this.audioEl && this.isUsingRealAudio && !this.audioEl.paused) {
+      const baseRate = this.playbackRate;
+      const baseTime = this.audioEl.currentTime;
+      this.audioEl.playbackRate = 0.78;
+      const s1 = window.setTimeout(() => {
+        if (this.audioEl && this.isPlaying) {
+          try {
+            this.audioEl.currentTime = Math.max(0, baseTime - 0.08);
+          } catch {
+            // ignore
+          }
+          this.audioEl.playbackRate = 1.18;
+        }
+      }, 90);
+      const s2 = window.setTimeout(() => {
+        if (this.audioEl) {
+          this.audioEl.playbackRate = baseRate;
+        }
+      }, totalMs);
+      this.trackChangeTimerIds.push(s1, s2);
+    }
+
+    if (this.isMuted || this.volume <= 0.01) return;
+    const now = this.ctx.currentTime;
+    const burstDur = totalMs / 1000;
+
+    // Brief vinyl-crackle burst + stutter click
+    const bufferSize = Math.floor(this.ctx.sampleRate * burstDur);
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      const env = Math.sin((i / bufferSize) * Math.PI);
+      const r = Math.random();
+      if (r > 0.96) {
+        data[i] = (Math.random() * 2 - 1) * 0.65 * env;
+      } else {
+        data[i] = (Math.random() * 2 - 1) * 0.08 * env;
+      }
+    }
+
+    const noiseSrc = this.ctx.createBufferSource();
+    noiseSrc.buffer = buffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(2200, now);
+    filter.Q.setValueAtTime(1.5, now);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.14, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + burstDur);
+
+    noiseSrc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+    noiseSrc.start(now);
+    noiseSrc.stop(now + burstDur + 0.01);
+  }
+
+  /**
+   * Near-silent ultra-soft tick for the 2015–now Streamline era.
+   */
+  public triggerStreamlineSoftTick() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1120, now);
+    osc.frequency.exponentialRampToValueAtTime(640, now + 0.012);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.024, now + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.014);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.018);
+  }
+
+  /**
+   * Streamline scratch equivalent ("DJ-Brake"): smoothly slows playback speed down
+   * and gently spins back up without harsh analog noise.
+   */
+  public triggerStreamlineDjBrake(intensity: 'light' | 'classic' | 'backspin' = 'classic') {
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+
+    const totalMs = intensity === 'backspin' ? 480 : intensity === 'light' ? 280 : 380;
+    if (this.audioEl && this.isUsingRealAudio && !this.audioEl.paused) {
+      const baseRate = this.playbackRate;
+      this.audioEl.playbackRate = Math.max(0.5, baseRate * 0.68);
+      const t1 = window.setTimeout(() => {
+        if (this.audioEl && this.isPlaying) {
+          this.audioEl.playbackRate = Math.max(0.5, baseRate * 0.5);
+        }
+      }, Math.round(totalMs * 0.3));
+      const t2 = window.setTimeout(() => {
+        if (this.audioEl && this.isPlaying) {
+          this.audioEl.playbackRate = Math.max(0.5, baseRate * 0.78);
+        }
+      }, Math.round(totalMs * 0.68));
+      const t3 = window.setTimeout(() => {
+        if (this.audioEl) {
+          this.audioEl.playbackRate = baseRate;
+        }
+      }, totalMs);
+      this.trackChangeTimerIds.push(t1, t2, t3);
+    }
+
+    if (this.isMuted || this.volume <= 0.01) return;
+    const now = this.ctx.currentTime;
+    const durSec = totalMs / 1000;
+    const osc = this.ctx.createOscillator();
+    const lp = this.ctx.createBiquadFilter();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(220, now);
+    osc.frequency.exponentialRampToValueAtTime(72, now + durSec * 0.62);
+    osc.frequency.exponentialRampToValueAtTime(170, now + durSec);
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(420, now);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.055, now + 0.025);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + durSec);
+    osc.connect(lp);
+    lp.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + durSec + 0.02);
+  }
+
+  /**
+   * Aurora Deck load cue: ethereal crystalline harmonic shimmer + soft sub touch (volume-ducked).
+   */
+  public triggerAuroraLoadCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    [528, 792, 1056].forEach((freq, idx) => {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.045);
+      gain.gain.setValueAtTime(0.001, now + idx * 0.045);
+      gain.gain.linearRampToValueAtTime(0.028, now + idx * 0.045 + 0.035);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + idx * 0.045 + 0.34);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(now + idx * 0.045);
+      osc.stop(now + idx * 0.045 + 0.36);
+    });
+  }
+
+  /**
+   * Aurora Deck start cue: gentle glassy shimmer pulse + sub-bass bloom.
+   */
+  public triggerAuroraStartCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    // Gentle sub-bass bloom
+    const subOsc = this.ctx.createOscillator();
+    const subGain = this.ctx.createGain();
+    subOsc.type = 'sine';
+    subOsc.frequency.setValueAtTime(92, now);
+    subOsc.frequency.exponentialRampToValueAtTime(54, now + 0.28);
+    subGain.gain.setValueAtTime(0.001, now);
+    subGain.gain.linearRampToValueAtTime(0.075, now + 0.045);
+    subGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32);
+    subOsc.connect(subGain);
+    subGain.connect(this.masterGain);
+    subOsc.start(now);
+    subOsc.stop(now + 0.34);
+
+    // Glassy harmonic shimmer
+    const chimeOsc = this.ctx.createOscillator();
+    const chimeGain = this.ctx.createGain();
+    chimeOsc.type = 'triangle';
+    chimeOsc.frequency.setValueAtTime(660, now);
+    chimeOsc.frequency.exponentialRampToValueAtTime(990, now + 0.22);
+    chimeGain.gain.setValueAtTime(0.001, now);
+    chimeGain.gain.linearRampToValueAtTime(0.032, now + 0.02);
+    chimeGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.26);
+    chimeOsc.connect(chimeGain);
+    chimeGain.connect(this.masterGain);
+    chimeOsc.start(now);
+    chimeOsc.stop(now + 0.28);
+  }
+
+  /**
+   * Aurora Deck stop cue: downward harmonic dissolve.
+   */
+  public triggerAuroraStopCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const lp = this.ctx.createBiquadFilter();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(480, now);
+    osc.frequency.exponentialRampToValueAtTime(110, now + 0.3);
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(1100, now);
+    lp.frequency.exponentialRampToValueAtTime(220, now + 0.3);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.055, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32);
+    osc.connect(lp);
+    lp.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.34);
+  }
+
+  /**
+   * Aurora Deck track-change SFX (<= 1.5s): soft synth riser + gentle sub-bass bloom.
+   */
+  public triggerAuroraTrackChangeCue(bloomDelayMs = 740) {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    this.clearTrackChangeTimers();
+    const now = this.ctx.currentTime;
+
+    // 1. Soft filtered synth riser (0 -> 0.72s)
+    const riserOsc = this.ctx.createOscillator();
+    const riserFilter = this.ctx.createBiquadFilter();
+    const riserGain = this.ctx.createGain();
+    riserOsc.type = 'triangle';
+    riserOsc.frequency.setValueAtTime(220, now);
+    riserOsc.frequency.exponentialRampToValueAtTime(660, now + 0.72);
+    riserFilter.type = 'bandpass';
+    riserFilter.frequency.setValueAtTime(480, now);
+    riserFilter.frequency.exponentialRampToValueAtTime(1800, now + 0.72);
+    riserFilter.Q.setValueAtTime(2.0, now);
+    riserGain.gain.setValueAtTime(0.001, now);
+    riserGain.gain.linearRampToValueAtTime(0.042, now + 0.25);
+    riserGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.76);
+    riserOsc.connect(riserFilter);
+    riserFilter.connect(riserGain);
+    riserGain.connect(this.masterGain);
+    riserOsc.start(now);
+    riserOsc.stop(now + 0.78);
+
+    // 2. Gentle sub-bass bloom as new track rings expand
+    const tBloom = window.setTimeout(() => {
+      this.triggerAuroraStartCue();
+    }, Math.max(300, Math.min(1000, bloomDelayMs)));
+    this.trackChangeTimerIds.push(tBloom);
+  }
+
+  /**
+   * Aurora Deck "Time-Shear" effect (scratch equivalent): counter-rotation visual pair + gentle audio stutter.
+   */
+  public triggerAuroraTimeShear(intensity: 'light' | 'classic' | 'backspin' = 'classic') {
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+
+    const totalMs = intensity === 'backspin' ? 440 : intensity === 'light' ? 280 : 380;
+    if (this.audioEl && this.isUsingRealAudio && !this.audioEl.paused) {
+      const baseRate = this.playbackRate;
+      const baseTime = this.audioEl.currentTime;
+      this.audioEl.playbackRate = Math.max(0.5, baseRate * 0.74);
+      const t1 = window.setTimeout(() => {
+        if (this.audioEl && this.isPlaying) {
+          try {
+            this.audioEl.currentTime = Math.max(0, baseTime - 0.09);
+          } catch {
+            // ignore seek bounds
+          }
+          this.audioEl.playbackRate = Math.min(1.6, baseRate * 1.15);
+        }
+      }, Math.round(totalMs * 0.34));
+      const t2 = window.setTimeout(() => {
+        if (this.audioEl) {
+          this.audioEl.playbackRate = baseRate;
+        }
+      }, totalMs);
+      this.trackChangeTimerIds.push(t1, t2);
+    }
+
+    if (this.isMuted || this.volume <= 0.01) return;
+    const now = this.ctx.currentTime;
+    [0, 0.09, 0.18].forEach((offset, idx) => {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(780 - idx * 140, now + offset);
+      osc.frequency.exponentialRampToValueAtTime(320, now + offset + 0.065);
+      gain.gain.setValueAtTime(0.001, now + offset);
+      gain.gain.linearRampToValueAtTime(0.045, now + offset + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.072);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(now + offset);
+      osc.stop(now + offset + 0.08);
+    });
+  }
+
   /**
    * Plays an authentic short vinyl needle-drop thump + static crackle burst on play or seek.
    */
   public triggerNeedleDrop(isSeek = false) {
+    if (this.soundTheme === 'aurora-deck') {
+      if (!isSeek) {
+        this.triggerAuroraStartCue();
+      }
+      return;
+    }
+    if (this.soundTheme === 'streamline') {
+      if (!isSeek) {
+        this.triggerStreamlineSoftTick();
+      }
+      return;
+    }
+    if (this.soundTheme === 'reel-to-reel') {
+      if (!isSeek) {
+        this.triggerReelStartCue();
+      }
+      return;
+    }
+    if (this.soundTheme === 'cassette-deck') {
+      if (!isSeek) {
+        this.triggerCassetteStartCue();
+      }
+      return;
+    }
+    if (this.soundTheme === 'click-wheel') {
+      if (!isSeek) {
+        this.triggerClickWheelStartCue();
+      }
+      return;
+    }
+    if (this.soundTheme === 'squircle-pmp') {
+      if (!isSeek) {
+        this.triggerSquircleStartCue();
+      }
+      return;
+    }
+    if (this.soundTheme === 'desktop-98') {
+      if (!isSeek) {
+        this.triggerDesktop98StartCue();
+      }
+      return;
+    }
+    if (this.soundTheme === 'cd-hifi') {
+      if (!isSeek) {
+        this.triggerCdLaserSpinUpSound();
+      }
+      return;
+    }
     if (!this.needleDropCrackle) return;
     const nowMs = performance.now();
     if (isSeek && nowMs - this.lastSeekCrackMs < 180) return;
@@ -286,6 +1695,38 @@ export class RetroAudioEngine {
    * 2) Needle-drop thump + groove crackle scheduled when the tonearm lowers onto the new record
    */
   public triggerTrackChangeHandlingCue(needleLowerDelayMs = 1260) {
+    if (this.soundTheme === 'aurora-deck') {
+      this.triggerAuroraTrackChangeCue(740);
+      return;
+    }
+    if (this.soundTheme === 'streamline') {
+      this.triggerStreamlineSoftTick();
+      return;
+    }
+    if (this.soundTheme === 'reel-to-reel') {
+      this.triggerReelTrackChangeCue(needleLowerDelayMs);
+      return;
+    }
+    if (this.soundTheme === 'cassette-deck') {
+      this.triggerCassetteTrackChangeCue(needleLowerDelayMs);
+      return;
+    }
+    if (this.soundTheme === 'click-wheel') {
+      this.triggerClickWheelTrackChangeCue();
+      return;
+    }
+    if (this.soundTheme === 'squircle-pmp') {
+      this.triggerSquircleTrackChangeCue();
+      return;
+    }
+    if (this.soundTheme === 'desktop-98') {
+      this.triggerDesktop98TrackChangeCue();
+      return;
+    }
+    if (this.soundTheme === 'cd-hifi') {
+      this.triggerCdTrackChangeCue();
+      return;
+    }
     if (!this.needleDropCrackle) return;
     this.ensureContext();
     if (!this.ctx || !this.masterGain) return;
@@ -354,7 +1795,18 @@ export class RetroAudioEngine {
     this.bpm = track.bpm || 110;
     this.playbackRate = rate;
     this.isPlaying = true;
-    this.startCrackleNode();
+    if (
+      this.soundTheme !== 'reel-to-reel' &&
+      this.soundTheme !== 'cassette-deck' &&
+      this.soundTheme !== 'cd-hifi' &&
+      this.soundTheme !== 'click-wheel' &&
+      this.soundTheme !== 'squircle-pmp' &&
+      this.soundTheme !== 'desktop-98' &&
+      this.soundTheme !== 'streamline' &&
+      this.soundTheme !== 'aurora-deck'
+    ) {
+      this.startCrackleNode();
+    }
 
     if (!wasPlaying) {
       this.triggerNeedleDrop(false);
@@ -507,13 +1959,46 @@ export class RetroAudioEngine {
     return null;
   }
 
+  public getIsPlaying(): boolean {
+    return this.isPlaying;
+  }
+
+  public getVolume(): number {
+    return this.volume;
+  }
+
+  public getMuted(): boolean {
+    return this.isMuted;
+  }
+
+  public setMuted(muted: boolean) {
+    this.isMuted = Boolean(muted);
+    const effectiveVol = this.isMuted ? 0 : this.volume;
+    if (this.masterGain && this.ctx) {
+      this.masterGain.gain.setTargetAtTime(effectiveVol, this.ctx.currentTime, 0.015);
+    }
+    if (this.audioEl) {
+      this.audioEl.muted = this.isMuted;
+      if (!this.mediaSourceConnectedA) {
+        this.audioEl.volume = effectiveVol;
+      }
+    }
+    if (this.audioElDeckB) {
+      this.audioElDeckB.muted = this.isMuted;
+      if (!this.mediaSourceConnectedB) {
+        this.audioElDeckB.volume = effectiveVol;
+      }
+    }
+  }
+
   public setVolume(vol: number) {
     this.volume = Math.max(0, Math.min(1, vol));
+    const effectiveVol = this.isMuted ? 0 : this.volume;
     if (this.masterGain && this.ctx) {
-      this.masterGain.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.02);
+      this.masterGain.gain.setTargetAtTime(effectiveVol, this.ctx.currentTime, 0.02);
     }
     if (this.audioEl && !this.mediaSourceConnectedA) {
-      this.audioEl.volume = this.volume;
+      this.audioEl.volume = effectiveVol;
     }
   }
 
@@ -532,6 +2017,38 @@ export class RetroAudioEngine {
   }
 
   public triggerVinylScratch(intensity: 'light' | 'classic' | 'backspin' = 'classic') {
+    if (this.soundTheme === 'aurora-deck') {
+      this.triggerAuroraTimeShear(intensity);
+      return;
+    }
+    if (this.soundTheme === 'streamline') {
+      this.triggerStreamlineDjBrake(intensity);
+      return;
+    }
+    if (this.soundTheme === 'reel-to-reel') {
+      this.triggerReelTapeNudge(intensity);
+      return;
+    }
+    if (this.soundTheme === 'cassette-deck') {
+      this.triggerCassetteTapeChew(intensity);
+      return;
+    }
+    if (this.soundTheme === 'click-wheel') {
+      this.triggerClickWheelSkipStutter(intensity);
+      return;
+    }
+    if (this.soundTheme === 'squircle-pmp') {
+      this.triggerSquircleStutterRewind(intensity);
+      return;
+    }
+    if (this.soundTheme === 'desktop-98') {
+      this.triggerDesktop98ScratchBurst(intensity);
+      return;
+    }
+    if (this.soundTheme === 'cd-hifi') {
+      this.triggerCdOpticalStutter(intensity);
+      return;
+    }
     this.ensureContext();
     if (!this.ctx || !this.masterGain) return;
 
@@ -651,6 +2168,9 @@ export class RetroAudioEngine {
         this.deckAGain.gain.setValueAtTime(1.0, now);
       }
 
+      const switchedTrack = this.lastLoadedTrackId !== trackId;
+      this.lastLoadedTrackId = trackId;
+
       if (this.activePreviewUrl !== resolvedUrl) {
         this.activePreviewUrl = resolvedUrl;
         audio.src = resolvedUrl;
@@ -659,15 +2179,16 @@ export class RetroAudioEngine {
         } catch {
           // ignore
         }
-      } else if (startTimeSec > 0) {
+      } else if (switchedTrack || startTimeSec > 0) {
         try {
-          audio.currentTime = startTimeSec;
+          audio.currentTime = Math.max(0, startTimeSec);
         } catch {
           // ignore
         }
       }
 
-      audio.volume = this.mediaSourceConnectedA ? 1.0 : this.volume;
+      audio.muted = this.isMuted;
+      audio.volume = this.mediaSourceConnectedA ? 1.0 : this.isMuted ? 0 : this.volume;
       audio.playbackRate = Math.max(0.5, Math.min(2.0, this.playbackRate));
 
       if (this.stepTimer !== null) {
@@ -921,7 +2442,209 @@ export class RetroAudioEngine {
     osc.stop(now + duration + 0.02);
   }
 
+  /**
+   * Motorized 3-Disc Changer tray gear servo whir + limit switch click.
+   */
+  public triggerCdTrayServoSound(opening = true) {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    // Servo DC gear motor hum
+    const servoOsc = this.ctx.createOscillator();
+    const servoFilter = this.ctx.createBiquadFilter();
+    const servoGain = this.ctx.createGain();
+    servoOsc.type = 'sawtooth';
+    servoOsc.frequency.setValueAtTime(opening ? 145 : 195, now);
+    servoOsc.frequency.linearRampToValueAtTime(opening ? 205 : 138, now + 0.36);
+
+    servoFilter.type = 'bandpass';
+    servoFilter.frequency.setValueAtTime(520, now);
+    servoFilter.Q.setValueAtTime(2.4, now);
+
+    servoGain.gain.setValueAtTime(0.001, now);
+    servoGain.gain.linearRampToValueAtTime(0.055, now + 0.04);
+    servoGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42);
+
+    servoOsc.connect(servoFilter);
+    servoFilter.connect(servoGain);
+    servoGain.connect(this.masterGain);
+    servoOsc.start(now);
+    servoOsc.stop(now + 0.44);
+
+    // End-of-travel mechanical limit switch click
+    const clickOsc = this.ctx.createOscillator();
+    const clickGain = this.ctx.createGain();
+    clickOsc.type = 'triangle';
+    clickOsc.frequency.setValueAtTime(opening ? 920 : 680, now + 0.36);
+    clickOsc.frequency.exponentialRampToValueAtTime(180, now + 0.41);
+    clickGain.gain.setValueAtTime(0.001, now + 0.36);
+    clickGain.gain.linearRampToValueAtTime(0.075, now + 0.368);
+    clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42);
+    clickOsc.connect(clickGain);
+    clickGain.connect(this.masterGain);
+    clickOsc.start(now + 0.36);
+    clickOsc.stop(now + 0.43);
+  }
+
+  /**
+   * Magnetic spindle clamper drop + optical laser focus chirp + high-RPM spin-up whoosh.
+   */
+  public triggerCdLaserSpinUpSound() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Magnetic clamper lock thud
+    const clampOsc = this.ctx.createOscillator();
+    const clampGain = this.ctx.createGain();
+    clampOsc.type = 'sine';
+    clampOsc.frequency.setValueAtTime(135, now);
+    clampOsc.frequency.exponentialRampToValueAtTime(48, now + 0.065);
+    clampGain.gain.setValueAtTime(0.001, now);
+    clampGain.gain.linearRampToValueAtTime(0.07, now + 0.006);
+    clampGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.075);
+    clampOsc.connect(clampGain);
+    clampGain.connect(this.masterGain);
+    clampOsc.start(now);
+    clampOsc.stop(now + 0.08);
+
+    // 2. Optical pickup red laser diode focus chirp
+    const chirpOsc = this.ctx.createOscillator();
+    const chirpGain = this.ctx.createGain();
+    chirpOsc.type = 'sine';
+    chirpOsc.frequency.setValueAtTime(1850, now + 0.05);
+    chirpOsc.frequency.exponentialRampToValueAtTime(2950, now + 0.11);
+    chirpOsc.frequency.exponentialRampToValueAtTime(2100, now + 0.16);
+    chirpGain.gain.setValueAtTime(0.001, now + 0.05);
+    chirpGain.gain.linearRampToValueAtTime(0.032, now + 0.07);
+    chirpGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.17);
+    chirpOsc.connect(chirpGain);
+    chirpGain.connect(this.masterGain);
+    chirpOsc.start(now + 0.05);
+    chirpOsc.stop(now + 0.18);
+
+    // 3. High-RPM spindle spin-up whisper
+    const spinOsc = this.ctx.createOscillator();
+    const spinGain = this.ctx.createGain();
+    spinOsc.type = 'triangle';
+    spinOsc.frequency.setValueAtTime(180, now + 0.08);
+    spinOsc.frequency.exponentialRampToValueAtTime(640, now + 0.34);
+    spinGain.gain.setValueAtTime(0.001, now + 0.08);
+    spinGain.gain.linearRampToValueAtTime(0.035, now + 0.16);
+    spinGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
+    spinOsc.connect(spinGain);
+    spinGain.connect(this.masterGain);
+    spinOsc.start(now + 0.08);
+    spinOsc.stop(now + 0.4);
+  }
+
+  /**
+   * Full 3-stage CD changer track-load audio sequence:
+   * tray eject servo -> jewel case disc seat click -> tray retract + laser TOC spin-up.
+   */
+  public triggerCdTrackChangeCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    this.clearTrackChangeTimers();
+
+    this.triggerCdTrayServoSound(true);
+    const tClose = window.setTimeout(() => {
+      this.triggerCdTrayServoSound(false);
+    }, 980);
+    const tSpin = window.setTimeout(() => {
+      this.triggerCdLaserSpinUpSound();
+    }, 1480);
+    this.trackChangeTimerIds.push(tClose, tSpin);
+  }
+
+  /**
+   * Soft rubberized tactile button click + IR blaster pulse for Sony RMT-TX102U remote.
+   */
+  public triggerRemoteButtonClick(accent = false) {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(accent ? 1680 : 1320, now);
+    osc.frequency.exponentialRampToValueAtTime(accent ? 540 : 410, now + 0.018);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(accent ? 0.055 : 0.042, now + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.022);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.025);
+  }
+
+  /**
+   * CD Hi-Fi optical buffer skip-stutter ("D-BASS / Optical Loop") on scratch trigger.
+   */
+  public triggerCdOpticalStutter(intensity: 'light' | 'classic' | 'backspin' = 'classic') {
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const totalMs = intensity === 'backspin' ? 400 : intensity === 'light' ? 220 : 310;
+    if (this.audioEl && this.isUsingRealAudio && !this.audioEl.paused) {
+      const baseRate = this.playbackRate;
+      const baseTime = this.audioEl.currentTime;
+      this.audioEl.playbackRate = 1.18;
+      const s1 = window.setTimeout(() => {
+        if (this.audioEl && this.isPlaying) {
+          try {
+            this.audioEl.currentTime = Math.max(0, baseTime - 0.06);
+          } catch {
+            // ignore
+          }
+          this.audioEl.playbackRate = 0.88;
+        }
+      }, 95);
+      const s2 = window.setTimeout(() => {
+        if (this.audioEl) {
+          this.audioEl.playbackRate = baseRate;
+        }
+      }, totalMs);
+      this.trackChangeTimerIds.push(s1, s2);
+    }
+
+    if (this.isMuted || this.volume <= 0.01) return;
+    const now = this.ctx.currentTime;
+    [0, 0.075, 0.15].forEach((offset, idx) => {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1420 + idx * 240, now + offset);
+      osc.frequency.exponentialRampToValueAtTime(680, now + offset + 0.042);
+      gain.gain.setValueAtTime(0.001, now + offset);
+      gain.gain.linearRampToValueAtTime(0.048, now + offset + 0.004);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.05);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(now + offset);
+      osc.stop(now + offset + 0.055);
+    });
+  }
+
   private startCrackleNode() {
+    if (
+      this.soundTheme === 'reel-to-reel' ||
+      this.soundTheme === 'cassette-deck' ||
+      this.soundTheme === 'cd-hifi' ||
+      this.soundTheme === 'click-wheel' ||
+      this.soundTheme === 'squircle-pmp' ||
+      this.soundTheme === 'desktop-98' ||
+      this.soundTheme === 'streamline' ||
+      this.soundTheme === 'aurora-deck'
+    ) {
+      return;
+    }
     if (!this.ctx || !this.masterGain || this.crackleSource) return;
 
     const bufferSize = this.ctx.sampleRate * 2;

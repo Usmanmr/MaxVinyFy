@@ -1,0 +1,411 @@
+/* ==========================================================================
+   Theme: "2000s Sony Mini Hi-Fi Component System & Bravia LCD TV" (`cd-hifi`)
+   - Reference Architecture: D41F7A83-9035-4A8B-A350-76ACDC996D5B.png
+   - Flush 3-Column Proportions: 34% Left Speaker | 32% Central Receiver | 34% Right Speaker
+   - Sculpted Metallic-Silver Speaker Baffles (#D4D7DC to #AEB3BA) with Vertical Side Pilasters
+   - Top 26% Horn-Loaded Tweeter Waveguide, 82% Main Woofer + Multi-Stepped Chrome Bezel,
+     Dual 22% Lower Bass-Reflex Ports, and Addressable Audio-Reactive RGB Illumination
+   - Central Receiver: Top SONY Badge, VFD Window, 2x3 Silver Function Rocker Bars,
+     Dead-Center Master Volume Knob (36% inside 56% Recessed Well), Left/Right Vertical Utility Strips,
+     and Enlarged Lower Smoked-Glass CD Playing Bay with 4-Stage 1,600ms Mechanical Loading
+   - 3D Interactive Rotating Vertical CD Tower Rack & Photorealistic Jewel Cases
+   ========================================================================== */
+
+[data-theme="cd-hifi"] {
+  --font-display: 'Orbitron', 'Rajdhani', 'Inter', sans-serif;
+  --font-sans: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+  --font-mono: 'Share Tech Mono', 'JetBrains Mono', monospace;
+  --cd-silver-top: #E2E6EC;
+  --cd-silver-mid: #C4C9D2;
+  --cd-silver-bot: #949BA6;
+  --cd-gunmetal: #1C2026;
+  --cd-piano-black: #0B0D11;
+  --cd-vfd-cyan: #00F0FF;
+  --cd-vfd-amber: #FF9F0A;
+  --cd-vfd-red: #FF3B30;
+  --cd-kevlar-blue: #1D4ED8;
+  --theme-shell-bg: #0D1015;
+  --theme-shell-text: #F1F5F9;
+}
+
+/* 1. Sculpted Machined Brushed-Aluminum Speaker Front Baffle (#D4D7DC to #AEB3BA) */
+[data-theme="cd-hifi"] .cd-speaker-silver-baffle {
+  background-color: #C8CDD6;
+  background-image:
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.14) 0px,
+      rgba(255, 255, 255, 0.14) 1px,
+      rgba(15, 23, 42, 0.06) 1px,
+      rgba(15, 23, 42, 0.06) 2px
+    ),
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.35) 0%,
+      rgba(255, 255, 255, 0.04) 42%,
+      rgba(15, 23, 42, 0.12) 68%,
+      rgba(255, 255, 255, 0.22) 100%
+    ),
+    linear-gradient(180deg, #E2E6ED 0%, #C8CDD6 48%, #A7ADB8 100%);
+  border: 1.5px solid #6E7682;
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.92),
+    inset 1px 0 0 rgba(255, 255, 255, 0.62),
+    inset -1px 0 0 rgba(30, 41, 59, 0.38),
+    inset 0 -3px 6px rgba(15, 23, 42, 0.45),
+    0 14px 30px rgba(0, 0, 0, 0.72);
+}
+
+/* Vertical Architectural Side Pilasters on Speaker Enclosures */
+[data-theme="cd-hifi"] .cd-speaker-side-pilaster {
+  background: linear-gradient(
+    90deg,
+    #B8BDC6 0%,
+    #E2E6EC 42%,
+    #9FA6B0 85%,
+    #787F8A 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    0 0 4px rgba(0, 0, 0, 0.35);
+}
+
+/* Upper Rectangular Recessed Horn-Loaded Tweeter Waveguide (Top 26%) */
+[data-theme="cd-hifi"] .cd-horn-waveguide {
+  background:
+    radial-gradient(ellipse 68% 62% at 50% 50%, #090C11 0%, #161B24 44%, #8B929E 78%, #CFD4DC 100%);
+  border: 1.5px solid #5B626E;
+  box-shadow:
+    inset 0 5px 12px rgba(0, 0, 0, 0.88),
+    inset 0 -2px 5px rgba(255, 255, 255, 0.35),
+    0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+/* Raised Multi-Stepped Chrome/Silver Outer Woofer Bezel */
+[data-theme="cd-hifi"] .cd-woofer-chrome-bezel {
+  background: conic-gradient(
+    from 135deg,
+    #F8FAFC 0deg,
+    #AEB4BE 55deg,
+    #FFFFFF 115deg,
+    #6B7280 180deg,
+    #E5E7EB 245deg,
+    #9CA3AF 310deg,
+    #F8FAFC 360deg
+  );
+  border: 2px solid #4B5563;
+  box-shadow:
+    inset 0 2px 3px rgba(255, 255, 255, 0.92),
+    inset 0 -2px 4px rgba(15, 23, 42, 0.65),
+    0 8px 18px rgba(0, 0, 0, 0.75);
+}
+
+/* Blue Woven Kevlar Woofer Diaphragm with Radial Weave Texture */
+[data-theme="cd-hifi"] .cd-kevlar-cone {
+  background:
+    repeating-conic-gradient(
+      from 0deg,
+      rgba(255, 255, 255, 0.07) 0deg 3deg,
+      rgba(0, 0, 0, 0.14) 3deg 6deg
+    ),
+    radial-gradient(
+      circle at 38% 35%,
+      #3B82F6 0%,
+      #1D4ED8 45%,
+      #1E3A8A 78%,
+      #0B1536 100%
+    );
+  box-shadow:
+    inset 0 6px 16px rgba(0, 0, 0, 0.82),
+    inset 0 -3px 10px rgba(96, 165, 250, 0.32);
+}
+
+/* Multi-Layered Machined Brushed-Aluminum Receiver Fascia */
+[data-theme="cd-hifi"] .cd-silver-fascia {
+  background-color: #CBD0D9;
+  background-image:
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.16) 0px,
+      rgba(255, 255, 255, 0.16) 1px,
+      rgba(15, 23, 42, 0.06) 1px,
+      rgba(15, 23, 42, 0.06) 2px
+    ),
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.42) 0%,
+      rgba(255, 255, 255, 0.05) 45%,
+      rgba(15, 23, 42, 0.12) 70%,
+      rgba(255, 255, 255, 0.25) 100%
+    ),
+    linear-gradient(180deg, #EAEEF5 0%, #CBD0D9 46%, #A8AEB9 88%, #8B929E 100%);
+  border: 1.5px solid #646B77;
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.95),
+    inset 1px 0 0 rgba(255, 255, 255, 0.65),
+    inset 0 -2px 4px rgba(15, 23, 42, 0.45),
+    0 14px 32px rgba(0, 0, 0, 0.72);
+}
+
+/* Full-Width 7-Band Graphic Equalizer Deck inside Central Receiver */
+[data-theme="cd-hifi"] .cd-full-width-eq-deck {
+  background: linear-gradient(180deg, #070A10 0%, #0E131D 52%, #06080D 100%);
+  border: 1.5px solid #334155;
+  box-shadow:
+    inset 0 2px 8px rgba(0, 0, 0, 0.95),
+    0 1px 0 rgba(255, 255, 255, 0.68);
+}
+
+/* Smoked Acrylic Vacuum Fluorescent Display (VFD) Window */
+[data-theme="cd-hifi"] .cd-vfd-window {
+  background: linear-gradient(180deg, #05070B 0%, #090E17 55%, #040609 100%);
+  border: 1.5px solid #2A323F;
+  box-shadow:
+    inset 0 3px 10px rgba(0, 0, 0, 0.95),
+    inset 0 0 18px rgba(0, 240, 255, 0.09),
+    0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+[data-theme="cd-hifi"] .cd-vfd-cyan-glow {
+  color: #00F0FF;
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.72);
+}
+
+[data-theme="cd-hifi"] .cd-vfd-amber-glow {
+  color: #FF9F0A;
+  text-shadow: 0 0 8px rgba(255, 159, 10, 0.75);
+}
+
+/* Brushed-Silver Tactile Rocker Button (2 Rows of 3 Below VFD) */
+[data-theme="cd-hifi"] .cd-silver-rocker-btn {
+  background: linear-gradient(180deg, #F8FAFC 0%, #D4D8DF 48%, #9CA3AF 100%);
+  border: 1px solid #374151;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 2px 3px rgba(0, 0, 0, 0.65);
+}
+
+/* Oversized Spun-Aluminum Master Volume Knob & Deep Matte-Black Recessed Well */
+[data-theme="cd-hifi"] .cd-master-volume-well {
+  background: radial-gradient(circle at 50% 50%, #06080C 0%, #0E1219 72%, #1E2430 100%);
+  border: 2px solid #4B5563;
+  box-shadow:
+    inset 0 5px 14px rgba(0, 0, 0, 0.96),
+    0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+[data-theme="cd-hifi"] .cd-master-volume-knob {
+  background: conic-gradient(
+    from 35deg,
+    #F1F5F9 0deg,
+    #94A3B8 60deg,
+    #E2E8F0 120deg,
+    #64748B 180deg,
+    #F8FAFC 240deg,
+    #94A3B8 300deg,
+    #F1F5F9 360deg
+  );
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.9),
+    0 6px 14px rgba(0, 0, 0, 0.82);
+}
+
+/* Enlarged Smoked-Glass CD Viewing Window on Front of Lower Disc Compartment */
+[data-theme="cd-hifi"] .cd-smoked-disc-window {
+  background:
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.18) 0%,
+      rgba(15, 23, 42, 0.82) 36%,
+      rgba(5, 8, 14, 0.92) 68%,
+      rgba(255, 255, 255, 0.1) 100%
+    );
+  border: 1.5px solid #475569;
+  box-shadow:
+    inset 0 4px 14px rgba(0, 0, 0, 0.95),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 2px 8px rgba(0, 0, 0, 0.75);
+}
+
+/* Polycarbonate Compact Disc with Rainbow Conic Diffraction Gradient */
+[data-theme="cd-hifi"] .cd-optical-disc-rainbow {
+  background:
+    radial-gradient(circle at 50% 50%, transparent 0 22%, rgba(255, 255, 255, 0.18) 23% 26%, transparent 27%),
+    conic-gradient(
+      from 0deg,
+      #D8DEE9 0deg,
+      #A5F3FC 28deg,
+      #C084FC 52deg,
+      #FDE047 76deg,
+      #86EFAC 98deg,
+      #E2E8F0 135deg,
+      #94A3B8 180deg,
+      #67E8F9 212deg,
+      #F472B6 238deg,
+      #BEF264 264deg,
+      #E2E8F0 315deg,
+      #D8DEE9 360deg
+    );
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.7),
+    0 4px 14px rgba(0, 0, 0, 0.75);
+}
+
+/* Precision-Lathed Concentric Metallic Grooves & Stepped Chrome Rings */
+[data-theme="cd-hifi"] .cd-concentric-lathed-ring {
+  background-image:
+    repeating-radial-gradient(
+      circle at 50% 50%,
+      rgba(255, 255, 255, 0.52) 0px,
+      rgba(255, 255, 255, 0.52) 1px,
+      rgba(15, 23, 42, 0.58) 1px,
+      rgba(15, 23, 42, 0.58) 2.5px,
+      rgba(226, 232, 240, 0.35) 2.5px,
+      rgba(226, 232, 240, 0.35) 3.5px
+    ),
+    conic-gradient(
+      from 125deg,
+      #F8FAFC 0deg,
+      #94A3B8 55deg,
+      #FFFFFF 115deg,
+      #475569 180deg,
+      #E2E8F0 245deg,
+      #64748B 310deg,
+      #F8FAFC 360deg
+    );
+  box-shadow:
+    inset 0 1.5px 2px rgba(255, 255, 255, 0.92),
+    inset 0 -2px 3px rgba(15, 23, 42, 0.78),
+    0 6px 14px rgba(0, 0, 0, 0.78);
+}
+
+/* Anodized Brushed-Aluminum Auxiliary Multi-Driver Acoustic Panel */
+[data-theme="cd-hifi"] .cd-aux-speaker-panel {
+  background-color: #B4BCC8;
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.16) 0px,
+      rgba(255, 255, 255, 0.16) 1px,
+      rgba(15, 23, 42, 0.08) 1px,
+      rgba(15, 23, 42, 0.08) 2px
+    ),
+    linear-gradient(180deg, #D5DCE6 0%, #B8C0CC 52%, #8E96A4 100%);
+  border: 1.5px solid #5B6472;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+    inset 0 -2px 4px rgba(15, 23, 42, 0.55),
+    0 8px 20px rgba(0, 0, 0, 0.65);
+}
+
+/* ==========================================================================
+   2. Photorealistic CD Jewel Case & 3D Rotating Vertical CD Tower Rack
+   ========================================================================== */
+[data-theme="cd-hifi"] .cd-jewel-tower-rack {
+  background: linear-gradient(180deg, #161A22 0%, #0E1117 55%, #090B0F 100%);
+  border: 2px solid #475569;
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -6px 16px rgba(0, 0, 0, 0.9),
+    0 14px 32px rgba(0, 0, 0, 0.8);
+}
+
+/* 3D Rotating Tower Scene & Brushed-Aluminum Vertical Spindle Column */
+[data-theme="cd-hifi"] .cd-rotating-tower-scene {
+  perspective: 1100px;
+}
+
+[data-theme="cd-hifi"] .cd-rotating-tower-spindle {
+  background: linear-gradient(
+    90deg,
+    #334155 0%,
+    #94A3B8 28%,
+    #F8FAFC 50%,
+    #64748B 76%,
+    #1E293B 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    0 0 18px rgba(0, 0, 0, 0.85);
+}
+
+/* Individual Slotted Clear Polystyrene CD Jewel Case */
+[data-theme="cd-hifi"] .cd-jewel-case-slot {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.16) 0%,
+    rgba(30, 41, 59, 0.88) 8%,
+    rgba(15, 23, 42, 0.94) 92%,
+    rgba(255, 255, 255, 0.22) 100%
+  );
+  border: 1px solid rgba(203, 213, 225, 0.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.85),
+    0 4px 10px rgba(0, 0, 0, 0.65);
+  transform-style: preserve-3d;
+}
+
+[data-theme="cd-hifi"] .cd-jewel-case-slot:hover {
+  border-color: rgba(0, 240, 255, 0.72);
+}
+
+[data-theme="cd-hifi"] .cd-jewel-case-slot--active {
+  border-color: #00F0FF;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 0 14px rgba(0, 240, 255, 0.35),
+    0 6px 14px rgba(0, 0, 0, 0.8);
+}
+
+/* Ridged Clear Polystyrene Jewel Case Hinge Spine (width: 12px) */
+[data-theme="cd-hifi"] .cd-jewel-ridged-spine {
+  width: 12px;
+  background:
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.36) 0px,
+      rgba(255, 255, 255, 0.36) 1.5px,
+      rgba(15, 23, 42, 0.62) 1.5px,
+      rgba(15, 23, 42, 0.62) 3px
+    );
+  box-shadow:
+    inset 1px 0 0 rgba(255, 255, 255, 0.52),
+    inset -1px 0 0 rgba(0, 0, 0, 0.65);
+}
+
+/* Clear Acrylic Front Cover Reflection (125deg Specular Glare + 1px Bevel Highlights) */
+[data-theme="cd-hifi"] .cd-jewel-acrylic-glare {
+  background: linear-gradient(
+    125deg,
+    rgba(255, 255, 255, 0.42) 0%,
+    rgba(255, 255, 255, 0.06) 38%,
+    transparent 55%,
+    rgba(255, 255, 255, 0.18) 100%
+  );
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32);
+}
+
+/* ==========================================================================
+   3. 2000s Sony Bravia Piano-Black LCD TV & Acrylic Floating Bottom Lip
+   ========================================================================== */
+[data-theme="cd-hifi"] .bravia-piano-bezel {
+  background: linear-gradient(160deg, #1E222A 0%, #0B0D12 38%, #050608 75%, #171A21 100%);
+  border: 2px solid #333A45;
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -2px 6px rgba(0, 0, 0, 0.9),
+    0 16px 36px rgba(0, 0, 0, 0.85);
+}
+
+[data-theme="cd-hifi"] .bravia-acrylic-chin {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.16) 0%,
+    rgba(148, 163, 184, 0.08) 45%,
+    rgba(0, 240, 255, 0.14) 100%
+  );
+  border-top: 1px solid rgba(255, 255, 255, 0.35);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.45);
+  backdrop-filter: blur(6px);
+}

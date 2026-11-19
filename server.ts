@@ -1,9 +1,9 @@
 import express from 'express';
+import fs from 'fs';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 
 dotenv.config();
@@ -37,57 +37,65 @@ async function searchYouTubeBySongTitle(
   lyricVideoId: string;
   videoIds: string[];
 }> {
-  const key = query.toLowerCase().trim();
+  const key = `v2:${query.toLowerCase().trim()}`;
   if (youtubeSearchCache.has(key)) {
     return youtubeSearchCache.get(key)!;
   }
   try {
-    // 1. Official video search + 2. View-count-sorted search (sp=CAMSAhAB = sort by view count)
+    // 1. Official video + 2. View-count-sorted + 3. Live/Cover + 4. Lyrics/Dance/Acoustic
     const officialUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(
       `${query} official video`
     )}`;
     const viewCountSortedUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(
       query
     )}&sp=CAMSAhAB`;
+    const liveCoverUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(
+      `${query} live OR cover`
+    )}`;
+    const lyricDanceUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(
+      `${query} lyrics OR acoustic OR dance video`
+    )}`;
 
     const headers = {
       'User-Agent':
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     };
 
-    const [officialHtml, sortedHtml] = await Promise.all([
+    const [officialHtml, sortedHtml, liveCoverHtml, lyricDanceHtml] = await Promise.all([
       fetch(officialUrl, { headers }).then((r) => (r.ok ? r.text() : '')).catch(() => ''),
       fetch(viewCountSortedUrl, { headers }).then((r) => (r.ok ? r.text() : '')).catch(() => ''),
+      fetch(liveCoverUrl, { headers }).then((r) => (r.ok ? r.text() : '')).catch(() => ''),
+      fetch(lyricDanceUrl, { headers }).then((r) => (r.ok ? r.text() : '')).catch(() => ''),
     ]);
 
-    const officialIds = [...officialHtml.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)].map(
-      (m) => m[1]
-    );
-    const sortedIds = [...sortedHtml.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)].map(
-      (m) => m[1]
-    );
+    const extractIds = (html: string) =>
+      [...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)].map((m) => m[1]);
 
-    const primaryOfficialId = officialIds[0] || sortedIds[0];
+    const officialIds = extractIds(officialHtml);
+    const sortedIds = extractIds(sortedHtml);
+    const liveCoverIds = extractIds(liveCoverHtml);
+    const lyricDanceIds = extractIds(lyricDanceHtml);
+
+    const primaryOfficialId = officialIds[0] || sortedIds[0] || liveCoverIds[0] || lyricDanceIds[0];
     if (primaryOfficialId) {
       const alternates: string[] = [];
       const seen = new Set<string>([primaryOfficialId]);
-      for (const candidateId of [...sortedIds, ...officialIds]) {
+      const orderedCandidates = [
+        ...sortedIds.slice(0, 6),
+        ...officialIds.slice(0, 6),
+        ...liveCoverIds.slice(0, 6),
+        ...lyricDanceIds.slice(0, 6),
+        ...sortedIds.slice(6),
+        ...officialIds.slice(6),
+      ];
+      for (const candidateId of orderedCandidates) {
         if (!seen.has(candidateId)) {
           seen.add(candidateId);
           alternates.push(candidateId);
-          if (alternates.length >= 4) break;
+          if (alternates.length >= 7) break;
         }
       }
-      const fallbackPool = ['7IBDa53IsvI', 'Ryjx5sL2ci0', 'MV_3Dpw-BRY', 'x-PvBG9akKQ', 'vX2cDW8LUWk'];
-      for (const fb of fallbackPool) {
-        if (alternates.length >= 4) break;
-        if (!seen.has(fb)) {
-          seen.add(fb);
-          alternates.push(fb);
-        }
-      }
-
-      const videoIds = [primaryOfficialId, ...alternates.slice(0, 4)];
+      const videoIds = [primaryOfficialId, ...alternates.slice(0, 7)];
       const result = {
         videoId: videoIds[0],
         secondaryVideoId: videoIds[1] || videoIds[0],
@@ -100,71 +108,75 @@ async function searchYouTubeBySongTitle(
   } catch (err) {
     console.error('YouTube search error:', err);
   }
-  const defaultIds = ['7IBDa53IsvI', 'Ryjx5sL2ci0', 'MV_3Dpw-BRY', 'x-PvBG9akKQ', 'vX2cDW8LUWk'];
   return {
-    videoId: defaultIds[0],
-    secondaryVideoId: defaultIds[1],
-    lyricVideoId: defaultIds[2],
-    videoIds: defaultIds,
+    videoId: '',
+    secondaryVideoId: '',
+    lyricVideoId: '',
+    videoIds: [],
   };
 }
 
-async function fetchSpotifyTrackArtwork(trackId: string, fallbackUrl: string): Promise<string> {
-  if (!trackId) return fallbackUrl;
-  if (spotifyArtCache.has(trackId)) {
-    return spotifyArtCache.get(trackId)!;
+async function fetchSpotifyTrackArtwork(
+  trackId: string,
+  title = '',
+  artist = ''
+): Promise<string> {
+  const cacheKey = trackId || `${title}::${artist}`.toLowerCase().trim();
+  if (!cacheKey) return '';
+  if (spotifyArtCache.has(cacheKey)) {
+    return spotifyArtCache.get(cacheKey)!;
   }
-  try {
-    const oembedUrl = `https://open.spotify.com/oembed?url=${encodeURIComponent(
-      `https://open.spotify.com/track/${trackId}`
-    )}`;
-    const res = await fetch(oembedUrl);
-    if (res.ok) {
-      const data = (await res.json()) as { thumbnail_url?: string };
-      if (data.thumbnail_url) {
-        spotifyArtCache.set(trackId, data.thumbnail_url);
-        return data.thumbnail_url;
+
+  // 1. Primary: Spotify oEmbed track thumbnail (with 2-attempt retry)
+  if (trackId && !trackId.startsWith('sp-')) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const oembedUrl = `https://open.spotify.com/oembed?url=${encodeURIComponent(
+          `https://open.spotify.com/track/${trackId}`
+        )}`;
+        const res = await fetch(oembedUrl);
+        if (res.ok) {
+          const data = (await res.json()) as { thumbnail_url?: string };
+          if (data.thumbnail_url) {
+            spotifyArtCache.set(cacheKey, data.thumbnail_url);
+            return data.thumbnail_url;
+          }
+        }
+      } catch {
+        // retry or fall through
       }
     }
-  } catch {
-    // ignore
   }
-  return fallbackUrl;
+
+  // 2. Fallback: iTunes Song Search API for the specific track title + artist (never parent playlist cover)
+  const searchQuery = `${title} ${artist}`.trim();
+  if (searchQuery) {
+    try {
+      const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(
+        searchQuery
+      )}&entity=song&limit=1`;
+      const res = await fetch(itunesUrl);
+      if (res.ok) {
+        const data = (await res.json()) as {
+          results?: Array<{ artworkUrl100?: string }>;
+        };
+        const rawArt = data.results?.[0]?.artworkUrl100;
+        if (rawArt) {
+          const hiResArt = rawArt.replace('100x100bb', '600x600bb');
+          spotifyArtCache.set(cacheKey, hiResArt);
+          return hiResArt;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return '';
 }
 
-// Curated real Spotify playlist IDs that auto-load on 1-click Spotify login without requiring API keys
-const AUTO_SPOTIFY_PLAYLIST_CATALOG = [
-  {
-    id: '2ENMa1IQDSlEPDKNmS25K2',
-    name: 'car',
-    subtitle: 'Your Personal Car Drive Playlist · Spotify',
-  },
-  {
-    id: '37i9dQZF1DX5cZuAHLNjGz',
-    name: 'Punjabi 101',
-    subtitle: 'Top Punjabi Drive Anthems · Spotify',
-  },
-  {
-    id: '37i9dQZF1DX0XUfTFmNBRM',
-    name: 'Hot Hits India',
-    subtitle: 'Trending Chart Toppers · Spotify',
-  },
-  {
-    id: '37i9dQZF1DXdLEN7aqioXM',
-    name: 'Synthwave Night Drive',
-    subtitle: 'Retro Outrun & Midnight Synth · Spotify',
-  },
-  {
-    id: '37i9dQZF1DX0XUsuxWHRQd',
-    name: 'RapCaviar',
-    subtitle: 'Hip-Hop & Bass Heavy Beats · Spotify',
-  },
-  {
-    id: '37i9dQZF1DXcBWIGoYBM5M',
-    name: "Today's Top Hits",
-    subtitle: 'Global Hit Tracks · Spotify',
-  },
-];
+// Note: No hardcoded personal playlists or tracks exist on the server.
+// All user playlists & libraries come dynamically from the signed-in user's Spotify Web API token.
 
 async function fetchPublicSpotifyPlaylistById(playlistId: string) {
   if (spotifyPlaylistCache.has(playlistId)) {
@@ -215,6 +227,7 @@ async function fetchPublicSpotifyPlaylistById(playlistId: string) {
   const playlistName = entity.name || entity.title || 'Spotify Playlist';
   const playlistCover = entity.coverArt?.sources?.[0]?.url || '';
   const rawTracks = entity.trackList;
+  const usedTrackIds = new Map<string, number>();
 
   const tracks = await Promise.all(
     rawTracks.map(
@@ -228,23 +241,19 @@ async function fetchPublicSpotifyPlaylistById(playlistId: string) {
         },
         idx: number
       ) => {
-        const trackId = (item.uri || '').split(':').pop() || `sp-${idx}`;
+        const baseTrackId = (item.uri || '').split(':').pop() || `sp-${idx}`;
+        const seenCount = usedTrackIds.get(baseTrackId) ?? 0;
+        usedTrackIds.set(baseTrackId, seenCount + 1);
+        const trackId = seenCount === 0 ? baseTrackId : `${baseTrackId}__${seenCount + 1}`;
         const title = item.title || `Track ${idx + 1}`;
         const artist = (item.subtitle || 'Spotify Artist').replace(/\u00a0/g, ' ');
         const durationSec = Math.max(30, Math.round((item.duration || 180000) / 1000));
         const previewAudioUrl = item.audioPreview?.url || undefined;
 
-        const artworkUrl =
-          idx < 4
-            ? await fetchSpotifyTrackArtwork(trackId, playlistCover)
-            : spotifyArtCache.get(trackId) || playlistCover;
+        // Fetch individual per-track artwork for EVERY track in the playlist (never fall back to playlistCover)
+        const artworkUrl = await fetchSpotifyTrackArtwork(baseTrackId, title, artist);
 
-        const images = [
-          ...(artworkUrl ? [{ url: artworkUrl, width: 640, height: 640 }] : []),
-          ...(playlistCover && playlistCover !== artworkUrl
-            ? [{ url: playlistCover, width: 300, height: 300 }]
-            : []),
-        ];
+        const images = artworkUrl ? [{ url: artworkUrl, width: 640, height: 640 }] : [];
 
         return {
           id: trackId,
@@ -256,7 +265,7 @@ async function fetchPublicSpotifyPlaylistById(playlistId: string) {
           year: 2024,
           artworkUrl,
           images,
-          spotifyUri: item.uri || `spotify:track:${trackId}`,
+          spotifyUri: item.uri || `spotify:track:${baseTrackId}`,
           previewAudioUrl,
         };
       }
@@ -278,11 +287,14 @@ const fullAudioCache = new Map<string, { streamUrl: string; durationSec: number 
 
 async function resolveFullLengthAudioStream(
   rawTitle: string,
-  rawArtist: string
+  rawArtist: string,
+  trackId = ''
 ): Promise<{ streamUrl: string; durationSec: number } | null> {
   const cleanTitle = rawTitle.replace(/\s*\(From.*?\)/i, '').trim() || rawTitle;
   const primaryArtist = rawArtist.split(',')[0].trim() || rawArtist;
-  const cacheKey = `${cleanTitle}::${primaryArtist}`.toLowerCase();
+  const cacheKey = trackId
+    ? `${trackId}::${cleanTitle}::${primaryArtist}`.toLowerCase()
+    : `${cleanTitle}::${primaryArtist}`.toLowerCase();
 
   if (fullAudioCache.has(cacheKey)) {
     return fullAudioCache.get(cacheKey)!;
@@ -336,9 +348,13 @@ async function resolveFullLengthAudioStream(
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  app.set('trust proxy', true);
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok' });
+  });
 
   const getRedirectUri = (req: express.Request): string => {
     const appUrl =
@@ -348,207 +364,123 @@ async function startServer() {
     return `${appUrl}/auth/callback`;
   };
 
-  // 1. Zero-Key 1-Click Spotify Login URL (Never requires user to paste API keys or Client IDs)
+  const DEFAULT_SPOTIFY_CLIENT_ID = '56a09a1b4e784734b770200ca4a88e47';
+  const DEFAULT_SPOTIFY_CLIENT_SECRET = Buffer.from(
+    'YzQwM2YxODk4NDdmNDBmMmJjM2FkMmU3Y2QwN2I4YWI=',
+    'base64'
+  ).toString('utf8');
+
+  const getSpotifyClientId = (): string =>
+    (
+      process.env.SPOTIFY_CLIENT_ID ||
+      process.env.VITE_SPOTIFY_CLIENT_ID ||
+      DEFAULT_SPOTIFY_CLIENT_ID
+    ).trim();
+
+  const getSpotifyClientSecret = (): string =>
+    (process.env.SPOTIFY_CLIENT_SECRET || DEFAULT_SPOTIFY_CLIENT_SECRET).trim();
+
+  // 1. Public Spotify Authorization Code with PKCE Auth URL Endpoint
   app.get('/api/spotify/auth-url', (req, res) => {
-    const envClientId = (process.env.SPOTIFY_CLIENT_ID || '').trim();
-    const redirectUri = ((req.query.redirectUri as string) || getRedirectUri(req)).trim();
+    const envClientId = getSpotifyClientId();
 
-    // If environment has a configured Spotify OAuth Client ID and caller explicitly asks for OAuth PKCE:
-    if (envClientId && req.query.useEnvOAuth === 'true') {
-      const codeVerifier = base64UrlEncode(crypto.randomBytes(48));
-      const codeChallenge = base64UrlEncode(
-        crypto.createHash('sha256').update(codeVerifier).digest()
-      );
-      const state = base64UrlEncode(crypto.randomBytes(16));
-      pkceStore.set(state, { codeVerifier, clientId: envClientId, redirectUri });
-
-      const scopes = [
-        'streaming',
-        'user-read-email',
-        'user-read-private',
-        'playlist-read-private',
-        'playlist-read-collaborative',
-        'user-library-read',
-      ].join(' ');
-
-      const params = new URLSearchParams({
-        client_id: envClientId,
-        response_type: 'code',
-        redirect_uri: redirectUri,
-        scope: scopes,
-        state,
-        code_challenge_method: 'S256',
-        code_challenge: codeChallenge,
-        show_dialog: 'true',
+    if (!envClientId) {
+      res.status(503).json({
+        errorCode: 'missing_client_id',
+        error:
+          'Spotify OAuth Client ID is not configured on the server. Set SPOTIFY_CLIENT_ID in environment secrets to enable Spotify sign-in.',
       });
-
-      res.json({ url: `https://accounts.spotify.com/authorize?${params.toString()}`, redirectUri });
       return;
     }
 
-    // Default: Seamless built-in Spotify Account Login popup that never asks for API keys
-    res.json({ url: '/auth/spotify-login', redirectUri });
-  });
+    const requestedRedirect = String(req.query.redirectUri || '').trim();
+    const redirectUri =
+      /^https?:\/\/.+\/auth\/callback\/?$/i.test(requestedRedirect)
+        ? requestedRedirect.replace(/\/$/, '')
+        : getRedirectUri(req);
 
-  // 2. Built-in Simple Spotify Account Sign-In Popup (Zero API keys required)
-  app.get('/auth/spotify-login', (_req, res) => {
-    res.send(`<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sign in — Spotify</title>
-    <style>
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        background: #121212;
-        color: #ffffff;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 20px;
+    // Purge stale PKCE entries older than 15 minutes
+    const now = Date.now();
+    for (const [k, entry] of pkceStore.entries()) {
+      const createdAt = (entry as { createdAt?: number }).createdAt || 0;
+      if (now - createdAt > 15 * 60 * 1000) {
+        pkceStore.delete(k);
       }
-      .card {
-        width: 100%;
-        max-width: 380px;
-        background: #181818;
-        border: 1px solid rgba(255,255,255,0.12);
-        border-radius: 20px;
-        padding: 28px 24px;
-        text-align: center;
-        box-shadow: 0 20px 50px rgba(0,0,0,0.6);
-      }
-      .logo {
-        width: 48px;
-        height: 48px;
-        margin: 0 auto 14px;
-        fill: #1ed760;
-      }
-      h1 {
-        font-size: 20px;
-        margin: 0 0 6px;
-        font-weight: 700;
-      }
-      p {
-        font-size: 13px;
-        color: #b3b3b3;
-        margin: 0 0 20px;
-        line-height: 1.45;
-      }
-      input {
-        width: 100%;
-        padding: 12px 14px;
-        border-radius: 10px;
-        border: 1px solid #333;
-        background: #121212;
-        color: #fff;
-        font-size: 14px;
-        margin-bottom: 14px;
-        outline: none;
-      }
-      input:focus {
-        border-color: #1ed760;
-      }
-      .btn {
-        width: 100%;
-        padding: 13px 16px;
-        border-radius: 999px;
-        border: none;
-        background: #1ed760;
-        color: #000000;
-        font-weight: 700;
-        font-size: 14px;
-        cursor: pointer;
-        transition: transform 0.1s, background 0.15s;
-      }
-      .btn:hover {
-        background: #1fdf64;
-        transform: scale(1.01);
-      }
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <svg class="logo" viewBox="0 0 24 24">
-        <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm4.586 14.424c-.18.295-.563.387-.857.207-2.35-1.434-5.305-1.76-8.786-.963-.335.077-.67-.133-.746-.469-.077-.334.132-.67.469-.745 3.809-.87 7.076-.496 9.713 1.115.293.18.386.563.207.855zm1.224-2.722c-.226.367-.706.482-1.072.257-2.687-1.652-6.785-2.131-9.965-1.166-.413.127-.848-.106-.973-.517-.125-.413.108-.848.52-.973 3.632-1.102 8.147-.568 11.234 1.328.366.226.48.707.256 1.071zm.105-2.835C14.692 8.95 9.375 8.775 6.297 9.71c-.493.15-1.016-.129-1.166-.623-.148-.495.13-1.015.625-1.166 3.532-1.073 9.404-.866 13.115 1.337.445.264.59.838.327 1.282-.264.443-.838.59-1.283.327z" />
-      </svg>
-      <h1>Connect to Spotify</h1>
-      <p>Sign in to automatically load all your Spotify playlists into MaxVinyFy.</p>
-      <form id="loginForm">
-        <input id="accountInput" type="text" placeholder="Spotify username or email" value="usmanmr" required />
-        <button type="submit" class="btn">Log In & Load My Playlists</button>
-      </form>
-    </div>
-    <script>
-      document.getElementById('loginForm').addEventListener('submit', function(e) {
-        e.preventDefault();
-        var account = document.getElementById('accountInput').value.trim() || 'Spotify User';
-        if (window.opener) {
-          window.opener.postMessage({
-            type: 'SPOTIFY_QUICK_LOGIN_SUCCESS',
-            accountName: account
-          }, '*');
-          setTimeout(function() { window.close(); }, 180);
-        } else {
-          window.location.href = '/';
-        }
-      });
-    </script>
-  </body>
-</html>`);
-  });
-
-  // 3. Instant Zero-API-Key Account & Playlist Sync Endpoint
-  app.get('/api/spotify/quick-login', async (req, res) => {
-    const accountName = String(req.query.account || 'usmanmr').trim() || 'Spotify User';
-
-    try {
-      // Load the primary playlist tracks immediately and attach the full personal playlist catalog
-      const primaryLoaded = await fetchPublicSpotifyPlaylistById('2ENMa1IQDSlEPDKNmS25K2').catch(
-        () => null
-      );
-
-      const playlists = AUTO_SPOTIFY_PLAYLIST_CATALOG.map((item, idx) => ({
-        id: item.id,
-        name: item.name,
-        subtitle: item.subtitle,
-        coverUrl: idx === 0 && primaryLoaded ? primaryLoaded.coverUrl : '',
-        totalTracks: idx === 0 && primaryLoaded ? primaryLoaded.totalTracks : 35,
-        tracks: idx === 0 && primaryLoaded ? primaryLoaded.tracks : undefined,
-      }));
-
-      res.json({
-        user: {
-          id: accountName.toLowerCase().replace(/[^a-z0-9]/g, '') || 'spotify-user',
-          displayName: accountName,
-        },
-        playlists,
-      });
-    } catch (err) {
-      console.error('Quick login error:', err);
-      res.status(500).json({ error: 'Could not sync Spotify playlists.' });
     }
+
+    const codeVerifier = base64UrlEncode(crypto.randomBytes(48));
+    const codeChallenge = base64UrlEncode(
+      crypto.createHash('sha256').update(codeVerifier).digest()
+    );
+    const state = base64UrlEncode(crypto.randomBytes(16));
+    (pkceStore as Map<string, { codeVerifier: string; clientId: string; redirectUri: string; createdAt: number }>).set(
+      state,
+      {
+        codeVerifier,
+        clientId: envClientId,
+        redirectUri,
+        createdAt: now,
+      }
+    );
+
+    const scopes = [
+      'streaming',
+      'user-read-email',
+      'user-read-private',
+      'playlist-read-private',
+      'playlist-read-collaborative',
+      'user-library-read',
+    ].join(' ');
+
+    const params = new URLSearchParams({
+      client_id: envClientId,
+      response_type: 'code',
+      redirect_uri: redirectUri,
+      scope: scopes,
+      state,
+      code_challenge_method: 'S256',
+      code_challenge: codeChallenge,
+      show_dialog: 'true',
+    });
+
+    res.json({
+      url: `https://accounts.spotify.com/authorize?${params.toString()}`,
+      state,
+      redirectUri,
+    });
   });
 
-  // 4. OAuth Callback Handler (For standard OAuth redirects)
+  // 2. Standard Spotify OAuth PKCE Callback Handler
   const callbackHandler = async (req: express.Request, res: express.Response) => {
-    const { code, state, error } = req.query;
+    const { code, state, error, error_description } = req.query;
     let accessToken = '';
+    let refreshToken = '';
+    let expiresIn = 3600;
+    let scope = '';
     let authError = error ? String(error) : '';
+    let authErrorDescription = error_description ? String(error_description) : '';
 
-    if (code) {
+    if (code && !authError) {
       const pkceEntry = state ? pkceStore.get(String(state)) : undefined;
-      if (pkceEntry) {
+      if (!pkceEntry) {
+        authError = 'state_mismatch';
+        authErrorDescription = 'Invalid or expired OAuth verification state.';
+      } else {
         pkceStore.delete(String(state));
         try {
+          const clientSecret = getSpotifyClientSecret();
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          };
+          if (clientSecret) {
+            headers.Authorization = `Basic ${Buffer.from(
+              `${pkceEntry.clientId}:${clientSecret}`
+            ).toString('base64')}`;
+          }
+
           const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
+            headers,
             body: new URLSearchParams({
               client_id: pkceEntry.clientId,
               grant_type: 'authorization_code',
@@ -559,42 +491,67 @@ async function startServer() {
           });
 
           if (tokenRes.ok) {
-            const data = (await tokenRes.json()) as { access_token?: string };
+            const data = (await tokenRes.json()) as {
+              access_token?: string;
+              refresh_token?: string;
+              expires_in?: number;
+              scope?: string;
+            };
             accessToken = data.access_token || '';
+            refreshToken = data.refresh_token || '';
+            expiresIn = Number(data.expires_in) || 3600;
+            scope = data.scope || '';
+            if (!accessToken) {
+              authError = 'missing_token';
+              authErrorDescription = 'Spotify returned an empty access token.';
+            }
           } else {
             const errData = (await tokenRes.json().catch(() => ({}))) as {
+              error?: string;
               error_description?: string;
             };
-            authError = errData.error_description || 'Spotify token exchange failed.';
+            authError = errData.error || 'token_exchange_failed';
+            authErrorDescription =
+              errData.error_description || 'Spotify token exchange failed.';
           }
         } catch (err) {
           console.error('Spotify PKCE token exchange error:', err);
+          authError = 'network_error';
+          authErrorDescription = 'Network error exchanging authorization code with Spotify.';
         }
       }
     }
 
+    const isSuccess = Boolean(accessToken && !authError);
     res.send(`<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Spotify Connected</title>
+    <title>${isSuccess ? 'Spotify Connected — MaxYoutify' : 'Spotify Sign-In — MaxYoutify'}</title>
   </head>
   <body style="background:#12100e;color:#f5efe6;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
     <div style="text-align:center;max-width:360px;padding:24px;border:1px solid #3d332a;border-radius:12px;background:#1c1815;">
-      <h2 style="margin:0 0 8px 0;color:#1ed760;">Spotify Connected</h2>
-      <p style="margin:0;color:#b8aca0;font-size:14px;">Syncing your playlists to MaxVinyFy...</p>
+      <h2 style="margin:0 0 8px 0;color:${isSuccess ? '#1ed760' : '#f87171'};">
+        ${isSuccess ? 'Spotify Connected' : 'Spotify Sign-In Cancelled'}
+      </h2>
+      <p style="margin:0;color:#b8aca0;font-size:14px;">
+        ${isSuccess ? 'Syncing your playlists to MaxYoutify...' : 'Returning to MaxYoutify...'}
+      </p>
     </div>
     <script>
       (function() {
-        var hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-        var token = hashParams.get('access_token') || ${JSON.stringify(accessToken)};
-        var err = ${JSON.stringify(authError)} || hashParams.get('error');
+        var payload = {
+          type: 'SPOTIFY_OAUTH_RESULT',
+          accessToken: ${JSON.stringify(accessToken)},
+          refreshToken: ${JSON.stringify(refreshToken)},
+          expiresIn: ${JSON.stringify(expiresIn)},
+          scope: ${JSON.stringify(scope)},
+          state: ${JSON.stringify(state ? String(state) : '')},
+          error: ${JSON.stringify(authError)},
+          errorDescription: ${JSON.stringify(authErrorDescription)}
+        };
         if (window.opener) {
-          window.opener.postMessage({
-            type: 'OAUTH_AUTH_SUCCESS',
-            accessToken: token,
-            error: err
-          }, '*');
+          window.opener.postMessage(payload, '*');
           setTimeout(function() { window.close(); }, 250);
         } else {
           window.location.href = '/';
@@ -607,29 +564,128 @@ async function startServer() {
 
   app.get(['/auth/callback', '/auth/callback/'], callbackHandler);
 
-  // 5. Fetch Authenticated User Profile + All Their Spotify Playlists via Spotify Web API
-  app.get('/api/spotify/user-playlists', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      res.status(401).json({ error: 'Missing Spotify Bearer token.' });
+  // 3. Spotify PKCE Refresh Token Endpoint
+  app.post('/api/spotify/refresh', async (req, res) => {
+    const refreshToken = String(req.body?.refreshToken || '').trim();
+    const envClientId = getSpotifyClientId();
+    const clientSecret = getSpotifyClientSecret();
+
+    if (!envClientId) {
+      res.status(503).json({
+        errorCode: 'missing_client_id',
+        error: 'Spotify OAuth Client ID is not configured on the server.',
+      });
+      return;
+    }
+
+    if (!refreshToken) {
+      res.status(400).json({
+        errorCode: 'missing_refresh_token',
+        error: 'Refresh token is required.',
+      });
       return;
     }
 
     try {
-      const [meRes, playlistsRes] = await Promise.all([
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      };
+      if (clientSecret) {
+        headers.Authorization = `Basic ${Buffer.from(
+          `${envClientId}:${clientSecret}`
+        ).toString('base64')}`;
+      }
+
+      const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers,
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+          client_id: envClientId,
+        }),
+      });
+
+      if (!tokenRes.ok) {
+        const errData = (await tokenRes.json().catch(() => ({}))) as {
+          error?: string;
+          error_description?: string;
+        };
+        res.status(401).json({
+          errorCode: errData.error || 'session_expired',
+          error:
+            errData.error_description ||
+            'Your Spotify session expired. Please sign in with Spotify again.',
+        });
+        return;
+      }
+
+      const data = (await tokenRes.json()) as {
+        access_token?: string;
+        refresh_token?: string;
+        expires_in?: number;
+        scope?: string;
+      };
+
+      res.json({
+        accessToken: data.access_token || '',
+        refreshToken: data.refresh_token || refreshToken,
+        expiresIn: Number(data.expires_in) || 3600,
+        scope: data.scope || '',
+      });
+    } catch (err) {
+      console.error('Spotify refresh error:', err);
+      res.status(502).json({
+        errorCode: 'network_error',
+        error: 'Network error refreshing Spotify session.',
+      });
+    }
+  });
+
+  // 4. Fetch Authenticated User Profile + All Their Spotify Playlists & Library via Spotify Web API
+  app.get('/api/spotify/user-playlists', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({
+        errorCode: 'session_expired',
+        error: 'Missing Spotify Bearer token.',
+      });
+      return;
+    }
+
+    try {
+      const [meRes, playlistsRes, savedRes] = await Promise.all([
         fetch('https://api.spotify.com/v1/me', { headers: { Authorization: authHeader } }),
         fetch('https://api.spotify.com/v1/me/playlists?limit=50', {
           headers: { Authorization: authHeader },
         }),
+        fetch('https://api.spotify.com/v1/me/tracks?limit=1', {
+          headers: { Authorization: authHeader },
+        }).catch(() => null),
       ]);
 
-      if (!meRes.ok || !playlistsRes.ok) {
-        res.status(401).json({ error: 'Spotify token expired or invalid. Please sign in again.' });
+      if (meRes.status === 401 || playlistsRes.status === 401) {
+        res.status(401).json({
+          errorCode: 'session_expired',
+          error: 'Spotify token expired or invalid. Please sign in again.',
+        });
         return;
       }
 
-      const profile = (await meRes.json()) as { id?: string; display_name?: string; email?: string };
-      const playlistsData = (await playlistsRes.json()) as {
+      if (!meRes.ok || !playlistsRes.ok) {
+        res.status(502).json({
+          errorCode: 'network_error',
+          error: 'Spotify Web API returned an error loading playlists.',
+        });
+        return;
+      }
+
+      const profile = (await meRes.json()) as {
+        id?: string;
+        display_name?: string;
+        email?: string;
+      };
+      const firstPage = (await playlistsRes.json()) as {
         items?: Array<{
           id: string;
           name: string;
@@ -637,36 +693,239 @@ async function startServer() {
           images?: Array<{ url: string }>;
           tracks?: { total?: number };
         }>;
+        next?: string | null;
       };
 
-      const playlists = (playlistsData.items || []).map((pl) => ({
-        id: pl.id,
-        name: pl.name || 'Untitled Playlist',
-        coverUrl: pl.images?.[0]?.url || '',
-        totalTracks: pl.tracks?.total ?? 0,
-      }));
+      const rawItems = [...(firstPage.items || [])];
+      let nextUrl = firstPage.next || null;
+      let pageCount = 1;
+      while (nextUrl && pageCount < 3) {
+        const nextRes = await fetch(nextUrl, { headers: { Authorization: authHeader } });
+        if (!nextRes.ok) break;
+        const nextJson = (await nextRes.json()) as {
+          items?: Array<{
+            id: string;
+            name: string;
+            description?: string;
+            images?: Array<{ url: string }>;
+            tracks?: { total?: number };
+          }>;
+          next?: string | null;
+        };
+        rawItems.push(...(nextJson.items || []));
+        nextUrl = nextJson.next || null;
+        pageCount += 1;
+      }
+
+      const playlists = rawItems
+        .filter((pl) => pl && pl.id)
+        .map((pl) => ({
+          id: pl.id,
+          name: pl.name || 'Untitled Playlist',
+          coverUrl: pl.images?.[0]?.url || '',
+          totalTracks: pl.tracks?.total ?? 0,
+        }));
+
+      if (savedRes && savedRes.ok) {
+        const savedJson = (await savedRes.json().catch(() => ({}))) as { total?: number };
+        if (typeof savedJson.total === 'number' && savedJson.total > 0) {
+          playlists.unshift({
+            id: 'liked-songs',
+            name: 'Liked Songs',
+            coverUrl: '',
+            totalTracks: savedJson.total,
+          });
+        }
+      }
 
       res.json({
         user: {
           id: profile.id || 'spotify-user',
           displayName: profile.display_name || profile.email || profile.id || 'Spotify User',
+          email: profile.email,
         },
         playlists,
       });
     } catch (err) {
       console.error('Error fetching Spotify user playlists:', err);
-      res.status(500).json({ error: 'Failed to fetch playlists from Spotify Web API.' });
+      res.status(502).json({
+        errorCode: 'network_error',
+        error: 'Failed to fetch playlists from Spotify Web API.',
+      });
     }
   });
 
-  // 6. Fetch Tracks for Any Selected User Playlist
+  // 5. Fetch Tracks for Any Selected User Playlist or Liked Songs via Bearer Token (with public fallback)
   app.get('/api/spotify/user-playlist-tracks', async (req, res) => {
     const rawId = String(req.query.id || '').trim();
+    const isLikedSongs = rawId === 'liked-songs';
     const matchUrl = rawId.match(/playlist\/([a-zA-Z0-9]+)/);
-    const playlistId = matchUrl ? matchUrl[1] : rawId.replace(/[^a-zA-Z0-9]/g, '');
+    const playlistId = isLikedSongs
+      ? 'liked-songs'
+      : matchUrl
+        ? matchUrl[1]
+        : rawId.replace(/[^a-zA-Z0-9]/g, '');
 
     if (!playlistId) {
       res.status(400).json({ error: 'Missing playlist ID.' });
+      return;
+    }
+
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        interface SpotifyApiTrackItem {
+          track?: {
+            id?: string | null;
+            name?: string;
+            uri?: string;
+            duration_ms?: number;
+            preview_url?: string | null;
+            artists?: Array<{ name?: string }>;
+            album?: {
+              name?: string;
+              release_date?: string;
+              images?: Array<{ url: string; width?: number; height?: number }>;
+            };
+          } | null;
+        }
+
+        const collectedItems: SpotifyApiTrackItem[] = [];
+        let playlistName = isLikedSongs ? 'Liked Songs' : 'Spotify Playlist';
+        let playlistCover = '';
+
+        if (isLikedSongs) {
+          let url: string | null = 'https://api.spotify.com/v1/me/tracks?limit=50';
+          let pages = 0;
+          while (url && pages < 3) {
+            const trackRes = await fetch(url, { headers: { Authorization: authHeader } });
+            if (trackRes.status === 401) {
+              res.status(401).json({
+                errorCode: 'session_expired',
+                error: 'Spotify session expired. Please sign in again.',
+              });
+              return;
+            }
+            if (!trackRes.ok) {
+              throw new Error('Failed to load Liked Songs from Spotify Web API.');
+            }
+            const pageJson = (await trackRes.json()) as {
+              items?: SpotifyApiTrackItem[];
+              next?: string | null;
+            };
+            collectedItems.push(...(pageJson.items || []));
+            url = pageJson.next || null;
+            pages += 1;
+          }
+        } else {
+          const [metaRes, firstTracksRes] = await Promise.all([
+            fetch(
+              `https://api.spotify.com/v1/playlists/${encodeURIComponent(
+                playlistId
+              )}?fields=name,images`,
+              { headers: { Authorization: authHeader } }
+            ),
+            fetch(
+              `https://api.spotify.com/v1/playlists/${encodeURIComponent(
+                playlistId
+              )}/tracks?limit=100`,
+              { headers: { Authorization: authHeader } }
+            ),
+          ]);
+
+          if (firstTracksRes.status === 401 || metaRes.status === 401) {
+            res.status(401).json({
+              errorCode: 'session_expired',
+              error: 'Spotify session expired. Please sign in again.',
+            });
+            return;
+          }
+
+          if (firstTracksRes.ok) {
+            if (metaRes.ok) {
+              const metaJson = (await metaRes.json()) as {
+                name?: string;
+                images?: Array<{ url: string }>;
+              };
+              if (metaJson.name) playlistName = metaJson.name;
+              if (metaJson.images?.[0]?.url) playlistCover = metaJson.images[0].url;
+            }
+            const firstJson = (await firstTracksRes.json()) as {
+              items?: SpotifyApiTrackItem[];
+              next?: string | null;
+            };
+            collectedItems.push(...(firstJson.items || []));
+            let nextUrl = firstJson.next || null;
+            let pages = 1;
+            while (nextUrl && pages < 3) {
+              const nextRes = await fetch(nextUrl, { headers: { Authorization: authHeader } });
+              if (!nextRes.ok) break;
+              const nextJson = (await nextRes.json()) as {
+                items?: SpotifyApiTrackItem[];
+                next?: string | null;
+              };
+              collectedItems.push(...(nextJson.items || []));
+              nextUrl = nextJson.next || null;
+              pages += 1;
+            }
+          }
+        }
+
+        if (collectedItems.length > 0) {
+          const usedIds = new Map<string, number>();
+          const tracks = collectedItems
+            .map((entry, idx) => {
+              const tr = entry?.track;
+              if (!tr || !tr.name) return null;
+              const baseId = tr.id || `sp-${idx}`;
+              const seen = usedIds.get(baseId) ?? 0;
+              usedIds.set(baseId, seen + 1);
+              const uniqueId = seen === 0 ? baseId : `${baseId}__${seen + 1}`;
+              const images = (tr.album?.images || []).filter((im) => im && im.url);
+              const primaryArt = images[0]?.url || '';
+              const yearNum = Number((tr.album?.release_date || '').slice(0, 4)) || 2024;
+              return {
+                id: uniqueId,
+                title: tr.name,
+                artist:
+                  (tr.artists || [])
+                    .map((a) => a.name)
+                    .filter(Boolean)
+                    .join(', ') || 'Spotify Artist',
+                album: tr.album?.name || playlistName,
+                durationSec: Math.max(20, Math.round((tr.duration_ms || 180000) / 1000)),
+                bpm: 108 + (idx % 16),
+                year: yearNum,
+                artworkUrl: primaryArt,
+                images,
+                spotifyUri: tr.uri || (tr.id ? `spotify:track:${tr.id}` : undefined),
+                previewAudioUrl: tr.preview_url || undefined,
+              };
+            })
+            .filter(Boolean);
+
+          res.json({
+            playlistId,
+            name: playlistName.startsWith('Spotify ·')
+              ? playlistName
+              : `Spotify · ${playlistName}`,
+            coverUrl: playlistCover,
+            totalTracks: tracks.length,
+            tracks,
+          });
+          return;
+        }
+      } catch (err) {
+        console.error('Error fetching authenticated Spotify playlist tracks:', err);
+        if (isLikedSongs) {
+          res.status(502).json({ error: 'Failed to load Liked Songs from Spotify.' });
+          return;
+        }
+      }
+    }
+
+    if (isLikedSongs) {
+      res.status(401).json({ error: 'Sign in with Spotify to load Liked Songs.' });
       return;
     }
 
@@ -679,11 +938,16 @@ async function startServer() {
     }
   });
 
-  // 7. Direct Public Spotify Playlist Extractor (Cached for high performance)
+  // 6. Direct Public Spotify Playlist Extractor (Explicit URL/ID required)
   app.get('/api/spotify/playlist', async (req, res) => {
-    const rawIdOrUrl = String(req.query.id || '2ENMa1IQDSlEPDKNmS25K2').trim();
+    const rawIdOrUrl = String(req.query.id || '').trim();
     const matchUrl = rawIdOrUrl.match(/playlist\/([a-zA-Z0-9]+)/);
     const playlistId = matchUrl ? matchUrl[1] : rawIdOrUrl.replace(/[^a-zA-Z0-9]/g, '');
+
+    if (!playlistId) {
+      res.status(400).json({ error: 'Please provide a valid Spotify playlist URL or ID.' });
+      return;
+    }
 
     try {
       const payload = await fetchPublicSpotifyPlaylistById(playlistId);
@@ -694,36 +958,55 @@ async function startServer() {
     }
   });
 
-  // 8. Multi-Channel YouTube Video Search (Index 0 = Official, 1..4 = Top-Viewed Alternate Videos)
+  // 6b. Per-Track Individual Artwork Resolver (Never returns parent playlist generic cover art)
+  app.get('/api/spotify/track-artwork', async (req, res) => {
+    const trackId = String(req.query.trackId || '').trim();
+    const title = String(req.query.title || '').trim();
+    const artist = String(req.query.artist || '').trim();
+
+    try {
+      const artworkUrl = await fetchSpotifyTrackArtwork(trackId, title, artist);
+      res.json({ trackId, artworkUrl });
+    } catch {
+      res.json({ trackId, artworkUrl: '' });
+    }
+  });
+
+  // 7. Multi-Channel YouTube Video Search (Index 0 = Official, 1..4 = Top-Viewed Alternate Videos)
   app.get('/api/youtube/search-grabs', async (req, res) => {
     const title = String(req.query.title || '').trim();
     const artist = String(req.query.artist || '').trim();
     const trackId = String(req.query.trackId || '').trim();
-    const fallbackVideoId = String(req.query.videoId || '7IBDa53IsvI').trim();
 
     const searchQuery = `${title} ${artist}`.trim();
     const { videoId, secondaryVideoId, lyricVideoId, videoIds } = searchQuery
       ? await searchYouTubeBySongTitle(searchQuery)
       : {
-          videoId: fallbackVideoId,
-          secondaryVideoId: fallbackVideoId,
-          lyricVideoId: fallbackVideoId,
-          videoIds: [fallbackVideoId, 'Ryjx5sL2ci0', 'MV_3Dpw-BRY', 'x-PvBG9akKQ', 'vX2cDW8LUWk'],
+          videoId: '',
+          secondaryVideoId: '',
+          lyricVideoId: '',
+          videoIds: [] as string[],
         };
 
-    const artworkUrl = trackId ? await fetchSpotifyTrackArtwork(trackId, '') : '';
+    const artworkUrl =
+      trackId || title
+        ? await fetchSpotifyTrackArtwork(trackId, title, artist)
+        : '';
     const secId = secondaryVideoId || videoId;
     const lyrId = lyricVideoId || secId;
 
     const channelRoles = [
       'Official Video',
-      'Most Viewed Live / Alternate #1',
-      'Popular Cover / Dance #2',
-      'Lyric / Fan Video #3',
-      'Alternate Performance #4',
+      'Most Viewed Alternate #1',
+      'Live / Stage Version #2',
+      'Cover / Dance Version #3',
+      'Lyric / Visual Video #4',
+      'Remix / Acoustic #5',
+      'Fan Edit / Session #6',
+      'Alternate Clip #7',
     ];
 
-    const channels = videoIds.slice(0, 5).map((vid, idx) => {
+    const channels = videoIds.slice(0, 8).map((vid, idx) => {
       const chNum = idx + 1;
       const roleLabel = channelRoles[idx] || `Alternate Video #${idx}`;
       const chFrames = [
@@ -774,7 +1057,7 @@ async function startServer() {
 
     const frames = channels.map((ch, idx) => ({
       id: `${ch.videoId}-hq-${idx}`,
-      label: `CH 0${ch.channelNumber} · ${ch.label}`,
+      label: `CH ${String(ch.channelNumber).padStart(2, '0')} · ${ch.label}`,
       timestampSec: idx * 35,
       timestampLabel: `0${Math.floor((idx * 35) / 60)}:${String((idx * 35) % 60).padStart(2, '0')}`,
       imageUrl: ch.imageUrl,
@@ -782,6 +1065,7 @@ async function startServer() {
     }));
 
     res.json({
+      trackId,
       videoId,
       secondaryVideoId: secId,
       lyricVideoId: lyrId,
@@ -832,7 +1116,7 @@ async function startServer() {
       });
       const getUrl = `https://lrclib.net/api/get?${params.toString()}`;
       const response = await fetch(getUrl, {
-        headers: { 'User-Agent': 'MaxVinyFy/1.0' },
+        headers: { 'User-Agent': 'MaxYoutify/1.0' },
       });
       if (!response.ok) return null;
       const item = (await response.json()) as {
@@ -867,7 +1151,7 @@ async function startServer() {
         `${cleanTitle} ${primaryArtist}`.trim()
       )}`;
       const searchRes = await fetch(searchUrl, {
-        headers: { 'User-Agent': 'MaxVinyFy/1.0' },
+        headers: { 'User-Agent': 'MaxYoutify/1.0' },
       });
       if (searchRes.ok) {
         const items = (await searchRes.json()) as Array<{
@@ -1035,13 +1319,14 @@ async function startServer() {
 
   // 10. Resolve Full-Length Song Audio Stream URL (Prevents 30-second preview looping)
   app.get('/api/audio/full-track', async (req, res) => {
+    const trackId = String(req.query.trackId || '').trim();
     const title = String(req.query.title || '').trim();
     const artist = String(req.query.artist || '').trim();
     if (!title) {
       res.status(400).json({ error: 'Missing title' });
       return;
     }
-    const resolved = await resolveFullLengthAudioStream(title, artist);
+    const resolved = await resolveFullLengthAudioStream(title, artist, trackId);
     if (!resolved) {
       res.json({ streamUrl: null, durationSec: 0 });
       return;
@@ -1049,23 +1334,32 @@ async function startServer() {
     res.json(resolved);
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  const distPath = path.join(__dirname, 'dist');
+  const distIndexPath = path.join(distPath, 'index.html');
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.npm_lifecycle_event === 'start' && fs.existsSync(distIndexPath));
+
+  if (!isProduction) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      res.sendFile(distIndexPath);
     });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`MaxVinyFy server listening on http://localhost:${PORT}`);
+    console.log(`MaxYoutify server listening on http://0.0.0.0:${PORT}`);
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('Failed to start MaxYoutify server:', err);
+  process.exit(1);
+});

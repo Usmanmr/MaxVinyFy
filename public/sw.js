@@ -1,4 +1,4 @@
-const CACHE_NAME = 'maxvinyfy-android-v1';
+const CACHE_NAME = 'maxyoutify-v2';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -34,7 +34,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/')) {
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/auth/') ||
+    url.pathname.startsWith('/@') ||
+    url.pathname.startsWith('/src/') ||
+    url.pathname.startsWith('/node_modules/')
+  ) {
     return;
   }
   event.respondWith(
@@ -46,6 +52,11 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/index.html')))
+      .catch(() => {
+        if (event.request.mode === 'navigate') {
+          return caches.match(event.request).then((cached) => cached || caches.match('/index.html'));
+        }
+        return caches.match(event.request);
+      })
   );
 });

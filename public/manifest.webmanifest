@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "MaxVinyFy by xuMax interActive — Retro Turntable & CRT Deck",
-  "short_name": "MaxVinyFy",
-  "description": "MaxVinyFy by xuMax interActive — Retro vinyl turntable console, CRT TV video deck, and Spotify playlist player.",
+  "name": "MaxYoutify — Retro Turntable & CRT Deck",
+  "short_name": "MaxYoutify",
+  "description": "MaxYoutify — Retro vinyl turntable console, CRT TV video deck, and Spotify playlist player.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

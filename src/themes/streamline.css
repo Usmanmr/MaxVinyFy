@@ -1,0 +1,278 @@
+/* ==========================================================================
+   Theme: "Streamline" (2015–now streaming era, no Spotify branding)
+   Content-first dark UI: background #0F1115, elevated cards #161A20 (16px radius,
+   0 8px 24px rgba(0,0,0,.45)), hover #1D232B, text #FFFFFF / #A7AFBC / #5E6673,
+   accent teal #19C6A3 (never Spotify green, except official Spotify sign-in button),
+   Inter typography, three-zone layout (left rail, right hero, bottom player bar).
+   ========================================================================== */
+
+[data-theme="streamline"] {
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'Inter', ui-monospace, SFMono-Regular, monospace;
+  --sl-bg: #0F1115;
+  --sl-card: #161A20;
+  --sl-hover: #1D232B;
+  --sl-text-primary: #FFFFFF;
+  --sl-text-secondary: #A7AFBC;
+  --sl-text-tertiary: #5E6673;
+  --sl-teal: #19C6A3;
+}
+
+[data-theme="streamline"].app-viewport-shell {
+  background-color: #0F1115;
+  color: #FFFFFF;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  padding-top: max(10px, env(safe-area-inset-top));
+  padding-right: max(14px, env(safe-area-inset-right));
+  padding-bottom: max(0px, env(safe-area-inset-bottom));
+  padding-left: max(14px, env(safe-area-inset-left));
+}
+
+[data-theme="streamline"] #app-brand-title {
+  color: #FFFFFF;
+  font-family: 'Inter', sans-serif;
+  letter-spacing: -0.025em;
+  text-shadow: none;
+}
+
+/* Elevated Dark Streaming Card Surface (#161A20, radius 16px, soft elevation shadow) */
+[data-theme="streamline"] .sl-card {
+  background-color: #161A20;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="streamline"] .walnut-furniture-cabinet {
+  background-color: #161A20;
+  background-image: none;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="streamline"] .glass-panel {
+  background: rgba(22, 26, 32, 0.96);
+  backdrop-filter: blur(20px);
+  color: #FFFFFF;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="streamline"] .engraved-wood-text {
+  color: #FFFFFF;
+  text-shadow: none;
+}
+
+/* ==========================================================================
+   Modern Three-Zone Responsive Layout for Streamline
+   Left Rail (Brand Header + Playlist Card + Video Card stacked)
+   Right Hero Zone (Huge Art + Title/Artist + Big Karaoke Lyrics)
+   Bottom Full-Width Pinned Player Bar
+   ========================================================================== */
+
+[data-theme="streamline"] .sl-main-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+  gap: 10px;
+}
+
+/* Desktop & Tablet (>=768px width, >=501px height) */
+@media (min-width: 768px) and (min-height: 501px) {
+  [data-theme="streamline"].app-viewport-shell {
+    height: 100dvh;
+    overflow: hidden;
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-right: max(16px, env(safe-area-inset-right));
+    padding-bottom: 0;
+    padding-left: max(16px, env(safe-area-inset-left));
+  }
+
+  [data-theme="streamline"] .main-deck-grid {
+    display: grid;
+    flex: 1 1 0%;
+    height: auto;
+    min-height: 0;
+    grid-template-columns: clamp(240px, 28vw, 390px) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 12px 18px;
+    padding-bottom: 10px;
+  }
+
+  [data-theme="streamline"] .sl-left-brand-slot {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  [data-theme="streamline"] .deck-slot-playlist {
+    grid-column: 1;
+    grid-row: 2;
+    min-height: 0;
+    height: 100%;
+  }
+
+  [data-theme="streamline"] .deck-slot-tv {
+    grid-column: 1;
+    grid-row: 3;
+    min-height: 0;
+    height: auto;
+  }
+
+  [data-theme="streamline"] .deck-slot-turntable {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    min-height: 0;
+    height: 100%;
+  }
+}
+
+/* Mobile Landscape (height <= 500px, e.g., 844x390) */
+@media (orientation: landscape) and (max-height: 500px) {
+  [data-theme="streamline"].app-viewport-shell {
+    height: 100dvh;
+    overflow: hidden;
+    padding: 4px max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left));
+  }
+
+  [data-theme="streamline"] .sl-main-wrapper {
+    gap: 4px;
+  }
+
+  [data-theme="streamline"] .main-deck-grid {
+    display: grid;
+    flex: 1 1 0%;
+    height: auto;
+    min-height: 0;
+    grid-template-columns: clamp(210px, 31vw, 275px) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 4px 10px;
+  }
+
+  [data-theme="streamline"] .sl-left-brand-slot {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  [data-theme="streamline"] .deck-slot-playlist {
+    grid-column: 1;
+    grid-row: 2;
+    min-height: 0;
+    height: 100%;
+  }
+
+  [data-theme="streamline"] .deck-slot-tv {
+    grid-column: 1;
+    grid-row: 3;
+    min-height: 0;
+    max-height: 98px;
+    overflow: hidden;
+  }
+
+  [data-theme="streamline"] .deck-slot-tv #retro-tv-chassis {
+    width: min(100%, 168px);
+    margin-inline: auto;
+  }
+
+  [data-theme="streamline"] .deck-slot-turntable {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    min-height: 0;
+    height: 100%;
+  }
+}
+
+/* Mobile Portrait (< 768px) */
+@media (max-width: 767px) and (orientation: portrait) {
+  [data-theme="streamline"].app-viewport-shell {
+    height: auto;
+    min-height: 100dvh;
+    overflow-x: clip;
+    padding-bottom: 0;
+  }
+
+  [data-theme="streamline"] .main-deck-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-bottom: 14px;
+  }
+
+  [data-theme="streamline"] #turntable {
+    height: auto;
+    min-height: 410px;
+  }
+
+  [data-theme="streamline"] #playlist-queue {
+    height: 360px;
+    min-height: 300px;
+  }
+}
+
+/* Slow Ambient Glow Pulse Behind Hero Art (Compositor-Only transform/opacity) */
+@keyframes streamlineAmbientPulse {
+  0%, 100% {
+    opacity: 0.56;
+    transform: scale(0.98) translateZ(0);
+  }
+  50% {
+    opacity: 0.92;
+    transform: scale(1.06) translateZ(0);
+  }
+}
+
+[data-theme="streamline"] .sl-ambient-art-glow[data-ambient-glow-active="true"] {
+  animation: streamlineAmbientPulse 4.6s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+[data-theme="streamline"] .sl-ambient-art-glow[data-ambient-glow-active="false"] {
+  animation: none;
+  opacity: 0.44;
+  transform: scale(1) translateZ(0);
+}
+
+/* Title & Artist Slide-Up Fade on Track Change (<= 450ms) */
+@keyframes streamlineTitleSlideUp {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+[data-theme="streamline"] .sl-title-slide-up {
+  animation: streamlineTitleSlideUp 420ms cubic-bezier(0.16, 1, 0.3, 1) 1 forwards;
+}
+
+/* Whisper-quiet slim custom scrollbar for Playlist Card */
+[data-theme="streamline"] #playlist-tracks-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+[data-theme="streamline"] #playlist-tracks-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[data-theme="streamline"] #playlist-tracks-scroll::-webkit-scrollbar-thumb {
+  background: rgba(167, 175, 188, 0.22);
+  border-radius: 999px;
+}
+
+[data-theme="streamline"] #playlist-tracks-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(25, 198, 163, 0.55);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="streamline"] .sl-ambient-art-glow,
+  [data-theme="streamline"] .sl-title-slide-up {
+    animation: none !important;
+    transition: none !important;
+  }
+}

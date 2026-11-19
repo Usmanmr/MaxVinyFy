@@ -1,6 +1,6 @@
 {
-  "appId": "com.maxvinyfy.retroplayer",
-  "appName": "MaxVinyFy",
+  "appId": "com.maxyoutify.retroplayer",
+  "appName": "MaxYoutify",
   "webDir": "dist",
   "bundledWebRuntime": false,
   "server": {

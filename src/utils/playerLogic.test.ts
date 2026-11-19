@@ -58,7 +58,11 @@ import {
   getBinaryKnobAngle,
   triggerButtonHaptic,
   getOrderedTrackArtworkUrls,
+  getSongSpecificArtworkUrls,
   resolveActiveArtworkState,
+  calculateVinylDiameterFromBounds,
+  calculateHolderBoxSizeFromVinyl,
+  resolveTonearmMotionOnPlayStateChange,
   ALBUM_ART_SPINDLE_SNAP_RADIUS_PX,
   isAlbumArtSyncedToSpindle,
   clampAlbumArtDragOffset,
@@ -69,9 +73,54 @@ import {
   TRACK_CHANGE_TIMELINE_MS,
   getTrackChangeStagePose,
   removePlaylistById,
+  calculateResponsiveTonearmGeometry,
+  calculateTonearmStylusCoordinates,
+  TONEARM_ASSEMBLY_OFFSET_X_PX,
+  TONEARM_ASSEMBLY_OFFSET_Y_PX,
+  applyTonearmAssemblyOffset,
+  TV_CLICK_DEBOUNCE_MS,
+  TV_CABINET_SCREEN_APERTURE,
+  verticalPointerRatioToPitch,
+  calculateHolderBoxDragTiltDeg,
+  calculateHolderBoxRestTiltDeg,
+  resolveEffectiveTvPlayState,
+  verticalPointerRatioToVolume,
+  calculateVolumeThumbTopPercent,
+  calculateRightDockedVinylCenterX,
+  ensureUniqueTrackIds,
+  formatConsoleClockAndDate,
+  generateDustParticles,
+  stepDustParticles,
+  computeFullscreenAudioHandoff,
   type TrackItem,
   type PlaylistPack,
 } from './playerLogic';
+import { DEFAULT_PLAYLISTS } from './defaultPlaylists';
+import {
+  DEFAULT_THEME_ID,
+  ACTIVE_THEME_STORAGE_KEY,
+  RETRO_TURNTABLE_THEME,
+  THEME_REGISTRY,
+  getThemeById,
+  loadSavedThemeId,
+  saveThemeId,
+} from '../themes/themeRegistry';
+import {
+  SPOTIFY_SESSION_STORAGE_KEY,
+  SPOTIFY_PKCE_STATE_STORAGE_KEY,
+  SAVED_PLAYLISTS_STORAGE_KEY,
+  LEGACY_SAVED_PLAYLISTS_STORAGE_KEY,
+  SPOTIFY_OAUTH_SCOPES,
+  generatePkceCodeVerifier,
+  computePkceCodeChallenge,
+  buildSpotifyAuthorizeUrl,
+  isSpotifySessionExpired,
+  mapSpotifyOAuthError,
+  parseSpotifyCallbackMessage,
+  loadSpotifySessionFromStorage,
+  saveSpotifySessionToStorage,
+  clearAllUserSpotifyDataFromStorage,
+} from './spotifyAuth';
 
 const sampleTracks: TrackItem[] = [
   {
@@ -178,7 +227,7 @@ test('parseLrcLyrics and getActiveLyricIndex synchronize song verses with playba
   assert.equal(getActiveLyricIndex(parsed, 18), 1);
   assert.equal(getActiveLyricIndex(parsed, 45), 2);
 
-  const fallbackVerses = buildSyncedLyricsForTrack({ title: 'Dhurandhar', artist: 'Hanumankind', durationSec: 120 }, null);
+  const fallbackVerses = buildSyncedLyricsForTrack({ title: 'Neon Highway', artist: 'The Cruisers', durationSec: 120 }, null);
   assert.ok(fallbackVerses.length >= 8);
   assert.equal(getActiveLyricIndex(fallbackVerses, 65), Math.floor(65 / (120 / fallbackVerses.length)));
 });
@@ -254,7 +303,7 @@ test('computeDominantAccentFromRgbSamples extracts vibrant dominant color palett
     [10, 10, 12],
     [250, 252, 255],
   ];
-  const palette = computeDominantAccentFromRgbSamples(cyanCoverSamples, 'dhurandhar');
+  const palette = computeDominantAccentFromRgbSamples(cyanCoverSamples, 'neon-highway');
   assert.ok(palette.hue >= 180 && palette.hue <= 210, `Expected cyan hue, got ${palette.hue}`);
   assert.match(palette.primaryHex, /^#[0-9a-f]{6}$/i);
   assert.match(palette.vuMidHex, /^#[0-9a-f]{6}$/i);
@@ -407,12 +456,12 @@ test('alignConvertedLyricLines enforces exact line count and order so timestamps
 
   // Valid 1-to-1 string array
   const romanized = alignConvertedLyricLines(original, {
-    lines: ['Ladies and gentlemen', 'Na de dil pardesi nu', '(Dhurandhar)'],
+    lines: ['Ladies and gentlemen', 'Na de dil pardesi nu', '(Midnight Runner)'],
   });
   assert.deepEqual(romanized, [
     'Ladies and gentlemen',
     'Na de dil pardesi nu',
-    '(Dhurandhar)',
+    '(Midnight Runner)',
   ]);
 
   // Indexed object array preserves exact order even if returned out of order
@@ -436,15 +485,15 @@ test('alignConvertedLyricLines enforces exact line count and order so timestamps
 
 test('buildLrclibGetUrl, parsePlainLyrics, calculateNextLyricTimeoutMs, calculateCenteredLyricTranslateY, and stepLyricFontSize work accurately', () => {
   const getUrl = buildLrclibGetUrl({
-    trackName: 'Dhurandhar',
-    artistName: 'Shashwat Sachdev',
-    albumName: 'Dhurandhar',
+    trackName: 'Midnight Runner',
+    artistName: 'Coastline Drive',
+    albumName: 'Pacific Sessions',
     durationSec: 156.4,
   });
   assert.match(getUrl, /^https:\/\/lrclib\.net\/api\/get\?/);
-  assert.match(getUrl, /track_name=Dhurandhar/);
-  assert.match(getUrl, /artist_name=Shashwat\+Sachdev/);
-  assert.match(getUrl, /album_name=Dhurandhar/);
+  assert.match(getUrl, /track_name=Midnight\+Runner/);
+  assert.match(getUrl, /artist_name=Coastline\+Drive/);
+  assert.match(getUrl, /album_name=Pacific\+Sessions/);
   assert.match(getUrl, /duration=156/);
 
   assert.deepEqual(parsePlainLyrics('Line 1\n\n  Line 2 \r\nLine 3'), ['Line 1', 'Line 2', 'Line 3']);
@@ -826,8 +875,8 @@ test('clampHolderBoxDragOffset clamps the square album-art holder box within woo
     homeCenterX: 250,
     homeCenterY: 66,
   });
-  assert.equal(clampedExtreme.offsetX, -196); // minX = (50 + 4) - 250 = -196
-  assert.equal(clampedExtreme.offsetY, 300); // maxY = (420 - 50 - 4) - 66 = 300
+  assert.equal(clampedExtreme.offsetX, -198); // minX = (50 + 2) - 250 = -198
+  assert.equal(clampedExtreme.offsetY, 302); // maxY = (420 - 50 - 2) - 66 = 302
   assert.equal(clampedExtreme.isAtHomePosition, false);
 });
 
@@ -837,19 +886,19 @@ test('getTrackChangeStagePose sequences all 6 steps (a-f) of the track-change an
       TRACK_CHANGE_TIMELINE_MS.lowerTonearmEndMs <= 2000
   );
 
-  // Step a & d: vinyl lifts/slides into box above it, tonearm swings to rest, outgoing art still in box
+  // Step a & d: vinyl lifts/slides into left-side holder box, tonearm swings to rest, outgoing art still in box
   const stepA = getTrackChangeStagePose('lifting-vinyl-to-box');
   assert.equal(stepA.holderSlotOpen, true);
   assert.equal(stepA.forceTonearmRest, true);
   assert.equal(stepA.showOutgoingTrackInBox, true);
-  assert.match(stepA.vinylTransform, /translate3d\(0%, -56%, 0\)/);
+  assert.match(stepA.vinylTransform, /translate3d\(-38%, 0%, 0\)/);
 
   // Step b & d: holder box shrinks & slides toward playlist thumbnail
   const stepB = getTrackChangeStagePose('returning-box-to-playlist');
   assert.equal(stepB.forceTonearmRest, true);
   assert.equal(stepB.showOutgoingTrackInBox, true);
   assert.equal(stepB.vinylOpacity, 0);
-  assert.match(stepB.holderBoxTransform, /scale\(0\.24\)/);
+  assert.match(stepB.holderBoxTransform, /scale\(0\.26\)/);
 
   // Step c & d: new track's holder box slides out from playlist onto board
   const stepC = getTrackChangeStagePose('bringing-new-box-from-playlist');
@@ -874,6 +923,629 @@ test('getTrackChangeStagePose sequences all 6 steps (a-f) of the track-change an
   const idlePose = getTrackChangeStagePose('idle');
   assert.equal(idlePose.forceTonearmRest, false);
   assert.equal(idlePose.holderSlotOpen, false);
+});
+
+test('calculateVinylDiameterFromBounds and calculateHolderBoxSizeFromVinyl enforce 10px top/bottom padding and +5px holder box size', () => {
+  // Title plate bottom at y=80, lyrics VFD screen top at y=570 -> available=490 -> 490 - 20 = 470px vinyl diameter
+  const vinylDia = calculateVinylDiameterFromBounds(80, 570, 10);
+  assert.equal(vinylDia, 470);
+
+  // Holder box is exactly 5px larger in width & height than the vinyl record diameter
+  const holderBoxSize = calculateHolderBoxSizeFromVinyl(vinylDia);
+  assert.equal(holderBoxSize, 475);
+  assert.equal(holderBoxSize - vinylDia, 5);
+});
+
+test('resolveTonearmMotionOnPlayStateChange keeps tonearm stationary on Pause/Resume and only lifts on Stop or Track Change', () => {
+  // 1. Clicking Pause while playing on record: stays in 'playing', never lifts or returns to rest
+  const onPause = resolveTonearmMotionOnPlayStateChange({
+    isPlaying: false,
+    wasPlaying: true,
+    isStandby: false,
+    isStoppedAtRest: false,
+    trackChanged: false,
+    forceTonearmRest: false,
+    currentTonearmPhase: 'playing',
+  });
+  assert.equal(onPause.nextPhase, 'playing');
+  assert.equal(onPause.shouldScheduleLiftToRest, false);
+  assert.equal(onPause.shouldScheduleDropToGroove, false);
+
+  // 2. Clicking Play to resume from pause when tonearm is already on record: stays in 'playing' without re-dropping
+  const onResume = resolveTonearmMotionOnPlayStateChange({
+    isPlaying: true,
+    wasPlaying: false,
+    isStandby: false,
+    isStoppedAtRest: false,
+    trackChanged: false,
+    forceTonearmRest: false,
+    currentTonearmPhase: 'playing',
+  });
+  assert.equal(onResume.nextPhase, 'playing');
+  assert.equal(onResume.shouldScheduleDropToGroove, false);
+
+  // 3. Clicking Stop/Eject (`isStoppedAtRest: true`): lifts tonearm and returns to rest
+  const onStop = resolveTonearmMotionOnPlayStateChange({
+    isPlaying: false,
+    wasPlaying: true,
+    isStandby: false,
+    isStoppedAtRest: true,
+    trackChanged: false,
+    forceTonearmRest: false,
+    currentTonearmPhase: 'playing',
+  });
+  assert.equal(onStop.nextPhase, 'lifting-to-rest');
+  assert.equal(onStop.shouldScheduleLiftToRest, true);
+
+  // 4. Track-change animation (`forceTonearmRest: true`): swings tonearm out to rest
+  const onTrackChange = resolveTonearmMotionOnPlayStateChange({
+    isPlaying: true,
+    wasPlaying: true,
+    isStandby: false,
+    isStoppedAtRest: false,
+    trackChanged: true,
+    forceTonearmRest: true,
+    currentTonearmPhase: 'playing',
+  });
+  assert.equal(onTrackChange.nextPhase, 'returning-to-rest');
+});
+
+test('getSongSpecificArtworkUrls and resolveActiveArtworkState exclude parent playlist cover art', () => {
+  const parentCover = 'https://cdn.example.com/playlist-generic-cover.jpg';
+  const trackWithPlaylistFallback: TrackItem = {
+    ...sampleTracks[0],
+    artworkUrl: 'https://cdn.example.com/song-specific-art.jpg',
+    images: [
+      { url: parentCover, width: 640, height: 640 },
+      { url: 'https://cdn.example.com/song-specific-art.jpg', width: 500, height: 500 },
+    ],
+  };
+
+  const filtered = getSongSpecificArtworkUrls(trackWithPlaylistFallback, parentCover);
+  assert.equal(filtered.includes(parentCover), false);
+  assert.equal(filtered[0], 'https://cdn.example.com/song-specific-art.jpg');
+
+  const resolved = resolveActiveArtworkState(trackWithPlaylistFallback, 0, parentCover);
+  assert.equal(resolved.activeUrl, 'https://cdn.example.com/song-specific-art.jpg');
+});
+
+test('calculateResponsiveTonearmGeometry lands stylus tip strictly inside vinyl groove band [0.38*R .. 0.95*R] and clears right-docked Pitch/Volume column across all 5 viewports', () => {
+  const viewportCases = [
+    { name: 'desktop', bedWidth: 850, bedHeight: 460, vinylDiameterPx: 404, rightReservedPx: 88 },
+    { name: 'car', bedWidth: 580, bedHeight: 260, vinylDiameterPx: 230, rightReservedPx: 84 },
+    { name: 'tablet', bedWidth: 400, bedHeight: 210, vinylDiameterPx: 185, rightReservedPx: 80 },
+    { name: 'mobile-portrait', bedWidth: 342, bedHeight: 205, vinylDiameterPx: 180, rightReservedPx: 72 },
+    { name: 'mobile-landscape', bedWidth: 520, bedHeight: 150, vinylDiameterPx: 126, rightReservedPx: 68 },
+  ];
+
+  for (const vc of viewportCases) {
+    const vinylCenterX = calculateRightDockedVinylCenterX({
+      bedWidth: vc.bedWidth,
+      rightReservedPx: vc.rightReservedPx,
+      vinylDiameterPx: vc.vinylDiameterPx,
+    });
+    const vinylCenterY = vc.bedHeight * 0.5;
+    const R = vc.vinylDiameterPx / 2;
+
+    const geom = calculateResponsiveTonearmGeometry({
+      bedWidth: vc.bedWidth,
+      bedHeight: vc.bedHeight,
+      vinylCenterX,
+      vinylCenterY,
+      vinylDiameterPx: vc.vinylDiameterPx,
+      rightReservedPx: vc.rightReservedPx,
+    });
+
+    const outerTip = calculateTonearmStylusCoordinates({
+      pivotX: geom.pivotX,
+      pivotY: geom.pivotY,
+      armLengthPx: geom.armLengthPx,
+      cssAngleDeg: geom.outerAngleDeg,
+    });
+    const innerTip = calculateTonearmStylusCoordinates({
+      pivotX: geom.pivotX,
+      pivotY: geom.pivotY,
+      armLengthPx: geom.armLengthPx,
+      cssAngleDeg: geom.innerAngleDeg,
+    });
+
+    const outerRatio = Math.hypot(outerTip.x - vinylCenterX, outerTip.y - vinylCenterY) / R;
+    const innerRatio = Math.hypot(innerTip.x - vinylCenterX, innerTip.y - vinylCenterY) / R;
+
+    assert.ok(
+      outerRatio >= 0.70 && outerRatio <= 0.95,
+      `${vc.name} outer groove ratio out of bounds: ${outerRatio.toFixed(3)}`
+    );
+    assert.ok(
+      innerRatio >= 0.38 && innerRatio <= 0.65,
+      `${vc.name} inner groove ratio out of bounds: ${innerRatio.toFixed(3)}`
+    );
+    assert.ok(
+      geom.pivotY >= 10 && geom.pivotY <= vinylCenterY - R * 0.25,
+      `${vc.name} nudged pivotY should remain above center: pivotY=${geom.pivotY}, vinylCenterY=${vinylCenterY}`
+    );
+    assert.ok(
+      geom.pivotX > vinylCenterX && geom.pivotX <= vc.bedWidth - vc.rightReservedPx,
+      `${vc.name} pivot should clear right control column: pivotX=${geom.pivotX}, rightLimit=${vc.bedWidth - vc.rightReservedPx}`
+    );
+  }
+});
+
+test('clampHolderBoxDragOffset across full #console-top-surface allows dragging over top title bar and bottom lyrics bar', () => {
+  // Top wooden surface is taller than #turntable-plinth-bed alone (includes #console-title-plate & #lyrics-strip-slot)
+  const fullTopSurface = clampHolderBoxDragOffset({
+    offsetX: 120,
+    offsetY: -120,
+    boardWidth: 560,
+    boardHeight: 540,
+    boxSize: 215,
+    homeCenterX: 113.5,
+    homeCenterY: 270,
+    snapRadiusPx: 8,
+  });
+  assert.equal(fullTopSurface.offsetX, 120);
+  assert.equal(fullTopSurface.offsetY, -120);
+  assert.equal(fullTopSurface.isAtHomePosition, false);
+
+  const dragDownOverLyrics = clampHolderBoxDragOffset({
+    offsetX: 140,
+    offsetY: 130,
+    boardWidth: 560,
+    boardHeight: 540,
+    boxSize: 215,
+    homeCenterX: 113.5,
+    homeCenterY: 270,
+    snapRadiusPx: 8,
+  });
+  assert.equal(dragDownOverLyrics.offsetY, 130);
+});
+
+test('TV_CABINET_SCREEN_APERTURE spans the real cabinet cutout edge-to-edge without right/bottom gap', () => {
+  const left = parseFloat(TV_CABINET_SCREEN_APERTURE.left);
+  const top = parseFloat(TV_CABINET_SCREEN_APERTURE.top);
+  const width = parseFloat(TV_CABINET_SCREEN_APERTURE.width);
+  const height = parseFloat(TV_CABINET_SCREEN_APERTURE.height);
+
+  // Real transparent aperture measured from tv-cabinet.webp: left=9.56%, top=13.45%, right=78.86%, bottom=79.48%
+  assert.ok(left <= 9.56);
+  assert.ok(top <= 13.45);
+  assert.ok(left + width >= 78.86);
+  assert.ok(top + height >= 79.48);
+  assert.ok(TV_CLICK_DEBOUNCE_MS >= 150 && TV_CLICK_DEBOUNCE_MS <= 300);
+});
+
+test('verticalPointerRatioToPitch increases pitch when dragged UP and decreases pitch when dragged DOWN', () => {
+  assert.equal(verticalPointerRatioToPitch(0), 12);
+  assert.equal(verticalPointerRatioToPitch(0.25), 6);
+  assert.equal(verticalPointerRatioToPitch(0.5), 0);
+  assert.equal(verticalPointerRatioToPitch(0.75), -6);
+  assert.equal(verticalPointerRatioToPitch(1), -12);
+});
+
+test('calculateHolderBoxDragTiltDeg and calculateHolderBoxRestTiltDeg tilt on drag and settle at non-zero counterweight angle on release', () => {
+  const dragRight = calculateHolderBoxDragTiltDeg(18, true);
+  const dragLeft = calculateHolderBoxDragTiltDeg(-18, true);
+  assert.ok(dragRight > 0 && dragRight <= 14);
+  assert.ok(dragLeft < 0 && dragLeft >= -14);
+  assert.equal(calculateHolderBoxDragTiltDeg(18, false), 0);
+
+  const restAfterRightDrag = calculateHolderBoxRestTiltDeg(95, 6, false);
+  const restAfterLeftDrag = calculateHolderBoxRestTiltDeg(-45, -6, false);
+  const restAtHome = calculateHolderBoxRestTiltDeg(0, 0, true);
+  assert.ok(Math.abs(restAfterRightDrag) >= 3.5 && Math.abs(restAfterRightDrag) <= 7);
+  assert.ok(restAfterRightDrag > 0);
+  assert.ok(restAfterLeftDrag < 0);
+  assert.notEqual(restAtHome, 0);
+});
+
+test('resolveEffectiveTvPlayState tracks audio playback by default and honors independent TV toggle until reset', () => {
+  // Default (tvOverridePlaying = null): follows turntable audio play/pause
+  assert.deepEqual(
+    resolveEffectiveTvPlayState({
+      audioIsPlaying: true,
+      tvOverridePlaying: null,
+      tvPoweredOn: true,
+      isStandby: false,
+    }),
+    { effectivePlaying: true, isOverridden: false }
+  );
+  assert.deepEqual(
+    resolveEffectiveTvPlayState({
+      audioIsPlaying: false,
+      tvOverridePlaying: null,
+      tvPoweredOn: true,
+      isStandby: false,
+    }),
+    { effectivePlaying: false, isOverridden: false }
+  );
+
+  // Explicit TV click override: pauses TV while audio keeps playing
+  assert.deepEqual(
+    resolveEffectiveTvPlayState({
+      audioIsPlaying: true,
+      tvOverridePlaying: false,
+      tvPoweredOn: true,
+      isStandby: false,
+    }),
+    { effectivePlaying: false, isOverridden: true }
+  );
+
+  // Explicit TV click override: plays TV while audio is paused
+  assert.deepEqual(
+    resolveEffectiveTvPlayState({
+      audioIsPlaying: false,
+      tvOverridePlaying: true,
+      tvPoweredOn: true,
+      isStandby: false,
+    }),
+    { effectivePlaying: true, isOverridden: true }
+  );
+
+  // Power off forces effectivePlaying false regardless
+  assert.equal(
+    resolveEffectiveTvPlayState({
+      audioIsPlaying: true,
+      tvOverridePlaying: true,
+      tvPoweredOn: false,
+      isStandby: false,
+    }).effectivePlaying,
+    false
+  );
+});
+
+test('verticalPointerRatioToVolume and calculateVolumeThumbTopPercent map top to 100% and bottom to 0%', () => {
+  assert.equal(verticalPointerRatioToVolume(0), 1);
+  assert.equal(verticalPointerRatioToVolume(0.2), 0.8);
+  assert.equal(verticalPointerRatioToVolume(0.5), 0.5);
+  assert.equal(verticalPointerRatioToVolume(1), 0);
+
+  assert.equal(calculateVolumeThumbTopPercent(1), 8);
+  assert.equal(calculateVolumeThumbTopPercent(0.5), 50);
+  assert.equal(calculateVolumeThumbTopPercent(0), 92);
+});
+
+test('calculateRightDockedVinylCenterX docks platter plinth right-adjacent to the vertical fader column without clipping', () => {
+  const centerX = calculateRightDockedVinylCenterX({
+    bedWidth: 720,
+    rightReservedPx: 84,
+    vinylDiameterPx: 300,
+  });
+  // effectiveBedRight = 720 - 84 = 636; centerX = 636 - 150 - 18 = 468
+  assert.equal(centerX, 468);
+  assert.ok(centerX + 150 + 11 < 720 - 84);
+
+  // On narrow widths where center would push left past edge, clamps safely to R + 12
+  const narrowCenterX = calculateRightDockedVinylCenterX({
+    bedWidth: 260,
+    rightReservedPx: 72,
+    vinylDiameterPx: 180,
+  });
+  assert.equal(narrowCenterX, 102);
+});
+
+test('ensureUniqueTrackIds & ID-based resolution distinguish songs that share identical titles', () => {
+  const duplicateTitleTracks: TrackItem[] = [
+    { ...sampleTracks[0], id: 'dup-id-a', title: 'Midnight Echo', artist: 'Artist Alpha' },
+    { ...sampleTracks[1], id: 'dup-id-a', title: 'Midnight Echo', artist: 'Artist Beta' },
+    { ...sampleTracks[0], id: 'dup-id-c', title: 'Midnight Echo', artist: 'Artist Gamma' },
+  ];
+
+  const uniqueTracks = ensureUniqueTrackIds(duplicateTitleTracks);
+  assert.equal(uniqueTracks.length, 3);
+  const idSet = new Set(uniqueTracks.map((t) => t.id));
+  assert.equal(idSet.size, 3);
+  assert.equal(uniqueTracks[0].id, 'dup-id-a');
+  assert.notEqual(uniqueTracks[1].id, uniqueTracks[0].id);
+
+  // Clicking the second duplicate-title track selects Artist Beta, not Artist Alpha
+  const resolvedSecond = resolveTrackById(uniqueTracks, uniqueTracks[1].id);
+  assert.equal(resolvedSecond.track?.artist, 'Artist Beta');
+  assert.equal(resolvedSecond.track?.id, uniqueTracks[1].id);
+  assert.equal(resolvedSecond.index, 1);
+
+  const nextAfterFirst = getNextTrackId(uniqueTracks, uniqueTracks[0].id, false, false);
+  assert.equal(nextAfterFirst, uniqueTracks[1].id);
+
+  const prevFromSecond = getPreviousTrackIdAction(uniqueTracks, uniqueTracks[1].id, 0);
+  assert.equal(prevFromSecond.targetTrackId, uniqueTracks[0].id);
+
+  const upNext = getUpNextQueueById(uniqueTracks, uniqueTracks[0].id);
+  assert.equal(upNext.length, 2);
+  assert.equal(upNext[0].track.id, uniqueTracks[1].id);
+  assert.equal(upNext[0].track.artist, 'Artist Beta');
+  assert.equal(upNext[1].track.id, 'dup-id-c');
+});
+
+test('formatConsoleClockAndDate outputs live time string and weekday+date string', () => {
+  const sampleDate = new Date(2026, 10, 15, 14, 7, 5); // Sun, Nov 15, 2026 2:07 PM
+  const formatted12 = formatConsoleClockAndDate(sampleDate, false);
+  assert.equal(formatted12.timeText, '2:07 PM');
+  assert.match(formatted12.dateText, /Sun/i);
+  assert.match(formatted12.dateText, /Nov/i);
+  assert.match(formatted12.dateText, /15/);
+
+  const formatted24 = formatConsoleClockAndDate(sampleDate, true);
+  assert.equal(formatted24.timeText, '14:07');
+});
+
+test('generateDustParticles and stepDustParticles move motes while spinning and freeze immediately when stopped', () => {
+  const motes = generateDustParticles(24, 500, 400);
+  assert.equal(motes.length, 24);
+  for (const mote of motes) {
+    assert.ok(mote.x >= 0 && mote.x <= 500);
+    assert.ok(mote.y >= 0 && mote.y <= 400);
+  }
+
+  const pausedStep = stepDustParticles(motes, 500, 400, 0.05, false);
+  assert.deepEqual(pausedStep, motes);
+
+  const activeStep = stepDustParticles(motes, 500, 400, 0.05, true);
+  assert.equal(activeStep.length, motes.length);
+  const anyMoved = activeStep.some((m, i) => m.x !== motes[i].x || m.y !== motes[i].y);
+  assert.equal(anyMoved, true);
+});
+
+test('TV channel helpers dynamically support >= 5 channels per song and buildCleanYouTubeEmbedUrl sets mute parameter', () => {
+  for (const total of [5, 7, 8]) {
+    let idx = 0;
+    const seen = new Set<number>([idx]);
+    for (let step = 0; step < total; step++) {
+      const theme = getTvChannelTheme(idx, total);
+      assert.equal(theme.index, idx);
+      assert.equal(theme.code, `CH ${String(idx + 1).padStart(2, '0')}`);
+      assert.ok(theme.dialAngleDeg >= -72 && theme.dialAngleDeg <= 72);
+      idx = getNextTvChannelIndex(idx, total);
+      seen.add(idx);
+    }
+    assert.equal(seen.size, total);
+    assert.equal(idx, 0);
+  }
+
+  const mutedUrl = buildCleanYouTubeEmbedUrl('dQw4w9WgXcQ', true, 42, undefined, true);
+  assert.match(mutedUrl, /mute=1/);
+  assert.match(mutedUrl, /start=42/);
+
+  const unmutedUrl = buildCleanYouTubeEmbedUrl('dQw4w9WgXcQ', true, 42, undefined, false);
+  assert.match(unmutedUrl, /mute=0/);
+  assert.match(unmutedUrl, /start=42/);
+});
+
+test('computeFullscreenAudioHandoff pauses/mutes Spotify on enter and restores synced Spotify playback on exit', () => {
+  const onEnter = computeFullscreenAudioHandoff({
+    enteringFullscreen: true,
+    spotifyVolume: 0.74,
+    currentTimeSec: 63.8,
+  });
+  assert.equal(onEnter.audioOwner, 'youtube');
+  assert.equal(onEnter.spotifyMuted, true);
+  assert.equal(onEnter.spotifyAction, 'pause-and-mute');
+  assert.equal(onEnter.youtubeMuted, false);
+  assert.equal(onEnter.youtubeAction, 'unmute-and-play');
+  assert.equal(onEnter.youtubeVolumePct, 74);
+  assert.equal(onEnter.syncedTimeSec, 63);
+
+  const onExit = computeFullscreenAudioHandoff({
+    enteringFullscreen: false,
+    spotifyVolume: 0.74,
+    currentTimeSec: 88.2,
+  });
+  assert.equal(onExit.audioOwner, 'spotify');
+  assert.equal(onExit.spotifyMuted, false);
+  assert.equal(onExit.spotifyAction, 'unmute-and-resume');
+  assert.equal(onExit.youtubeMuted, true);
+  assert.equal(onExit.youtubeAction, 'mute-and-pause');
+  assert.equal(onExit.syncedTimeSec, 88);
+});
+
+test('calculateVinylDiameterFromBounds with 19px plinth clearance leaves visible gap below title bar and above lyrics bar', () => {
+  // Available height = 490 -> diameter = 490 - 38 = 452 -> plinth overhang is 11px top + 11px bottom -> 8px wooden gap each side
+  const dia = calculateVinylDiameterFromBounds(80, 570, 19);
+  assert.equal(dia, 452);
+  const plinthHeight = dia + 22;
+  assert.equal(490 - plinthHeight, 16); // 8px gap above + 8px gap below
+});
+
+test('de-personalized default startup starts cleanly logged out with empty playlists and MaxYoutify branding', () => {
+  assert.equal(DEFAULT_PLAYLISTS.length, 0);
+  assert.equal(EMPTY_STANDBY_TRACK.album, 'MaxYoutify · Standby');
+  assert.equal(EMPTY_STANDBY_TRACK.youtubeVideoId, '');
+});
+
+test('resting tonearm stylus/headshell clears rotating vinyl perimeter cleanly across all viewports', () => {
+  const viewportCases = [
+    { name: 'desktop', bedWidth: 850, bedHeight: 460, vinylDiameterPx: 404, rightReservedPx: 88 },
+    { name: 'car', bedWidth: 580, bedHeight: 260, vinylDiameterPx: 230, rightReservedPx: 84 },
+    { name: 'tablet', bedWidth: 400, bedHeight: 210, vinylDiameterPx: 185, rightReservedPx: 80 },
+    { name: 'mobile-portrait', bedWidth: 342, bedHeight: 205, vinylDiameterPx: 180, rightReservedPx: 72 },
+    { name: 'mobile-landscape', bedWidth: 520, bedHeight: 150, vinylDiameterPx: 126, rightReservedPx: 68 },
+  ];
+
+  for (const vc of viewportCases) {
+    const vinylCenterX = calculateRightDockedVinylCenterX({
+      bedWidth: vc.bedWidth,
+      rightReservedPx: vc.rightReservedPx,
+      vinylDiameterPx: vc.vinylDiameterPx,
+    });
+    const vinylCenterY = vc.bedHeight * 0.5;
+    const R = vc.vinylDiameterPx / 2;
+
+    const geom = calculateResponsiveTonearmGeometry({
+      bedWidth: vc.bedWidth,
+      bedHeight: vc.bedHeight,
+      vinylCenterX,
+      vinylCenterY,
+      vinylDiameterPx: vc.vinylDiameterPx,
+      rightReservedPx: vc.rightReservedPx,
+    });
+
+    const restTip = calculateTonearmStylusCoordinates({
+      pivotX: geom.pivotX,
+      pivotY: geom.pivotY,
+      armLengthPx: geom.armLengthPx,
+      cssAngleDeg: geom.restAngleDeg,
+    });
+
+    const restDistanceFromVinyl = Math.hypot(restTip.x - vinylCenterX, restTip.y - vinylCenterY);
+    const minExpectedClearance = R + 14;
+    assert.ok(
+      restDistanceFromVinyl >= minExpectedClearance,
+      `${vc.name} resting stylus touches/overlaps vinyl: dist=${restDistanceFromVinyl.toFixed(1)}, minClearance=${minExpectedClearance.toFixed(1)}`
+    );
+    assert.ok(
+      restTip.x <= vc.bedWidth - vc.rightReservedPx - 2,
+      `${vc.name} resting stylus crosses into Pitch/Volume column: restX=${restTip.x}`
+    );
+    assert.ok(geom.restAngleDeg <= -6 && geom.restAngleDeg >= -34);
+  }
+});
+
+test('Spotify PKCE helpers generate valid S256 challenges, authorize URLs, parse callback states, and wipe session on logout', async () => {
+  const verifier = generatePkceCodeVerifier(64);
+  assert.equal(verifier.length, 64);
+  assert.match(verifier, /^[A-Za-z0-9\-._~]+$/);
+
+  const challenge = await computePkceCodeChallenge(verifier);
+  assert.ok(challenge.length >= 43);
+  assert.doesNotMatch(challenge, /[+/=]/);
+
+  const authUrl = buildSpotifyAuthorizeUrl({
+    clientId: 'pub-client-123',
+    redirectUri: 'https://example.com/auth/callback',
+    state: 'state-xyz',
+    codeChallenge: challenge,
+  });
+  const parsedUrl = new URL(authUrl);
+  assert.equal(parsedUrl.origin, 'https://accounts.spotify.com');
+  assert.equal(parsedUrl.searchParams.get('client_id'), 'pub-client-123');
+  assert.equal(parsedUrl.searchParams.get('response_type'), 'code');
+  assert.equal(parsedUrl.searchParams.get('code_challenge_method'), 'S256');
+  assert.equal(parsedUrl.searchParams.get('code_challenge'), challenge);
+  assert.equal(parsedUrl.searchParams.get('state'), 'state-xyz');
+  assert.equal(parsedUrl.searchParams.get('scope'), SPOTIFY_OAUTH_SCOPES.join(' '));
+
+  const now = 1_700_000_000_000;
+  assert.equal(isSpotifySessionExpired({ expiresAtMs: now + 300_000 }, now), false);
+  assert.equal(isSpotifySessionExpired({ expiresAtMs: now + 30_000 }, now), true); // within 60s refresh buffer
+  assert.equal(isSpotifySessionExpired({ expiresAtMs: now - 10_000 }, now), true);
+
+  // Callback parser handles success, denied consent, and state mismatch
+  const okRes = parseSpotifyCallbackMessage(
+    {
+      type: 'SPOTIFY_OAUTH_RESULT',
+      accessToken: 'tok-abc',
+      refreshToken: 'ref-def',
+      expiresIn: 3600,
+      state: 'state-xyz',
+    },
+    'state-xyz'
+  );
+  assert.deepEqual(okRes, {
+    ok: true,
+    accessToken: 'tok-abc',
+    refreshToken: 'ref-def',
+    expiresInSec: 3600,
+    scope: undefined,
+  });
+
+  const deniedRes = parseSpotifyCallbackMessage(
+    { type: 'SPOTIFY_OAUTH_RESULT', error: 'access_denied', state: 'state-xyz' },
+    'state-xyz'
+  );
+  assert.equal(deniedRes?.ok, false);
+  if (deniedRes && !deniedRes.ok) {
+    assert.equal(deniedRes.errorCode, 'access_denied');
+    assert.match(deniedRes.message, /consent was denied/i);
+  }
+
+  const mismatchRes = parseSpotifyCallbackMessage(
+    { type: 'SPOTIFY_OAUTH_RESULT', accessToken: 'tok-abc', state: 'wrong-state' },
+    'state-xyz'
+  );
+  assert.equal(mismatchRes?.ok, false);
+  if (mismatchRes && !mismatchRes.ok) {
+    assert.equal(mismatchRes.errorCode, 'state_mismatch');
+  }
+
+  assert.match(mapSpotifyOAuthError('missing_client_id'), /SPOTIFY_CLIENT_ID/);
+  assert.match(mapSpotifyOAuthError('session_expired'), /expired/i);
+
+  // Storage round-trip & logout cleanup
+  const memMap = new Map<string, string>();
+  const mockStorage: Storage = {
+    get length() { return memMap.size; },
+    clear() { memMap.clear(); },
+    key(i: number) { return Array.from(memMap.keys())[i] ?? null; },
+    getItem(k: string) { return memMap.get(k) ?? null; },
+    setItem(k: string, v: string) { memMap.set(k, v); },
+    removeItem(k: string) { memMap.delete(k); },
+  };
+
+  saveSpotifySessionToStorage(
+    {
+      accessToken: 'tok-abc',
+      refreshToken: 'ref-def',
+      expiresAtMs: now + 3600_000,
+      user: { id: 'u1', displayName: 'Listener' },
+    },
+    mockStorage
+  );
+  mockStorage.setItem(SAVED_PLAYLISTS_STORAGE_KEY, '[{"id":"p1"}]');
+  mockStorage.setItem(LEGACY_SAVED_PLAYLISTS_STORAGE_KEY, '[{"id":"legacy"}]');
+  mockStorage.setItem(SPOTIFY_PKCE_STATE_STORAGE_KEY, '{"state":"x"}');
+
+  assert.equal(loadSpotifySessionFromStorage(mockStorage)?.accessToken, 'tok-abc');
+  clearAllUserSpotifyDataFromStorage(mockStorage);
+
+  assert.equal(loadSpotifySessionFromStorage(mockStorage), null);
+  assert.equal(mockStorage.getItem(SPOTIFY_SESSION_STORAGE_KEY), null);
+  assert.equal(mockStorage.getItem(SAVED_PLAYLISTS_STORAGE_KEY), null);
+  assert.equal(mockStorage.getItem(LEGACY_SAVED_PLAYLISTS_STORAGE_KEY), null);
+  assert.equal(mockStorage.getItem(SPOTIFY_PKCE_STATE_STORAGE_KEY), null);
+});
+
+test('Theme registry registers "Retro Turntable" and persists active theme in localStorage', () => {
+  assert.ok(THEME_REGISTRY.length >= 1);
+  assert.equal(RETRO_TURNTABLE_THEME.id, 'retro-turntable');
+  assert.equal(RETRO_TURNTABLE_THEME.name, 'Retro Turntable');
+  assert.equal(getThemeById('unknown-theme').id, DEFAULT_THEME_ID);
+  assert.equal(getThemeById('retro-turntable').name, 'Retro Turntable');
+
+  const memMap = new Map<string, string>();
+  const mockStorage = {
+    getItem: (k: string) => memMap.get(k) ?? null,
+    setItem: (k: string, v: string) => { memMap.set(k, v); },
+  };
+
+  assert.equal(loadSavedThemeId(mockStorage), 'retro-turntable');
+  const saved = saveThemeId('retro-turntable', mockStorage);
+  assert.equal(saved, 'retro-turntable');
+  assert.equal(memMap.get(ACTIVE_THEME_STORAGE_KEY), 'retro-turntable');
+  assert.equal(loadSavedThemeId(mockStorage), 'retro-turntable');
+});
+
+test('applyTonearmAssemblyOffset anchors the tonearm cleanly at the top-right of the vinyl disc without clipping above the turntable bed', () => {
+  assert.equal(TONEARM_ASSEMBLY_OFFSET_X_PX, 0);
+  assert.equal(TONEARM_ASSEMBLY_OFFSET_Y_PX, 0);
+
+  const baseGeom = calculateResponsiveTonearmGeometry({
+    bedWidth: 850,
+    bedHeight: 460,
+    vinylCenterX: 540,
+    vinylCenterY: 230,
+    vinylDiameterPx: 404,
+    rightReservedPx: 88,
+  });
+  const calibrated = applyTonearmAssemblyOffset(baseGeom);
+
+  assert.equal(calibrated.pivotX, baseGeom.pivotX);
+  assert.equal(calibrated.pivotY, baseGeom.pivotY);
+  assert.ok(calibrated.armTopPx >= 2, `Expected armTopPx >= 2, got ${calibrated.armTopPx}`);
+  assert.ok(calibrated.pivotX > 540 && calibrated.pivotY < 230);
+
+  // Explicit negative Y offset is safely clamped so counterweight never clips past top edge
+  const clampedNegativeShift = applyTonearmAssemblyOffset(baseGeom, 6, -50);
+  assert.equal(clampedNegativeShift.armTopPx, 2);
+  assert.equal(clampedNegativeShift.pivotX, Number((baseGeom.pivotX + 6).toFixed(2)));
 });
 
 

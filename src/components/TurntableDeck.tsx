@@ -1,39 +1,50 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import {
-  Disc3,
-  SkipBack,
   Play,
   Pause,
   Square,
+  SkipBack,
   SkipForward,
-  Shuffle,
-  Repeat,
-  Move,
+  Disc3,
 } from 'lucide-react';
 import {
-  TONEARM_REST_ANGLE_DEG,
-  getTonearmShadowPose,
-  calculateTonearmTracking,
-  calculateSeekTimeFromTonearmAngle,
-  calculateVinylSpinTiming,
-  triggerScratchHaptic,
-  triggerButtonHaptic,
   formatDuration,
-  clampSeekTime,
+  calculateSeekTimeFromTonearmAngle,
+  calculateResponsiveTonearmGeometry,
+  getTonearmShadowPose,
+  calculateVinylSpinTiming,
+  triggerButtonHaptic,
   resolveActiveArtworkState,
   clampHolderBoxDragOffset,
-  TRACK_CHANGE_TIMELINE_MS,
+  calculateHolderBoxDragTiltDeg,
+  calculateHolderBoxRestTiltDeg,
+  calculatePitchThumbTopPercent,
+  verticalPointerRatioToPitch,
+  calculateVolumeThumbTopPercent,
+  verticalPointerRatioToVolume,
+  calculateRightDockedVinylCenterX,
   getTrackChangeStagePose,
-  type TrackChangePhase,
-  type TonearmMotionPhase,
+  TRACK_CHANGE_TIMELINE_MS,
+  TONEARM_ASSET_METRICS,
+  TONEARM_ASSEMBLY_OFFSET_X_PX,
+  TONEARM_ASSEMBLY_OFFSET_Y_PX,
+  applyTonearmAssemblyOffset,
+  calculateVinylDiameterFromBounds,
+  calculateHolderBoxSizeFromVinyl,
+  resolveTonearmMotionOnPlayStateChange,
+  formatConsoleClockAndDate,
+  generateDustParticles,
+  stepDustParticles,
+  type DustParticle,
   type TrackItem,
+  type YouTubeGrabFrame,
   type DominantThemePalette,
   type ViewportLayoutMode,
+  type TonearmMotionPhase,
+  type TrackChangePhase,
 } from '../utils/playerLogic';
-import { usePlaybackSecond } from '../utils/playbackStore';
+import { playbackClockStore, usePlaybackSecond } from '../utils/playbackStore';
 import { SyncedLyricsPanel } from './SyncedLyricsPanel';
-
-const HOLDER_BOX_POS_STORAGE_KEY = 'mvf_holder_box_pos_v2';
 
 export interface TurntableDeckProps {
   track: TrackItem;
@@ -51,6 +62,8 @@ export interface TurntableDeckProps {
   repeatOne: boolean;
   shuffleEnabled: boolean;
   isFullScreen: boolean;
+  hideBoxArt?: boolean;
+  isTvFullscreen?: boolean;
   spotifyConnected: boolean;
   viewportLayout: ViewportLayoutMode;
   themePalette: DominantThemePalette;
@@ -73,36 +86,49 @@ export interface TurntableDeckProps {
   onOpenSpotifyModal: () => void;
   onScratch: (intensity: 'light' | 'classic' | 'backspin') => void;
   onDragTonearmToTime: (targetSec: number) => void;
+  parentPlaylistCoverUrl?: string;
+  onResolvedPerTrackArtwork?: (trackId: string, artworkUrl: string) => void;
+  onResolvedTrackMetadata?: (
+    trackId: string,
+    artworkUrl: string,
+    videoId: string,
+    frames: YouTubeGrabFrame[]
+  ) => void;
+  playlistTracks?: TrackItem[];
+  playlistName?: string;
+  playlists?: Array<{
+    id: string;
+    name: string;
+    coverArtUrl?: string;
+    tracks: TrackItem[];
+  }>;
+  activePlaylistId?: string;
+  onSelectPlaylist?: (playlistId: string) => void;
+  onSelectTrack?: (trackId: string) => void;
+  seekEvent?: { timeSec: number; nonce: number };
 }
 
-const FLOATING_DUST_MOTES = [
-  { id: 0, left: '14%', top: '18%', size: 3, delay: '0s', duration: '11s' },
-  { id: 1, left: '26%', top: '34%', size: 2.5, delay: '-2.4s', duration: '13s' },
-  { id: 2, left: '38%', top: '14%', size: 3.5, delay: '-5.1s', duration: '12s' },
-  { id: 3, left: '49%', top: '28%', size: 2.5, delay: '-1.7s', duration: '14s' },
-  { id: 4, left: '62%', top: '22%', size: 3, delay: '-4.2s', duration: '10.5s' },
-  { id: 5, left: '74%', top: '36%', size: 2.5, delay: '-6.8s', duration: '13.5s' },
-  { id: 6, left: '21%', top: '52%', size: 3, delay: '-3.3s', duration: '12.5s' },
-  { id: 7, left: '55%', top: '48%', size: 2.5, delay: '-7.5s', duration: '11.5s' },
-  { id: 8, left: '82%', top: '19%', size: 3, delay: '-1.1s', duration: '14.5s' },
-  { id: 9, left: '33%', top: '64%', size: 2.5, delay: '-4.9s', duration: '12s' },
-] as const;
+const PRE_RENDERED_GROOVE_RINGS = Array.from({ length: 14 }, (_, idx) => {
+  const pct = 18 + idx * 2.1;
+  const isTrackGap = idx % 4 === 2;
+  return {
+    id: idx,
+    insetPct: pct,
+    opacity: isTrackGap ? 0.32 : idx % 2 === 0 ? 0.14 : 0.07,
+    widthPx: isTrackGap ? 1.5 : 1,
+  };
+});
 
 /**
- * Screwed-in Brushed Metal Song Title Plate at the Top Edge of the Wooden Console.
+ * Screwed-in Brushed-Metal Label Plate Under Front-Apron Controls
  */
-const ScrewedSongTitlePlate = React.memo<{
-  title: string;
-  artist: string;
-  isStandby: boolean;
-  compactLandscape?: boolean;
-}>(({ title, artist, isStandby, compactLandscape = false }) => {
-  return (
+const HardwareEngravedPlate = React.memo<{ label: string; compact?: boolean }>(
+  ({ label, compact = false }) => (
     <div
-      id="console-title-plate"
-      className={`relative w-full ${
-        compactLandscape ? 'h-8 px-7' : 'h-10 sm:h-11 [@media(max-height:640px)]:h-9 px-8 sm:px-10'
-      } rounded-[3px] overflow-hidden border border-[#d6c7b2]/45 shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_3px_7px_rgba(0,0,0,0.6)] flex flex-col items-center justify-center shrink-0`}
+      data-label-plate="true"
+      className={`relative ${
+        compact ? 'w-[34px] h-[10px]' : 'w-[38px] lg:w-[46px] h-[12px]'
+      } rounded-[2px] overflow-hidden border border-[#d6c7b2]/45 shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_1px_2px_rgba(0,0,0,0.75)] flex items-center justify-center shrink-0`}
     >
       <img
         src="/console/metal-plate.webp"
@@ -116,647 +142,914 @@ const ScrewedSongTitlePlate = React.memo<{
         alt=""
         aria-hidden="true"
         draggable={false}
-        className="pointer-events-none absolute top-1.5 left-2 w-2 h-2 z-20"
+        className="pointer-events-none absolute left-[2px] top-1/2 -translate-y-1/2 w-[3px] h-[3px] z-10"
       />
       <img
         src="/console/screw-head.webp"
         alt=""
         aria-hidden="true"
         draggable={false}
-        className="pointer-events-none absolute top-1.5 right-2 w-2 h-2 z-20"
+        className="pointer-events-none absolute right-[2px] top-1/2 -translate-y-1/2 w-[3px] h-[3px] z-10"
       />
-      <img
-        src="/console/screw-head.webp"
-        alt=""
-        aria-hidden="true"
-        draggable={false}
-        className="pointer-events-none absolute bottom-1.5 left-2 w-2 h-2 z-20"
-      />
-      <img
-        src="/console/screw-head.webp"
-        alt=""
-        aria-hidden="true"
-        draggable={false}
-        className="pointer-events-none absolute bottom-1.5 right-2 w-2 h-2 z-20"
-      />
-
-      <div className="relative z-10 flex flex-col items-center justify-center w-full min-w-0 text-center leading-tight">
-        <span className="w-full font-display text-xs sm:text-sm font-extrabold tracking-wide uppercase text-[#17130f] drop-shadow-[0_1px_0_rgba(255,255,255,0.65)] truncate">
-          {isStandby ? 'MAXVINYFY STEREO CONSOLE' : title}
-        </span>
-        <span className="w-full font-mono text-[9.5px] sm:text-[10.5px] font-bold text-[#2b241d]/90 drop-shadow-[0_1px_0_rgba(255,255,255,0.5)] truncate">
-          {isStandby ? 'Connect Spotify to Load LP' : artist}
-        </span>
-      </div>
+      <span
+        className={`relative z-10 font-mono ${
+          compact ? 'text-[4.5px]' : 'text-[5.5px] sm:text-[6px]'
+        } font-extrabold uppercase tracking-tighter text-[#16120e] drop-shadow-[0_0.5px_0_rgba(255,255,255,0.65)] leading-none whitespace-nowrap`}
+      >
+        {label}
+      </span>
     </div>
-  );
-});
-
-/**
- * Embossed Metal Label Plate Screwed into the Console Wood Below Transport Push-Buttons.
- */
-const EmbossedLabelPlate = React.memo<{
-  label: string;
-  compact?: boolean;
-  fixedWidthClass?: string;
-}>(({ label, compact = false, fixedWidthClass = 'w-full max-w-[50px] sm:max-w-[56px]' }) => (
-  <div
-    className={`relative rounded-[2px] overflow-hidden border border-[#d6c7b2]/40 shadow-[inset_0_1px_0_rgba(255,255,255,0.4),0_1px_3px_rgba(0,0,0,0.65)] flex items-center justify-center shrink-0 ${fixedWidthClass} ${
-      compact ? 'px-[6px] h-[12px]' : 'px-2 h-[14px]'
-    }`}
-  >
-    <img
-      src="/console/metal-plate.webp"
-      alt=""
-      aria-hidden="true"
-      draggable={false}
-      className="pointer-events-none absolute inset-0 w-full h-full object-cover"
-    />
-    <img
-      src="/console/screw-head.webp"
-      alt=""
-      aria-hidden="true"
-      draggable={false}
-      className="pointer-events-none absolute left-[2px] top-1/2 -translate-y-1/2 w-[3.5px] h-[3.5px] z-10"
-    />
-    <img
-      src="/console/screw-head.webp"
-      alt=""
-      aria-hidden="true"
-      draggable={false}
-      className="pointer-events-none absolute right-[2px] top-1/2 -translate-y-1/2 w-[3.5px] h-[3.5px] z-10"
-    />
-    <span className="relative z-10 font-mono text-[5.5px] sm:text-[6.5px] font-extrabold uppercase tracking-tighter text-[#16120e] drop-shadow-[0_0.5px_0_rgba(255,255,255,0.65)] leading-none whitespace-nowrap">
-      {label}
-    </span>
-  </div>
-));
-
-/**
- * Photorealistic Round Machined Metal Push-Button on the Front Face.
- * Supports primary central sizing (`isPrimaryCenter`) for Play/Pause and press/hold (`onPointerDownHold`) for Scratch.
- */
-const HardwarePushButton = React.memo<{
-  id?: string;
-  label: string;
-  ariaLabel: string;
-  title: string;
-  disabled?: boolean;
-  isPressed?: boolean;
-  isPrimaryCenter?: boolean;
-  compactLandscape?: boolean;
-  onClick: () => void;
-  onPointerHoldStart?: () => void;
-  onPointerHoldEnd?: () => void;
-  children: React.ReactNode;
-}>(
-  ({
-    id,
-    label,
-    ariaLabel,
-    title,
-    disabled = false,
-    isPressed = false,
-    isPrimaryCenter = false,
-    compactLandscape = false,
-    onClick,
-    onPointerHoldStart,
-    onPointerHoldEnd,
-    children,
-  }) => {
-    const [momentaryDown, setMomentaryDown] = useState(false);
-    const depressed = isPressed || momentaryDown;
-
-    const btnSizeClass = isPrimaryCenter
-      ? compactLandscape
-        ? 'w-[32px] h-[32px]'
-        : 'w-[38px] h-[38px] xl:w-[46px] xl:h-[46px]'
-      : compactLandscape
-      ? 'w-[24px] h-[24px]'
-      : 'w-[28px] h-[28px] xl:w-[34px] xl:h-[34px]';
-
-    const imgSizeClass = isPrimaryCenter
-      ? compactLandscape
-        ? 'w-[30px] h-[30px]'
-        : 'w-[36px] h-[36px] xl:w-[44px] xl:h-[44px]'
-      : compactLandscape
-      ? 'w-[22px] h-[22px]'
-      : 'w-[26px] h-[26px] xl:w-[32px] xl:h-[32px]';
-
-    return (
-      <div className="flex flex-col items-center justify-end gap-0.5 shrink-0">
-        <div className="flex items-center justify-center">
-          <button
-            id={id}
-            type="button"
-            disabled={disabled}
-            aria-label={ariaLabel}
-            title={title}
-            data-pressed={depressed ? 'true' : 'false'}
-            onPointerDown={() => {
-              if (!disabled) {
-                setMomentaryDown(true);
-                onPointerHoldStart?.();
-              }
-            }}
-            onPointerUp={() => {
-              setMomentaryDown(false);
-              onPointerHoldEnd?.();
-            }}
-            onPointerLeave={() => {
-              if (momentaryDown) {
-                setMomentaryDown(false);
-                onPointerHoldEnd?.();
-              }
-            }}
-            onClick={onClick}
-            style={{
-              transform: depressed && !disabled ? 'translateY(1.5px)' : 'translateY(0px)',
-              transition: 'transform 80ms linear, opacity 120ms linear',
-            }}
-            className={`relative ${btnSizeClass} flex items-center justify-center rounded-full cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none ${
-              isPrimaryCenter
-                ? 'ring-2 ring-amber-400/55 shadow-[0_3px_10px_rgba(0,0,0,0.8)]'
-                : ''
-            }`}
-          >
-            <img
-              src={depressed ? '/console/pushbutton-down.webp' : '/console/pushbutton-up.webp'}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-              className={`pointer-events-none ${imgSizeClass} object-contain`}
-            />
-            <span
-              className={`pointer-events-none absolute inset-0 flex items-center justify-center ${
-                depressed ? 'text-amber-300' : 'text-[#18130e]'
-              }`}
-            >
-              {children}
-            </span>
-          </button>
-        </div>
-        <EmbossedLabelPlate
-          label={label}
-          compact={compactLandscape}
-          fixedWidthClass={
-            isPrimaryCenter
-              ? 'w-[38px] xl:w-[50px]'
-              : 'w-[34px] xl:w-[44px]'
-          }
-        />
-      </div>
-    );
-  }
+  )
 );
 
-/**
- * Horizontal Recessed Slot-Type Seek Control Placed With the Lyrics Screen in the Top Section.
- */
-const FrontFaceSeekSlot = React.memo<{
-  durationSec: number;
-  isStandby: boolean;
-  nightMode: boolean;
-  lowPowerMode: boolean;
-  compactLandscape?: boolean;
-  onSeek: (targetSec: number) => void;
-}>(({ durationSec, isStandby, nightMode, lowPowerMode, compactLandscape = false, onSeek }) => {
-  const currentSecond = usePlaybackSecond();
-  const safeDuration = Math.max(1, durationSec);
-  const progressPercent = isStandby
-    ? 0
-    : Math.min(100, Math.max(0, (currentSecond / safeDuration) * 100));
 
-  const phosphorBright = nightMode ? '#f59e0b' : '#fbbf24';
+/**
+ * Vertical Pitch Controller Styled as a Recessed Metal Fader Plate (Matching #top-seek-timeline Slot)
+ * Sliding UP increases pitch (+12%); sliding DOWN decreases pitch (-12%). Double-click resets to 0%.
+ */
+const VerticalPitchFader = React.memo<{
+  pitchPercent: number;
+  compact?: boolean;
+  lowPowerMode: boolean;
+  onChangePitch: (pitch: number) => void;
+}>(({ pitchPercent, compact = false, lowPowerMode, onChangePitch }) => {
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef<boolean>(false);
+  const thumbTopPct = calculatePitchThumbTopPercent(pitchPercent);
+  const absDeltaPct = Math.abs(pitchPercent / 12) * 42;
+  const fillTopPct = pitchPercent >= 0 ? 50 - absDeltaPct : 50;
+
+  const updatePitchFromClientY = useCallback(
+    (clientY: number) => {
+      const el = trackRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.height <= 4) return;
+      const usablePad = 6;
+      const ratioFromTop =
+        (clientY - (rect.top + usablePad)) / Math.max(12, rect.height - usablePad * 2);
+      const nextPitch = verticalPointerRatioToPitch(ratioFromTop);
+      onChangePitch(nextPitch);
+    },
+    [onChangePitch]
+  );
 
   return (
     <div
-      id="console-seek-slot"
-      className={`relative w-full ${
-        compactLandscape ? 'h-[16px] px-3.5' : 'h-[20px] [@media(max-height:640px)]:h-[17px] px-4'
-      } rounded-[3px] overflow-hidden border border-[#d6c7b2]/40 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_3px_8px_rgba(0,0,0,0.65)] flex items-center gap-2 shrink-0`}
+      id="vertical-pitch-control"
+      className={`relative h-full ${
+        compact ? 'w-[28px] py-1 px-0.5' : 'w-[34px] lg:w-[38px] py-1.5 px-1'
+      } rounded-[4px] overflow-hidden border border-[#d6c7b2]/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_2px_6px_rgba(0,0,0,0.85)] flex flex-col items-center justify-between gap-1 select-none shrink-0`}
     >
       <img
         src="/console/metal-plate.webp"
         alt=""
         aria-hidden="true"
         draggable={false}
-        className="pointer-events-none absolute inset-0 w-full h-full object-cover opacity-90"
+        className="pointer-events-none absolute inset-0 w-full h-full object-cover opacity-95"
       />
       <img
         src="/console/screw-head.webp"
         alt=""
         aria-hidden="true"
         draggable={false}
-        className="pointer-events-none absolute left-[4px] top-1/2 -translate-y-1/2 w-[5.5px] h-[5.5px] z-20"
+        className="pointer-events-none absolute top-[2px] left-[2px] w-[3.5px] h-[3.5px] z-10 opacity-90"
       />
       <img
         src="/console/screw-head.webp"
         alt=""
         aria-hidden="true"
         draggable={false}
-        className="pointer-events-none absolute right-[4px] top-1/2 -translate-y-1/2 w-[5.5px] h-[5.5px] z-20"
+        className="pointer-events-none absolute top-[2px] right-[2px] w-[3.5px] h-[3.5px] z-10 opacity-90"
+      />
+      <img
+        src="/console/screw-head.webp"
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        className="pointer-events-none absolute bottom-[2px] left-[2px] w-[3.5px] h-[3.5px] z-10 opacity-90"
+      />
+      <img
+        src="/console/screw-head.webp"
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        className="pointer-events-none absolute bottom-[2px] right-[2px] w-[3.5px] h-[3.5px] z-10 opacity-90"
       />
 
-      <span className="relative z-10 font-mono text-[7.5px] sm:text-[8.5px] font-extrabold uppercase tracking-wider text-[#16120e] drop-shadow-[0_0.5px_0_rgba(255,255,255,0.65)] shrink-0">
-        SEEK
+      {/* Top Value Pill-free Engraved Readout */}
+      <span
+        id="vertical-pitch-value"
+        className={`relative z-10 px-1 font-mono ${
+          compact ? 'text-[5.5px]' : 'text-[6.5px] lg:text-[7.5px]'
+        } font-black tabular-nums leading-none text-[#16120e] drop-shadow-[0_0.5px_0_rgba(255,255,255,0.65)] whitespace-nowrap`}
+      >
+        {pitchPercent > 0 ? `+${pitchPercent}%` : `${pitchPercent}%`}
       </span>
 
-      <div className="relative z-10 flex-1 h-full flex items-center min-w-0">
-        <div className="relative w-full h-1.5 rounded-full bg-[#090705] border border-white/20 shadow-[inset_0_1px_3px_rgba(0,0,0,0.95)] overflow-hidden">
-          <div
-            style={{
-              transformOrigin: 'left center',
-              transform: `scaleX(${progressPercent / 100})`,
-              backgroundColor: phosphorBright,
-            }}
-            className="w-full h-full transition-transform duration-150"
-          />
-        </div>
-
+      {/* Interactive Recessed Vertical Slider Slot */}
+      <div
+        id="vertical-pitch-slider"
+        ref={trackRef}
+        role="slider"
+        tabIndex={0}
+        aria-label="Vertical Pitch Control Fader"
+        aria-orientation="vertical"
+        aria-valuemin={-12}
+        aria-valuemax={12}
+        aria-valuenow={pitchPercent}
+        data-pitch-percent={pitchPercent}
+        title={`Pitch Fader: ${pitchPercent >= 0 ? '+' : ''}${pitchPercent}% (Drag UP to increase pitch, DOWN to decrease, double-click to reset)`}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          draggingRef.current = true;
+          triggerButtonHaptic(lowPowerMode);
+          updatePitchFromClientY(e.clientY);
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {
+            // ignore
+          }
+        }}
+        onPointerMove={(e) => {
+          if (!draggingRef.current) return;
+          updatePitchFromClientY(e.clientY);
+        }}
+        onPointerUp={(e) => {
+          if (!draggingRef.current) return;
+          draggingRef.current = false;
+          try {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          } catch {
+            // ignore
+          }
+        }}
+        onPointerCancel={() => {
+          draggingRef.current = false;
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          triggerButtonHaptic(lowPowerMode);
+          onChangePitch(0);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            onChangePitch(Math.min(12, pitchPercent + 1));
+          } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
+            e.preventDefault();
+            onChangePitch(Math.max(-12, pitchPercent - 1));
+          } else if (e.key === 'Home') {
+            e.preventDefault();
+            onChangePitch(12);
+          } else if (e.key === 'End') {
+            e.preventDefault();
+            onChangePitch(-12);
+          }
+        }}
+        className="relative z-10 flex-1 w-full min-h-[54px] flex items-center justify-center cursor-ns-resize touch-none focus:outline-none"
+      >
+        {/* Side Calibration Hash Marks (+12 / 0 / -12) */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 left-0 right-0 flex items-center"
+          className="pointer-events-none absolute inset-y-[6px] inset-x-[2px] flex flex-col justify-between items-stretch opacity-70"
         >
-          <div
-            style={{
-              transform: `translateX(${progressPercent}%)`,
-            }}
-            className="w-full flex items-center transition-transform duration-150"
-          >
-            <img
-              src="/console/fader-cap.webp"
-              alt=""
-              draggable={false}
-              className="w-3.5 h-5 -ml-[7px] object-contain"
-            />
-          </div>
+          <span className="h-[1px] w-full bg-[#38291b]" />
+          <span className="h-[1px] w-2/3 mx-auto bg-[#5c4530]" />
+          <span className="h-[1.5px] w-full bg-[#92400e]" />
+          <span className="h-[1px] w-2/3 mx-auto bg-[#5c4530]" />
+          <span className="h-[1px] w-full bg-[#38291b]" />
         </div>
 
-        <input
-          id="Front-seek-slider"
-          type="range"
-          min={0}
-          max={safeDuration}
-          step={1}
-          disabled={isStandby}
-          value={isStandby ? 0 : Math.floor(currentSecond)}
-          onChange={(e) => {
-            triggerButtonHaptic(lowPowerMode);
-            onSeek(clampSeekTime(Number(e.target.value), durationSec));
+        {/* Recessed Vertical Mechanical Groove Track */}
+        <div className="relative w-[5px] h-full rounded-full bg-[#060402] border border-[#5c3c20]/95 shadow-[inset_0_2px_4px_rgba(0,0,0,0.98),1px_0_0_rgba(255,235,205,0.28)] overflow-hidden">
+          {pitchPercent !== 0 && (
+            <div
+              style={{
+                top: `${fillTopPct}%`,
+                height: `${absDeltaPct}%`,
+              }}
+              className="absolute inset-x-0 bg-gradient-to-b from-[#fde68a] via-[#f59e0b] to-[#b45309] rounded-full"
+            />
+          )}
+        </div>
+
+        {/* Tactile Brushed-Metal Sliding Fader Cap (Rotated 90deg to cross the vertical groove) */}
+        <img
+          src="/console/fader-cap.webp"
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          style={{
+            top: `calc(${thumbTopPct}% - 8px)`,
           }}
-          aria-label="Seek Track Position"
-          className="absolute -inset-y-1 inset-x-0 w-full h-8 opacity-0 cursor-pointer disabled:cursor-not-allowed z-30"
+          className={`pointer-events-none absolute left-1/2 -translate-x-1/2 rotate-90 ${
+            compact ? 'w-[14px] h-[16px]' : 'w-[17px] h-[16px]'
+          } object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.9)] z-20`}
         />
       </div>
+
+      {/* Bottom Label */}
+      <span
+        className={`relative z-10 font-mono ${
+          compact ? 'text-[5px]' : 'text-[6px] lg:text-[6.5px]'
+        } font-black uppercase tracking-tighter text-[#16120e] drop-shadow-[0_0.5px_0_rgba(255,255,255,0.65)] leading-none whitespace-nowrap`}
+      >
+        PITCH
+      </span>
     </div>
   );
 });
 
 /**
- * Vertically Stacked Shuffle + Repeat Module (Leftmost in Control Row).
- * Has NO separate title/label plates under the buttons, and uses the EXACT same
- * width & height dimensions as `FrontFaceTimeDisplay` (`#console-time-display`).
+ * Vertical Volume Controller matching VerticalPitchFader's recessed metal plate & fader-cap design.
+ * Sliding UP increases volume (100%); sliding DOWN decreases volume (0%). Double-click resets to 80%.
  */
-const StackedShuffleRepeatControl = React.memo<{
-  shuffleEnabled: boolean;
-  repeatOne: boolean;
+const VerticalVolumeFader = React.memo<{
+  volume: number;
+  compact?: boolean;
   lowPowerMode: boolean;
-  dimensionClass: string;
-  onToggleShuffle: () => void;
-  onToggleRepeatOne: () => void;
-}>(({
-  shuffleEnabled,
-  repeatOne,
-  lowPowerMode,
-  dimensionClass,
-  onToggleShuffle,
-  onToggleRepeatOne,
-}) => (
-  <div
-    id="shuffle-repeat-stack"
-    role="group"
-    aria-label="Stacked Shuffle and Repeat Controls"
-    className={`relative ${dimensionClass} box-border rounded-[3px] overflow-hidden border border-[#d6c7b2]/45 shadow-[inset_0_1px_0_rgba(255,255,255,0.4),0_2px_5px_rgba(0,0,0,0.75)] flex flex-col items-stretch justify-between p-[2px] gap-[2px] shrink-0`}
+  onChangeVolume: (vol: number) => void;
+}>(({ volume, compact = false, lowPowerMode, onChangeVolume }) => {
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef<boolean>(false);
+  const clampedVolume = Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 0.8;
+  const volumePctInt = Math.round(clampedVolume * 100);
+  const thumbTopPct = calculateVolumeThumbTopPercent(clampedVolume);
+  const fillHeightPct = Math.max(0, 92 - thumbTopPct);
+
+  const updateVolumeFromClientY = useCallback(
+    (clientY: number) => {
+      const el = trackRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.height <= 4) return;
+      const usablePad = 6;
+      const ratioFromTop =
+        (clientY - (rect.top + usablePad)) / Math.max(12, rect.height - usablePad * 2);
+      const nextVol = verticalPointerRatioToVolume(ratioFromTop);
+      onChangeVolume(nextVol);
+    },
+    [onChangeVolume]
+  );
+
+  return (
+    <div
+      id="vertical-volume-control"
+      className={`relative h-full ${
+        compact ? 'w-[28px] py-1 px-0.5' : 'w-[34px] lg:w-[38px] py-1.5 px-1'
+      } rounded-[4px] overflow-hidden border border-[#d6c7b2]/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_2px_6px_rgba(0,0,0,0.85)] flex flex-col items-center justify-between gap-1 select-none shrink-0`}
+    >
+      <img
+        src="/console/metal-plate.webp"
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        className="pointer-events-none absolute inset-0 w-full h-full object-cover opacity-95"
+      />
+      <img
+        src="/console/screw-head.webp"
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        className="pointer-events-none absolute top-[2px] left-[2px] w-[3.5px] h-[3.5px] z-10 opacity-90"
+      />
+      <img
+        src="/console/screw-head.webp"
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        className="pointer-events-none absolute top-[2px] right-[2px] w-[3.5px] h-[3.5px] z-10 opacity-90"
+      />
+      <img
+        src="/console/screw-head.webp"
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        className="pointer-events-none absolute bottom-[2px] left-[2px] w-[3.5px] h-[3.5px] z-10 opacity-90"
+      />
+      <img
+        src="/console/screw-head.webp"
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        className="pointer-events-none absolute bottom-[2px] right-[2px] w-[3.5px] h-[3.5px] z-10 opacity-90"
+      />
+
+      {/* Top Percentage Readout */}
+      <span
+        id="vertical-volume-value"
+        className={`relative z-10 px-1 font-mono ${
+          compact ? 'text-[5.5px]' : 'text-[6.5px] lg:text-[7.5px]'
+        } font-black tabular-nums leading-none text-[#16120e] drop-shadow-[0_0.5px_0_rgba(255,255,255,0.65)] whitespace-nowrap`}
+      >
+        {volumePctInt}%
+      </span>
+
+      {/* Interactive Recessed Vertical Volume Slot */}
+      <div
+        id="vertical-volume-slider"
+        ref={trackRef}
+        role="slider"
+        tabIndex={0}
+        aria-label="Vertical Volume Control Fader"
+        aria-orientation="vertical"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={volumePctInt}
+        data-volume-percent={volumePctInt}
+        title={`Volume Fader: ${volumePctInt}% (Drag UP to increase volume, DOWN to decrease, double-click to reset to 80%)`}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          draggingRef.current = true;
+          triggerButtonHaptic(lowPowerMode);
+          updateVolumeFromClientY(e.clientY);
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {
+            // ignore
+          }
+        }}
+        onPointerMove={(e) => {
+          if (!draggingRef.current) return;
+          updateVolumeFromClientY(e.clientY);
+        }}
+        onPointerUp={(e) => {
+          if (!draggingRef.current) return;
+          draggingRef.current = false;
+          try {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          } catch {
+            // ignore
+          }
+        }}
+        onPointerCancel={() => {
+          draggingRef.current = false;
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          triggerButtonHaptic(lowPowerMode);
+          onChangeVolume(0.8);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            onChangeVolume(Number(Math.min(1, clampedVolume + 0.05).toFixed(2)));
+          } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
+            e.preventDefault();
+            onChangeVolume(Number(Math.max(0, clampedVolume - 0.05).toFixed(2)));
+          } else if (e.key === 'Home') {
+            e.preventDefault();
+            onChangeVolume(1);
+          } else if (e.key === 'End') {
+            e.preventDefault();
+            onChangeVolume(0);
+          }
+        }}
+        className="relative z-10 flex-1 w-full min-h-[54px] flex items-center justify-center cursor-ns-resize touch-none focus:outline-none"
+      >
+        {/* Side Calibration Hash Marks (100 / 50 / 0) */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-[6px] inset-x-[2px] flex flex-col justify-between items-stretch opacity-70"
+        >
+          <span className="h-[1px] w-full bg-[#38291b]" />
+          <span className="h-[1px] w-2/3 mx-auto bg-[#5c4530]" />
+          <span className="h-[1.5px] w-full bg-[#92400e]" />
+          <span className="h-[1px] w-2/3 mx-auto bg-[#5c4530]" />
+          <span className="h-[1px] w-full bg-[#38291b]" />
+        </div>
+
+        {/* Recessed Vertical Mechanical Groove Track */}
+        <div className="relative w-[5px] h-full rounded-full bg-[#060402] border border-[#5c3c20]/95 shadow-[inset_0_2px_4px_rgba(0,0,0,0.98),1px_0_0_rgba(255,235,205,0.28)] overflow-hidden">
+          {clampedVolume > 0 && (
+            <div
+              style={{
+                top: `${thumbTopPct}%`,
+                height: `${fillHeightPct}%`,
+              }}
+              className="absolute inset-x-0 bg-gradient-to-b from-[#fde68a] via-[#f59e0b] to-[#b45309] rounded-full"
+            />
+          )}
+        </div>
+
+        {/* Tactile Brushed-Metal Sliding Fader Cap */}
+        <img
+          src="/console/fader-cap.webp"
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          style={{
+            top: `calc(${thumbTopPct}% - 8px)`,
+          }}
+          className={`pointer-events-none absolute left-1/2 -translate-x-1/2 rotate-90 ${
+            compact ? 'w-[14px] h-[16px]' : 'w-[17px] h-[16px]'
+          } object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.9)] z-20`}
+        />
+      </div>
+
+      {/* Bottom Label */}
+      <span
+        className={`relative z-10 font-mono ${
+          compact ? 'text-[5px]' : 'text-[6px] lg:text-[6.5px]'
+        } font-black uppercase tracking-tighter text-[#16120e] drop-shadow-[0_0.5px_0_rgba(255,255,255,0.65)] leading-none whitespace-nowrap`}
+      >
+        VOL
+      </span>
+    </div>
+  );
+});
+
+/**
+ * Requirement 6: Classic Analog Toggle Switch (left/right throw metal toggle lever)
+ * Mounted inside the left Shuffle/Repeat stack in the control bar.
+ */
+const ClassicAnalogToggleSwitch = React.memo<{
+  id: string;
+  label: string;
+  isOn: boolean;
+  disabled?: boolean;
+  compact?: boolean;
+  ariaLabel: string;
+  title: string;
+  onClick: () => void;
+}>(({ id, label, isOn, disabled = false, compact = false, ariaLabel, title, onClick }) => (
+  <button
+    id={id}
+    type="button"
+    role="switch"
+    aria-checked={isOn}
+    aria-label={ariaLabel}
+    disabled={disabled}
+    data-analog-toggle="true"
+    data-toggle-state={isOn ? 'on' : 'off'}
+    onClick={onClick}
+    title={title}
+    className={`relative w-full flex-1 min-h-0 flex items-center justify-between px-1 lg:px-1.5 rounded-[3px] border transition-opacity duration-150 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed select-none focus:outline-none overflow-hidden ${
+      isOn
+        ? 'bg-gradient-to-b from-[#2e1e11] to-[#170e07] border-[#d99b38]/85 text-[#fbbf24] shadow-[inset_0_1px_2px_rgba(0,0,0,0.9)]'
+        : 'bg-gradient-to-b from-[#1a1109] to-[#0d0804] border-[#4a2f19]/85 text-[#c5a684]'
+    }`}
   >
-    <img
-      src="/console/metal-plate.webp"
-      alt=""
-      aria-hidden="true"
-      draggable={false}
-      className="pointer-events-none absolute inset-0 w-full h-full object-cover"
-    />
-
-    {/* Top Stacked Button: Shuffle */}
-    <button
-      id="toggle-shuffle"
-      type="button"
-      onClick={() => {
-        triggerButtonHaptic(lowPowerMode);
-        onToggleShuffle();
-      }}
-      aria-label="Shuffle Queue"
-      aria-pressed={shuffleEnabled}
-      data-pressed={shuffleEnabled ? 'true' : 'false'}
-      title={shuffleEnabled ? 'Shuffle: ON' : 'Shuffle: OFF'}
-      className={`relative z-10 flex-1 w-full rounded-[2px] border border-black/75 flex items-center justify-center gap-1 px-1.5 cursor-pointer transition-transform duration-75 active:translate-y-[0.5px] ${
-        shuffleEnabled
-          ? 'bg-amber-300 text-[#14100c] font-extrabold'
-          : 'bg-[#1a140f]/90 text-[#e8dccb] hover:bg-[#261d16]'
-      }`}
-    >
+    {/* Left status LED + engraved label */}
+    <span className="flex items-center gap-0.5 lg:gap-1 min-w-0 z-10">
       <span
-        aria-hidden="true"
         className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-          shuffleEnabled ? 'bg-[#14100c]' : 'bg-amber-400/35'
+          isOn ? 'bg-amber-400 shadow-[0_0_5px_#f59e0b]' : 'bg-[#3d2918]'
         }`}
       />
-      <Shuffle strokeWidth={2.2} className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0" />
-      <span className="font-mono text-[6.5px] sm:text-[7.5px] font-bold uppercase tracking-tighter leading-none">
-        SHUF
-      </span>
-    </button>
-
-    {/* Bottom Stacked Button: Repeat */}
-    <button
-      id="toggle-repeat"
-      type="button"
-      onClick={() => {
-        triggerButtonHaptic(lowPowerMode);
-        onToggleRepeatOne();
-      }}
-      aria-label="Repeat Current Track"
-      aria-pressed={repeatOne}
-      data-pressed={repeatOne ? 'true' : 'false'}
-      title={repeatOne ? 'Repeat One: ON' : 'Repeat One: OFF'}
-      className={`relative z-10 flex-1 w-full rounded-[2px] border border-black/75 flex items-center justify-center gap-1 px-1.5 cursor-pointer transition-transform duration-75 active:translate-y-[0.5px] ${
-        repeatOne
-          ? 'bg-amber-300 text-[#14100c] font-extrabold'
-          : 'bg-[#1a140f]/90 text-[#e8dccb] hover:bg-[#261d16]'
-      }`}
-    >
       <span
-        aria-hidden="true"
-        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-          repeatOne ? 'bg-[#14100c]' : 'bg-amber-400/35'
+        className={`font-mono ${
+          compact ? 'text-[6.5px]' : 'text-[6.5px] lg:text-[7.5px] xl:text-[8px]'
+        } font-extrabold uppercase tracking-tight lg:tracking-wider leading-none whitespace-nowrap`}
+      >
+        {label}
+      </span>
+    </span>
+
+    {/* Classic horizontal machined toggle slot + left/right metal toggle bat lever */}
+    <span
+      className={`relative ${
+        compact ? 'w-[18px] h-2.5' : 'w-[20px] lg:w-6 xl:w-7 h-3 xl:h-3.5'
+      } rounded-full bg-[#060402] border border-[#5e3d21]/90 shadow-[inset_0_1px_3px_rgba(0,0,0,0.98)] flex items-center px-0.5 shrink-0 z-10`}
+    >
+      <span className="absolute inset-x-1 top-1/2 -translate-y-1/2 h-[2px] bg-[#26170b] rounded-full pointer-events-none" />
+      <span
+        data-toggle-lever="true"
+        style={{
+          transform: isOn
+            ? `translateX(${compact ? 6 : 8}px) translateZ(0)`
+            : 'translateX(0px) translateZ(0)',
+          transition: 'transform 140ms cubic-bezier(0.22, 1, 0.36, 1)',
+        }}
+        className={`relative ${
+          compact ? 'w-2 h-2' : 'w-2 lg:w-2.5 xl:w-3 h-2 xl:h-2.5'
+        } rounded-full border ${
+          isOn
+            ? 'border-[#fde68a] bg-gradient-to-b from-[#fffbeb] via-[#eab308] to-[#92400e] shadow-[0_1px_3px_rgba(0,0,0,0.95)]'
+            : 'border-[#d6c7b2]/75 bg-gradient-to-b from-[#f5efe6] via-[#a89886] to-[#4a3e33] shadow-[0_1px_3px_rgba(0,0,0,0.95)]'
         }`}
       />
-      <Repeat strokeWidth={2.2} className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0" />
-      <span className="font-mono text-[6.5px] sm:text-[7.5px] font-bold uppercase tracking-tighter leading-none">
-        REPT
-      </span>
-    </button>
-  </div>
+    </span>
+  </button>
 ));
 
 /**
- * Rightmost Taller Screwed-In Front-Face Retro Segment Time Display (elapsed / total).
- * Shares the EXACT same `dimensionClass` (width & height) as `#shuffle-repeat-stack`.
+ * Requirement 5: Reverted Classic Analog Fader-Slot Timeline / Seek Bar
+ * Matches the exact full width of #console-title-plate above it.
  */
-const FrontFaceTimeDisplay = React.memo<{
+const TopSeekTimelineBar = React.memo<{
+  trackId: string;
   durationSec: number;
   isStandby: boolean;
-  nightMode: boolean;
-  compactLandscape?: boolean;
-  dimensionClass: string;
-}>(({ durationSec, isStandby, nightMode, compactLandscape = false, dimensionClass }) => {
+  lowPowerMode: boolean;
+  onSeek: (targetSec: number) => void;
+}>(({ trackId, durationSec, isStandby, lowPowerMode, onSeek }) => {
   const currentSecond = usePlaybackSecond();
-  const phosphorBright = nightMode ? '#f59e0b' : '#fbbf24';
+  const safeDuration = Math.max(0, durationSec);
+  const progressPct =
+    safeDuration > 0 ? Math.min(100, Math.max(0, (currentSecond / safeDuration) * 100)) : 0;
+
+  return (
+    <div
+      id="top-seek-timeline"
+      data-track-id={trackId}
+      className="relative w-full px-1 py-0.5 flex items-center gap-2 shrink-0 select-none"
+    >
+      <span className="font-mono text-[8.5px] sm:text-[9.5px] font-bold text-[#fbbf24] tabular-nums w-9 text-right shrink-0 drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]">
+        {formatDuration(currentSecond)}
+      </span>
+      <div className="relative flex-1 h-4 flex items-center">
+        {/* Recessed mechanical fader groove track */}
+        <div className="relative w-full h-[5px] rounded-full bg-[#060402] border border-[#5c3c20]/90 shadow-[inset_0_2px_4px_rgba(0,0,0,0.98),0_1px_0_rgba(255,218,175,0.16)] overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-[#b45309] via-[#f59e0b] to-[#fde68a] rounded-full origin-left"
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+        {/* Tactile brushed-metal sliding fader cap */}
+        <img
+          src="/console/fader-cap.webp"
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          style={{
+            left: `calc(${progressPct}% - 7px)`,
+          }}
+          className="pointer-events-none absolute top-1/2 -translate-y-1/2 w-[14px] h-[16px] object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.9)] z-10"
+        />
+        <input
+          id="console-seek-slider"
+          type="range"
+          min={0}
+          max={Math.max(1, safeDuration)}
+          step={1}
+          value={Math.min(Math.max(1, safeDuration), currentSecond)}
+          disabled={isStandby}
+          onChange={(e) => {
+            triggerButtonHaptic(lowPowerMode);
+            onSeek(Number(e.target.value));
+          }}
+          aria-label="Seek Song Timeline"
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed z-20"
+        />
+      </div>
+      <span className="font-mono text-[8.5px] sm:text-[9.5px] font-bold text-[#d4b692] tabular-nums w-9 shrink-0 drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]">
+        {formatDuration(safeDuration)}
+      </span>
+    </div>
+  );
+});
+
+/**
+ * Isolated Live Local Clock (Larger Font) + Date with Day of Week (Smaller Font) Box
+ * on the Right End of #turntable-control-row — replaces duplicate song elapsed timestamp.
+ * Both bottom AND top edges align with Play/Pause button plate and #shuffle-repeat-stack.
+ */
+const ConsoleClockDateBox = React.memo<{
+  heightPx: number;
+  compact: boolean;
+  isDocumentHidden: boolean;
+}>(({ heightPx, compact, isDocumentHidden }) => {
+  const [now, setNow] = useState<Date>(() => new Date());
+
+  useEffect(() => {
+    setNow(new Date());
+    if (isDocumentHidden) return;
+    const timer = window.setInterval(() => {
+      setNow(new Date());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isDocumentHidden]);
+
+  const { timeText, dateText } = formatConsoleClockAndDate(now, false);
 
   return (
     <div
       id="console-time-display"
-      aria-label="Track Elapsed and Total Time"
-      className={`relative ${dimensionClass} box-border rounded-[3px] overflow-hidden border border-[#d6c7b2]/45 shadow-[inset_0_1px_0_rgba(255,255,255,0.4),0_2px_5px_rgba(0,0,0,0.75)] flex flex-col items-stretch justify-center p-1 shrink-0`}
+      data-testid="console-clock-date-display"
+      data-clock-date="true"
+      style={{ height: `${heightPx}px` }}
+      className={`relative ${
+        compact ? 'w-[74px]' : 'w-[80px] sm:w-[92px] lg:w-[106px] xl:w-[120px]'
+      } rounded-[4px] bg-[#080503] border border-[#5e3e22]/90 shadow-[inset_0_2px_6px_rgba(0,0,0,0.98),0_1px_0_rgba(255,214,165,0.16)] px-1.5 sm:px-2 py-1 flex flex-col items-center justify-center gap-0.5 shrink-0 overflow-hidden`}
     >
-      <img
-        src="/console/metal-plate.webp"
-        alt=""
-        aria-hidden="true"
-        draggable={false}
-        className="pointer-events-none absolute inset-0 w-full h-full object-cover"
-      />
-      <img
-        src="/console/screw-head.webp"
-        alt=""
-        aria-hidden="true"
-        draggable={false}
-        className="pointer-events-none absolute top-[2px] left-[2px] w-1 h-1 z-20"
-      />
-      <img
-        src="/console/screw-head.webp"
-        alt=""
-        aria-hidden="true"
-        draggable={false}
-        className="pointer-events-none absolute top-[2px] right-[2px] w-1 h-1 z-20"
-      />
-      <img
-        src="/console/screw-head.webp"
-        alt=""
-        aria-hidden="true"
-        draggable={false}
-        className="pointer-events-none absolute bottom-[2px] left-[2px] w-1 h-1 z-20"
-      />
-      <img
-        src="/console/screw-head.webp"
-        alt=""
-        aria-hidden="true"
-        draggable={false}
-        className="pointer-events-none absolute bottom-[2px] right-[2px] w-1 h-1 z-20"
-      />
-      <div
-        style={{ backgroundColor: nightMode ? '#080502' : '#050705' }}
-        className="relative z-10 w-full h-full rounded-[2px] border border-black/90 flex flex-col items-center justify-center px-1"
+      <span
+        id="console-live-time"
+        className={`font-mono ${
+          compact ? 'text-[10.5px]' : 'text-[12px] sm:text-[13px] xl:text-[14.5px]'
+        } font-bold text-[#fbbf24] tabular-nums leading-none tracking-tight whitespace-nowrap vfd-phosphor-text`}
       >
-        <span className="font-mono text-[5.5px] sm:text-[6px] uppercase tracking-widest text-amber-200/55 leading-none mb-0.5">
-          TIME / DUR
-        </span>
-        <span
-          style={{ color: phosphorBright }}
-          className={`font-mono ${
-            compactLandscape ? 'text-[7.5px]' : 'text-[8.5px] sm:text-[9.5px]'
-          } font-bold tracking-tighter vfd-phosphor-text whitespace-nowrap leading-none`}
-        >
-          {isStandby ? '00:00' : formatDuration(currentSecond)}/
-          {isStandby ? '00:00' : formatDuration(durationSec)}
-        </span>
-      </div>
+        {timeText}
+      </span>
+      <span
+        id="console-live-date"
+        className={`font-mono ${
+          compact ? 'text-[6.5px]' : 'text-[7.5px] sm:text-[8px] xl:text-[9px]'
+        } font-semibold text-[#c9a985] tabular-nums leading-none tracking-tight whitespace-nowrap`}
+      >
+        {dateText}
+      </span>
     </div>
   );
 });
 
-interface RasterTonearmProps {
+/**
+ * Subtle Floating Dust Canvas Overlay over the Turntable Area (#turntable-plinth-bed).
+ * Renders randomized slow-moving warm ambient dust motes while the turntable is spinning,
+ * and pauses animation cleanly when turntable playback is stopped or hidden.
+ */
+const TurntableDustCanvas = React.memo<{
+  width: number;
+  height: number;
+  isAnimating: boolean;
+}>(({ width, height, isAnimating }) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const particlesRef = useRef<DustParticle[]>([]);
+  const dimsRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+  const rafRef = useRef<number | null>(null);
+
+  const drawFrame = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const w = dimsRef.current.width;
+    const h = dimsRef.current.height;
+    ctx.clearRect(0, 0, w, h);
+
+    for (const p of particlesRef.current) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255, 232, 194, ${p.alpha.toFixed(3)})`;
+      ctx.fill();
+    }
+  }, []);
+
+  useEffect(() => {
+    const safeW = Math.max(40, Math.round(width));
+    const safeH = Math.max(40, Math.round(height));
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.round(safeW * dpr);
+    canvas.height = Math.round(safeH * dpr);
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    const prevW = dimsRef.current.width;
+    const prevH = dimsRef.current.height;
+    dimsRef.current = { width: safeW, height: safeH };
+
+    if (particlesRef.current.length === 0) {
+      particlesRef.current = generateDustParticles(28, safeW, safeH);
+    } else if (prevW > 0 && prevH > 0 && (prevW !== safeW || prevH !== safeH)) {
+      const sx = safeW / prevW;
+      const sy = safeH / prevH;
+      particlesRef.current = particlesRef.current.map((p) => ({
+        ...p,
+        x: Math.max(0, Math.min(safeW, p.x * sx)),
+        y: Math.max(0, Math.min(safeH, p.y * sy)),
+      }));
+    }
+    drawFrame();
+  }, [width, height, drawFrame]);
+
+  useEffect(() => {
+    if (!isAnimating) {
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      drawFrame();
+      return;
+    }
+
+    let lastTimeMs = performance.now();
+    const tick = (nowMs: number) => {
+      const dtSec = Math.min(0.08, Math.max(0.001, (nowMs - lastTimeMs) / 1000));
+      lastTimeMs = nowMs;
+      particlesRef.current = stepDustParticles(
+        particlesRef.current,
+        dimsRef.current.width,
+        dimsRef.current.height,
+        dtSec,
+        true
+      );
+      drawFrame();
+      rafRef.current = window.requestAnimationFrame(tick);
+    };
+    rafRef.current = window.requestAnimationFrame(tick);
+
+    return () => {
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [isAnimating, drawFrame]);
+
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      const canvas = canvasRef.current;
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+      particlesRef.current = [];
+    };
+  }, []);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      id="turntable-dust-canvas"
+      data-testid="turntable-dust-canvas"
+      data-dust-running={isAnimating ? 'true' : 'false'}
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 w-full h-full z-[38]"
+    />
+  );
+});
+
+/**
+ * Isolated Tonearm Subcomponent (Requirement 7):
+ * - Pivot anchored at the top-right of #turntable-plinth-bed just below #console-title-plate.
+ * - Aspect-locked to tonearm-arm.webp (848x1264) and dynamically sized/angled from the measured
+ *   turntable bed & vinyl record diameter so the stylus tip visually rests cleanly on the vinyl's
+ *   groove band across every desktop, tablet, car, and mobile viewport (idle/paused and playing).
+ * - Only lifts to rest on explicit Stop (#btn-stop-playback) or track-change transitions.
+ */
+const RasterTonearmAssembly = React.memo<{
   trackId: string;
   durationSec: number;
+  bedWidth: number;
+  bedHeight: number;
+  vinylDiameterPx: number;
+  vinylCenterXPct: number;
+  rightReservedPx: number;
   isPlaying: boolean;
   isStandby: boolean;
+  isStoppedAtRest: boolean;
+  forceTonearmRest: boolean;
   isDocumentHidden: boolean;
   lowPowerMode: boolean;
   prefersReducedMotion: boolean;
-  forceTonearmRest?: boolean;
-  chassisRef: React.RefObject<HTMLDivElement | null>;
-  draggedTonearmAngle: number | null;
-  onDragAngleChange: (angle: number | null) => void;
   onDragTonearmToTime: (targetSec: number) => void;
-}
-
-const RasterTonearm = React.memo<RasterTonearmProps>(
+}>(
   ({
     trackId,
     durationSec,
+    bedWidth,
+    bedHeight,
+    vinylDiameterPx,
+    vinylCenterXPct,
+    rightReservedPx,
     isPlaying,
     isStandby,
+    isStoppedAtRest,
+    forceTonearmRest,
     isDocumentHidden,
     lowPowerMode,
     prefersReducedMotion,
-    forceTonearmRest = false,
-    chassisRef,
-    draggedTonearmAngle,
-    onDragAngleChange,
     onDragTonearmToTime,
   }) => {
     const currentSecond = usePlaybackSecond();
-    const immediateSnap = lowPowerMode || prefersReducedMotion;
-
     const [tonearmPhase, setTonearmPhase] = useState<TonearmMotionPhase>(() =>
-      isPlaying && !isStandby && !forceTonearmRest ? 'playing' : 'rest'
+      !isStandby && !isStoppedAtRest && !forceTonearmRest ? 'playing' : 'rest'
     );
+    const [dragAngleDeg, setDragAngleDeg] = useState<number | null>(null);
 
-    const prevPlayingRef = useRef<boolean>(isPlaying && !isStandby && !forceTonearmRest);
+    const prevPlayRef = useRef<boolean>(isPlaying);
     const prevTrackIdRef = useRef<string>(trackId);
     const timersRef = useRef<number[]>([]);
+    const pivotContainerRef = useRef<HTMLDivElement | null>(null);
 
-    const clearCueTimers = () => {
-      for (const id of timersRef.current) {
-        window.clearTimeout(id);
-      }
+    const clearTimers = useCallback(() => {
+      timersRef.current.forEach((id) => window.clearTimeout(id));
       timersRef.current = [];
-    };
+    }, []);
 
     useEffect(() => {
-      const shouldBeActive = isPlaying && !isStandby && !forceTonearmRest;
-      const wasActive = prevPlayingRef.current;
-      const trackChanged = prevTrackIdRef.current !== trackId;
+      return clearTimers;
+    }, [clearTimers]);
 
-      prevPlayingRef.current = shouldBeActive;
+    useEffect(() => {
+      const wasPlaying = prevPlayRef.current;
+      const prevTrack = prevTrackIdRef.current;
+      const trackChanged = prevTrack !== trackId;
+
+      prevPlayRef.current = isPlaying;
       prevTrackIdRef.current = trackId;
 
-      clearCueTimers();
+      const immediateSnap = isDocumentHidden || lowPowerMode || prefersReducedMotion;
 
-      if (immediateSnap) {
-        setTonearmPhase(shouldBeActive ? 'playing' : 'rest');
-        return;
-      }
+      const decision = resolveTonearmMotionOnPlayStateChange({
+        isPlaying,
+        wasPlaying,
+        isStandby,
+        isStoppedAtRest,
+        trackChanged,
+        forceTonearmRest,
+        currentTonearmPhase: tonearmPhase,
+        immediateSnap,
+      });
 
-      if (forceTonearmRest) {
-        // Step d: Tonearm lifts and swings out of the way to rest while vinyl swap happens
-        setTonearmPhase('returning-to-rest');
-        return clearCueTimers;
-      }
+      clearTimers();
+      setTonearmPhase(decision.nextPhase);
 
-      if (shouldBeActive && (!wasActive || trackChanged)) {
-        // Step f: Tonearm swings back in and lowers onto the record
-        setTonearmPhase('swinging-to-groove');
+      if (decision.shouldScheduleDropToGroove) {
         const t1 = window.setTimeout(() => {
           setTonearmPhase('dropping-to-groove');
-        }, 180);
+        }, 320);
         const t2 = window.setTimeout(() => {
           setTonearmPhase('playing');
-        }, 320);
+        }, 520);
         timersRef.current.push(t1, t2);
-      } else if (!shouldBeActive && wasActive) {
-        setTonearmPhase('lifting-to-rest');
+      } else if (decision.shouldScheduleLiftToRest) {
         const t1 = window.setTimeout(() => {
           setTonearmPhase('returning-to-rest');
-        }, 200);
+        }, 160);
         const t2 = window.setTimeout(() => {
           setTonearmPhase('rest');
-        }, 560);
+        }, 480);
         timersRef.current.push(t1, t2);
-      } else if (!shouldBeActive) {
-        setTonearmPhase('rest');
       }
+    }, [
+      isPlaying,
+      isStandby,
+      isStoppedAtRest,
+      forceTonearmRest,
+      trackId,
+      isDocumentHidden,
+      lowPowerMode,
+      prefersReducedMotion,
+      clearTimers,
+    ]);
 
-      return clearCueTimers;
-    }, [isPlaying, isStandby, trackId, forceTonearmRest, immediateSnap]);
+    const tonearmGeom = useMemo(
+      () =>
+        applyTonearmAssemblyOffset(
+          calculateResponsiveTonearmGeometry({
+            bedWidth,
+            bedHeight,
+            vinylCenterX: bedWidth * vinylCenterXPct,
+            vinylCenterY: bedHeight / 2,
+            vinylDiameterPx,
+            rightReservedPx,
+          })
+        ),
+      [bedWidth, bedHeight, vinylCenterXPct, vinylDiameterPx, rightReservedPx]
+    );
 
-    useEffect(() => {
+    const trackingAngleDeg = useMemo(() => {
+      if (!Number.isFinite(durationSec) || durationSec <= 0) {
+        return tonearmGeom.outerAngleDeg;
+      }
+      const ratio = Math.max(0, Math.min(1, currentSecond / durationSec));
+      return Number(
+        (
+          tonearmGeom.outerAngleDeg +
+          ratio * (tonearmGeom.innerAngleDeg - tonearmGeom.outerAngleDeg)
+        ).toFixed(2)
+      );
+    }, [currentSecond, durationSec, tonearmGeom.outerAngleDeg, tonearmGeom.innerAngleDeg]);
+
+    const effectiveAngleDeg = useMemo(() => {
+      if (dragAngleDeg !== null) return dragAngleDeg;
       if (
-        isPlaying &&
-        !isStandby &&
-        !forceTonearmRest &&
-        currentSecond > 1 &&
-        tonearmPhase !== 'playing'
+        tonearmPhase === 'rest' ||
+        tonearmPhase === 'returning-to-rest' ||
+        forceTonearmRest ||
+        isStandby ||
+        isStoppedAtRest
       ) {
-        clearCueTimers();
-        setTonearmPhase('playing');
+        return tonearmGeom.restAngleDeg;
       }
-    }, [currentSecond, isPlaying, isStandby, forceTonearmRest, tonearmPhase]);
+      return trackingAngleDeg;
+    }, [
+      dragAngleDeg,
+      tonearmPhase,
+      forceTonearmRest,
+      isStandby,
+      isStoppedAtRest,
+      tonearmGeom.restAngleDeg,
+      trackingAngleDeg,
+    ]);
 
-    const effectivePhase: TonearmMotionPhase =
-      draggedTonearmAngle !== null
-        ? 'dragging'
-        : forceTonearmRest
-        ? 'returning-to-rest'
-        : tonearmPhase;
-
-    const grooveTracking = calculateTonearmTracking(currentSecond, durationSec);
-    let activeTonearmAngleDeg = grooveTracking.tonearmAngleDeg;
-    if (draggedTonearmAngle !== null) {
-      activeTonearmAngleDeg = draggedTonearmAngle;
-    } else if (
-      forceTonearmRest ||
-      (effectivePhase === 'rest' && currentSecond <= 0) ||
-      (effectivePhase === 'lifting-to-play' && currentSecond <= 0) ||
-      effectivePhase === 'returning-to-rest'
-    ) {
-      activeTonearmAngleDeg = TONEARM_REST_ANGLE_DEG;
-    }
-
-    const shadowPose = getTonearmShadowPose(effectivePhase);
-
-    let armTransition = 'transform 1000ms linear';
-    let shadowTransition = 'transform 1000ms linear, opacity 260ms ease';
-    if (effectivePhase === 'dragging' || immediateSnap) {
-      armTransition = 'none';
-      shadowTransition = immediateSnap ? 'none' : 'transform 120ms ease-out, opacity 120ms ease';
-    } else if (effectivePhase === 'lifting-to-play' || effectivePhase === 'lifting-to-rest') {
-      armTransition = 'transform 220ms ease-out';
-      shadowTransition = 'transform 220ms ease-out, opacity 220ms ease-out';
-    } else if (effectivePhase === 'swinging-to-groove') {
-      armTransition = 'transform 260ms cubic-bezier(0.32, 0.08, 0.24, 1)';
-      shadowTransition = 'transform 260ms cubic-bezier(0.32, 0.08, 0.24, 1), opacity 200ms ease';
-    } else if (effectivePhase === 'returning-to-rest') {
-      armTransition = 'transform 260ms cubic-bezier(0.32, 0.08, 0.24, 1)';
-      shadowTransition = 'transform 260ms cubic-bezier(0.32, 0.08, 0.24, 1), opacity 200ms ease';
-    } else if (effectivePhase === 'dropping-to-groove') {
-      armTransition = 'transform 180ms ease-in';
-      shadowTransition = 'transform 180ms ease-in, opacity 180ms ease-in';
-    }
-
-    const dragActiveRef = useRef<boolean>(false);
-
-    const computeAngleFromChassisPivot = (clientX: number, clientY: number): number => {
-      if (!chassisRef.current) return grooveTracking.tonearmAngleDeg;
-      const rect = chassisRef.current.getBoundingClientRect();
-      const pivotX = rect.left + rect.width * 0.885;
-      const pivotY = rect.top + rect.height * 0.14;
-      const dx = pivotX - clientX;
-      const dy = Math.max(20, clientY - pivotY);
-      const pointerDegFromVertical = (Math.atan2(dx, dy) * 180) / Math.PI;
-      const calibratedDeg = pointerDegFromVertical - 1.42;
-      return Number(Math.max(6, Math.min(25, calibratedDeg)).toFixed(2));
-    };
+    const shadowPose = useMemo(() => getTonearmShadowPose(tonearmPhase), [tonearmPhase]);
 
     const handleTonearmPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (isStandby || durationSec <= 0) return;
       e.stopPropagation();
-      if (isStandby) return;
-      dragActiveRef.current = true;
-      triggerButtonHaptic(lowPowerMode);
-      const nextAngle = computeAngleFromChassisPivot(e.clientX, e.clientY);
-      onDragAngleChange(nextAngle);
-      const { targetTimeSec } = calculateSeekTimeFromTonearmAngle(nextAngle, durationSec);
-      onDragTonearmToTime(targetTimeSec);
+      setTonearmPhase('dragging');
+      setDragAngleDeg(effectiveAngleDeg);
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
       } catch {
@@ -765,144 +1058,144 @@ const RasterTonearm = React.memo<RasterTonearmProps>(
     };
 
     const handleTonearmPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!dragActiveRef.current || isStandby) return;
-      e.stopPropagation();
-      const nextAngle = computeAngleFromChassisPivot(e.clientX, e.clientY);
-      onDragAngleChange(nextAngle);
-      const { targetTimeSec } = calculateSeekTimeFromTonearmAngle(nextAngle, durationSec);
-      onDragTonearmToTime(targetTimeSec);
+      if (dragAngleDeg === null || !pivotContainerRef.current) return;
+      const rect = pivotContainerRef.current.getBoundingClientRect();
+      const pivotX = rect.left + rect.width * TONEARM_ASSET_METRICS.pivotXPct;
+      const pivotY = rect.top + rect.height * TONEARM_ASSET_METRICS.pivotYPct;
+      const dx = pivotX - e.clientX;
+      const dy = e.clientY - pivotY;
+      if (dy <= 4) return;
+      const rawDeg = (Math.atan2(dx, dy) * 180) / Math.PI - TONEARM_ASSET_METRICS.intrinsicTipTiltDeg;
+      const clamped = Math.max(
+        tonearmGeom.outerAngleDeg,
+        Math.min(tonearmGeom.innerAngleDeg, rawDeg)
+      );
+      setDragAngleDeg(Number(clamped.toFixed(2)));
     };
 
     const handleTonearmPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!dragActiveRef.current) return;
-      e.stopPropagation();
-      const finalAngle = computeAngleFromChassisPivot(e.clientX, e.clientY);
-      dragActiveRef.current = false;
-      onDragAngleChange(null);
-      if (!isStandby) {
-        const { targetTimeSec } = calculateSeekTimeFromTonearmAngle(finalAngle, durationSec);
-        onDragTonearmToTime(targetTimeSec);
-      }
+      if (dragAngleDeg === null) return;
+      const finalAngle = dragAngleDeg;
+      setDragAngleDeg(null);
+      setTonearmPhase('playing');
       try {
         e.currentTarget.releasePointerCapture(e.pointerId);
       } catch {
         // ignore
       }
+      const seekResult = calculateSeekTimeFromTonearmAngle(
+        finalAngle,
+        durationSec,
+        tonearmGeom.outerAngleDeg,
+        tonearmGeom.innerAngleDeg
+      );
+      onDragTonearmToTime(seekResult.targetTimeSec);
     };
 
-    const microBobActive =
-      effectivePhase === 'playing' &&
-      !isStandby &&
-      !isDocumentHidden &&
-      !lowPowerMode &&
-      !prefersReducedMotion;
+    const transitionCss =
+      dragAngleDeg !== null || isDocumentHidden || lowPowerMode || prefersReducedMotion
+        ? 'none'
+        : tonearmPhase === 'playing'
+          ? 'transform 950ms linear'
+          : 'transform 360ms cubic-bezier(0.22, 1, 0.36, 1)';
 
     return (
       <div
-        aria-hidden={isStandby ? undefined : false}
-        className="pointer-events-none absolute inset-0 z-30"
+        id="turntable-tonearm-assembly"
+        ref={pivotContainerRef}
+        data-tonearm-phase={tonearmPhase}
+        data-tonearm-angle={effectiveAngleDeg.toFixed(2)}
+        data-offset-x={TONEARM_ASSEMBLY_OFFSET_X_PX}
+        data-offset-y={TONEARM_ASSEMBLY_OFFSET_Y_PX}
+        data-pivot-x={tonearmGeom.pivotX}
+        data-pivot-y={tonearmGeom.pivotY}
+        onPointerDown={handleTonearmPointerDown}
+        onPointerMove={handleTonearmPointerMove}
+        onPointerUp={handleTonearmPointerUp}
+        onPointerCancel={handleTonearmPointerUp}
+        title="Tonearm Assembly (drag needle across vinyl grooves to seek)"
+        style={{
+          left: `${tonearmGeom.armLeftPx}px`,
+          top: `${tonearmGeom.armTopPx}px`,
+          width: `${tonearmGeom.armWidthPx}px`,
+          height: `${tonearmGeom.armHeightPx}px`,
+        }}
+        className="absolute z-30 select-none cursor-grab active:cursor-grabbing touch-none"
       >
+        {/* Static Machined Tonearm Gimbal Base Concentrically Aligned Under Tonearm Pivot Cap */}
+        <img
+          src="/turntable/tonearm-base.webp"
+          alt="Tonearm Gimbal Base"
+          draggable={false}
+          style={{
+            left: '50%',
+            top: '23.5%',
+            transform: 'translate(-50%, -50%)',
+            width: '46%',
+          }}
+          className="pointer-events-none absolute object-contain z-10"
+        />
+
+        {/* Static Tonearm Rest Clip */}
         <img
           src="/turntable/tonearm-rest.webp"
           alt=""
           aria-hidden="true"
           draggable={false}
           style={{
-            left: '90%',
-            top: '57%',
-            width: '8.5%',
-            height: '10%',
+            left: '55%',
+            top: '46%',
+            transform: 'translate(-50%, -50%)',
+            width: '15%',
           }}
-          className="pointer-events-none absolute object-contain"
+          className="pointer-events-none absolute object-contain z-10"
         />
 
-        <img
-          src="/turntable/tonearm-base.webp"
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-          style={{
-            left: '77.5%',
-            top: '3%',
-            width: '22%',
-            height: '22%',
-          }}
-          className="pointer-events-none absolute object-contain"
-        />
-
+        {/* Pre-rendered Tonearm Drop Shadow */}
         <div
           aria-hidden="true"
           style={{
-            left: '62.06%',
-            top: '-5.03%',
-            width: '53.0%',
-            height: '79%',
-            transformOrigin: '49.88% 24.09%',
-            transform: `translate(${shadowPose.offsetXpx}px, ${shadowPose.offsetYpx}px) rotate(${activeTonearmAngleDeg}deg)`,
+            transformOrigin: '50% 23.5%',
+            transform: `translate3d(${shadowPose.offsetXpx}px, ${shadowPose.offsetYpx}px, 0) rotate(${effectiveAngleDeg}deg)`,
             opacity: shadowPose.opacity,
-            transition: shadowTransition,
+            transition: transitionCss,
           }}
-          className="pointer-events-none absolute"
+          className="pointer-events-none absolute inset-0 z-10"
         >
           <img
             src="/turntable/tonearm-shadow.webp"
             alt=""
             draggable={false}
-            className="pointer-events-none w-full h-full object-contain"
+            className="w-full h-full object-fill"
           />
         </div>
 
+        {/* Pivoting Tonearm Tube + Headshell */}
         <div
           id="turntable-tonearm-pivot"
-          data-tonearm-phase={effectivePhase}
-          data-tonearm-angle={activeTonearmAngleDeg}
           style={{
-            left: '62.06%',
-            top: '-5.03%',
-            width: '53.0%',
-            height: '79%',
-            transformOrigin: '49.88% 24.09%',
-            transform: `rotate(${activeTonearmAngleDeg}deg) scale(${shadowPose.armScale})`,
-            transition: armTransition,
+            transformOrigin: '50% 23.5%',
+            transform: `rotate(${effectiveAngleDeg}deg) scale(${shadowPose.armScale}) translateZ(0)`,
+            transition: transitionCss,
           }}
-          className="pointer-events-none absolute"
+          className="pointer-events-none relative w-full h-full z-20"
         >
-          <div className={`w-full h-full ${microBobActive ? 'tonearm-micro-bob' : ''}`}>
-            <img
-              src="/turntable/tonearm-arm.webp"
-              alt="Turntable Tonearm and Cartridge"
-              draggable={false}
-              className="pointer-events-none w-full h-full object-contain"
-            />
-          </div>
-
-          <div
-            role="slider"
-            tabIndex={0}
-            aria-label="Draggable Turntable Playing Head — Drag across vinyl record to seek track"
-            aria-valuemin={0}
-            aria-valuemax={durationSec || 180}
-            aria-valuenow={
-              draggedTonearmAngle !== null
-                ? calculateSeekTimeFromTonearmAngle(draggedTonearmAngle, durationSec).targetTimeSec
-                : Math.floor(currentSecond)
-            }
-            title="Click and drag the tonearm headshell across the record to seek"
-            onPointerDown={handleTonearmPointerDown}
-            onPointerMove={handleTonearmPointerMove}
-            onPointerUp={handleTonearmPointerUp}
+          <img
+            src="/turntable/tonearm-arm.webp"
+            alt="Turntable Tonearm"
+            draggable={false}
+            className="w-full h-full object-fill select-none"
+          />
+          {/* Exact Stylus Needle-Tip Child Coordinate Marker */}
+          <span
+            id="tonearm-stylus-tip"
+            data-testid="tonearm-stylus-tip"
+            aria-hidden="true"
             style={{
-              left: '34%',
-              top: '22%',
-              width: '32%',
-              height: '74%',
-              touchAction: 'none',
+              left: '46.9%',
+              top: '92.64%',
             }}
-            className={`absolute rounded-full ${
-              isStandby
-                ? 'pointer-events-none'
-                : 'pointer-events-auto cursor-grab active:cursor-grabbing'
-            }`}
+            className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full"
           />
         </div>
       </div>
@@ -920,8 +1213,10 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
     prefersReducedMotion,
     rpm,
     pitchPercent,
+    volume,
     repeatOne,
     shuffleEnabled,
+    hideBoxArt = false,
     viewportLayout,
     themePalette,
     onTogglePlay,
@@ -929,1044 +1224,1169 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
     onPrevious,
     onNext,
     onSeek,
+    onChangePitch,
+    onChangeVolume,
     onToggleRepeatOne,
     onToggleShuffle,
     onScratch,
     onDragTonearmToTime,
+    parentPlaylistCoverUrl,
+    onResolvedPerTrackArtwork,
   }) => {
     const isStandby = track.id === 'standby-empty' || track.durationSec <= 0;
-    const isLandscapeMobile = viewportLayout === 'mobile-landscape';
+    const isCompactLandscape = viewportLayout === 'mobile-landscape';
 
-    const [scratchAngleOffset, setScratchAngleOffset] = useState(0);
-    const [isScratching, setIsScratching] = useState(false);
-    const [scratchFlash, setScratchFlash] = useState(false);
-
-    // 6-Step Track-Change Animation Sequence State Machine (a -> f)
-    const [trackChangePhase, setTrackChangePhase] = useState<TrackChangePhase>('idle');
-    const [displayedBoxTrack, setDisplayedBoxTrack] = useState<TrackItem>(track);
-    const prevAnimatedTrackRef = useRef<TrackItem>(track);
-    const trackChangeTimersRef = useRef<number[]>([]);
-    const trackChangePhaseRef = useRef<TrackChangePhase>('idle');
-    trackChangePhaseRef.current = trackChangePhase;
-
-    const clearTrackChangeTimers = () => {
-      for (const timerId of trackChangeTimersRef.current) {
-        window.clearTimeout(timerId);
-      }
-      trackChangeTimersRef.current = [];
-    };
+    // Requirement 7: Track whether playback was explicitly stopped (Pause keeps tonearm on groove; Stop returns to rest)
+    const [isStoppedAtRest, setIsStoppedAtRest] = useState<boolean>(false);
 
     useEffect(() => {
-      return clearTrackChangeTimers;
+      if (isPlaying) {
+        setIsStoppedAtRest(false);
+      }
+    }, [isPlaying, track.id]);
+
+    // --- Requirement 1 & 9: Song-Specific Album Art Resolution, Retry/Fallback & Skeleton State ---
+    const [artworkFailedCount, setArtworkFailedCount] = useState<number>(0);
+    const [artworkLoaded, setArtworkLoaded] = useState<boolean>(false);
+
+    useEffect(() => {
+      setArtworkFailedCount(0);
+      setArtworkLoaded(false);
+    }, [track.id, track.artworkUrl]);
+
+    const artworkState = useMemo(
+      () => resolveActiveArtworkState(track, artworkFailedCount, parentPlaylistCoverUrl),
+      [track, artworkFailedCount, parentPlaylistCoverUrl]
+    );
+
+    // Requirement 9: If a track lacks song-specific artwork (or only had parent playlist cover), fetch individual song artwork from server
+    useEffect(() => {
+      if (isStandby || !track.id || !track.title) return;
+      if (!artworkState.isPlaceholder) return;
+
+      let cancelled = false;
+      const params = new URLSearchParams({
+        trackId: track.id,
+        title: track.title,
+        artist: track.artist || '',
+      });
+
+      fetch(`/api/spotify/track-artwork?${params.toString()}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: { artworkUrl?: string | null } | null) => {
+          if (cancelled || !data?.artworkUrl) return;
+          onResolvedPerTrackArtwork?.(track.id, data.artworkUrl);
+        })
+        .catch(() => {
+          // placeholder remains active if offline
+        });
+
+      return () => {
+        cancelled = true;
+      };
+    }, [isStandby, track.id, track.title, track.artist, artworkState.isPlaceholder, onResolvedPerTrackArtwork]);
+
+    const albumArtImgRef = useRef<HTMLImageElement | null>(null);
+    useEffect(() => {
+      const imgEl = albumArtImgRef.current;
+      if (imgEl && imgEl.complete && imgEl.naturalWidth > 0) {
+        setArtworkLoaded(true);
+      }
+    }, [artworkState.activeUrl, track.id]);
+
+    const handleArtworkError = useCallback(() => {
+      setArtworkLoaded(false);
+      setArtworkFailedCount((prev) => prev + 1);
     }, []);
 
-    // Trigger snappy (~1.56s) 6-step track-change animation when a different song is selected
-    // Skippable / non-blocking if user clicks another track mid-animation!
-    useEffect(() => {
-      const prevTrack = prevAnimatedTrackRef.current;
-      if (prevTrack.id === track.id) {
-        setDisplayedBoxTrack(track);
-        return;
+    const handleArtworkLoad = useCallback(() => {
+      setArtworkLoaded(true);
+    }, []);
+
+    // --- Dynamic Vinyl Diameter + Turntable Bed Measurements for Tonearm Geometry & Holder Box Dragging ---
+    const topSurfaceRef = useRef<HTMLDivElement | null>(null);
+    const plinthBedRef = useRef<HTMLDivElement | null>(null);
+    const titlePlateRef = useRef<HTMLDivElement | null>(null);
+    const lyricsStripRef = useRef<HTMLDivElement | null>(null);
+    const holderHomeSlotRef = useRef<HTMLDivElement | null>(null);
+    const rightControlsRef = useRef<HTMLDivElement | null>(null);
+    const [vinylDiameterPx, setVinylDiameterPx] = useState<number>(
+      isCompactLandscape ? 120 : 210
+    );
+    const [plinthBedSize, setPlinthBedSize] = useState<{ width: number; height: number }>({
+      width: 560,
+      height: isCompactLandscape ? 140 : 260,
+    });
+    const [rightControlsWidthPx, setRightControlsWidthPx] = useState<number>(
+      isCompactLandscape ? 64 : 84
+    );
+
+    const measureVinylSpace = useCallback(() => {
+      const titleEl = titlePlateRef.current;
+      const lyricsEl = lyricsStripRef.current;
+      const bedEl = plinthBedRef.current;
+      const rightEl = rightControlsRef.current;
+      const rightReservedEstimate =
+        rightEl && rightEl.getBoundingClientRect().width > 20
+          ? Math.round(rightEl.getBoundingClientRect().width + 6)
+          : rightControlsWidthPx;
+      if (titleEl && lyricsEl) {
+        const titleRect = titleEl.getBoundingClientRect();
+        const lyricsRect = lyricsEl.getBoundingClientRect();
+        if (lyricsRect.top > titleRect.bottom) {
+          // 19px vinyl margin leaves ~8px visible wooden gap between #console-title-plate and #turntable-raised-platter-plinth (inset: -11px)
+          const heightBoundedDiameter = calculateVinylDiameterFromBounds(
+            titleRect.bottom,
+            lyricsRect.top,
+            19
+          );
+          const bedWidthNow = bedEl ? bedEl.getBoundingClientRect().width : 0;
+          const widthBoundedDiameter =
+            bedWidthNow > 120
+              ? Math.max(84, Math.floor(bedWidthNow - rightReservedEstimate - 28))
+              : heightBoundedDiameter;
+          const nextDiameter = Math.min(heightBoundedDiameter, widthBoundedDiameter);
+          setVinylDiameterPx((prev) => (Math.abs(prev - nextDiameter) >= 1 ? nextDiameter : prev));
+        }
       }
-      prevAnimatedTrackRef.current = track;
-
-      // Cancel any in-flight animation immediately so rapid clicks never queue up
-      clearTrackChangeTimers();
-
-      if (
-        prefersReducedMotion ||
-        prevTrack.id === 'standby-empty' ||
-        track.id === 'standby-empty'
-      ) {
-        setDisplayedBoxTrack(track);
-        setTrackChangePhase('idle');
-        return;
+      if (bedEl) {
+        const bedRect = bedEl.getBoundingClientRect();
+        if (bedRect.width > 50 && bedRect.height > 50) {
+          const nextW = Math.round(bedRect.width);
+          const nextH = Math.round(bedRect.height);
+          setPlinthBedSize((prev) =>
+            Math.abs(prev.width - nextW) >= 1 || Math.abs(prev.height - nextH) >= 1
+              ? { width: nextW, height: nextH }
+              : prev
+          );
+        }
       }
-
-      const wasMidAnimation = trackChangePhaseRef.current !== 'idle';
-
-      if (wasMidAnimation) {
-        // User clicked another track mid-animation: cut immediately to bringing the new track's box in!
-        setDisplayedBoxTrack(track);
-        setTrackChangePhase('bringing-new-box-from-playlist');
-
-        const tSlide = window.setTimeout(() => {
-          setTrackChangePhase('sliding-vinyl-to-spindle');
-        }, 280);
-        const tLower = window.setTimeout(() => {
-          setTrackChangePhase('lowering-tonearm');
-        }, 580);
-        const tIdle = window.setTimeout(() => {
-          setTrackChangePhase('idle');
-        }, 860);
-        trackChangeTimersRef.current.push(tSlide, tLower, tIdle);
-        return;
+      if (rightEl) {
+        const rightRect = rightEl.getBoundingClientRect();
+        if (rightRect.width > 20) {
+          const nextRW = Math.round(rightRect.width + 6);
+          setRightControlsWidthPx((prev) => (Math.abs(prev - nextRW) >= 1 ? nextRW : prev));
+        }
       }
+    }, []);
 
-      // Full 6-step sequence (a -> b -> c -> d -> e -> f):
-      // Step a & d (0ms): Vinyl lifts/slides off spindle into holder box above it; tonearm lifts & swings to rest
-      setDisplayedBoxTrack(prevTrack);
-      setTrackChangePhase('lifting-vinyl-to-box');
+    useLayoutEffect(() => {
+      measureVinylSpace();
+      const observer =
+        typeof ResizeObserver !== 'undefined'
+          ? new ResizeObserver(() => {
+              measureVinylSpace();
+            })
+          : null;
 
-      // Step b (260ms): Old track's holder box animates/shrinks toward its playlist position
-      const tReturnBox = window.setTimeout(() => {
-        setTrackChangePhase('returning-box-to-playlist');
-      }, TRACK_CHANGE_TIMELINE_MS.liftVinylEndMs);
+      if (observer) {
+        if (topSurfaceRef.current) observer.observe(topSurfaceRef.current);
+        if (plinthBedRef.current) observer.observe(plinthBedRef.current);
+        if (titlePlateRef.current) observer.observe(titlePlateRef.current);
+        if (lyricsStripRef.current) observer.observe(lyricsStripRef.current);
+        if (rightControlsRef.current) observer.observe(rightControlsRef.current);
+      }
+      window.addEventListener('resize', measureVinylSpace);
+      return () => {
+        observer?.disconnect();
+        window.removeEventListener('resize', measureVinylSpace);
+      };
+    }, [measureVinylSpace, viewportLayout]);
 
-      // Step c (580ms): Newly selected track's holder box animates out from playlist onto wooden board above turntable
-      const tBringNewBox = window.setTimeout(() => {
-        setDisplayedBoxTrack(track);
-        setTrackChangePhase('bringing-new-box-from-playlist');
-      }, TRACK_CHANGE_TIMELINE_MS.returnBoxEndMs);
+    // Album art holder box is exactly 5px larger (in width and height) than the vinyl record's current diameter
+    const holderBoxSizePx = useMemo(
+      () => calculateHolderBoxSizeFromVinyl(vinylDiameterPx),
+      [vinylDiameterPx]
+    );
 
-      // Step e (920ms): New box opens and vinyl record slides out of holder box onto turntable spindle
-      const tSlideVinyl = window.setTimeout(() => {
-        setTrackChangePhase('sliding-vinyl-to-spindle');
-      }, TRACK_CHANGE_TIMELINE_MS.bringNewBoxEndMs);
+    // Position entire turntable assembly (platter plinth + vinyl + tonearm) on the right side
+    // immediately adjacent to #turntable-right-controls-column
+    const vinylCenterXPct = useMemo(() => {
+      const targetX = calculateRightDockedVinylCenterX({
+        bedWidth: plinthBedSize.width,
+        rightReservedPx: rightControlsWidthPx,
+        vinylDiameterPx,
+      });
+      return Number((targetX / Math.max(1, plinthBedSize.width)).toFixed(4));
+    }, [plinthBedSize.width, rightControlsWidthPx, vinylDiameterPx]);
 
-      // Step f (1260ms): Tonearm swings back in and lowers onto record
-      const tLowerArm = window.setTimeout(() => {
-        setTrackChangePhase('lowering-tonearm');
-      }, TRACK_CHANGE_TIMELINE_MS.slideVinylToSpindleEndMs);
+    // Measure Play/Pause button top to plate bottom so #shuffle-repeat-stack & #console-time-display align at BOTH top & bottom
+    const playPausePlateRef = useRef<HTMLDivElement | null>(null);
+    const playPauseBtnRef = useRef<HTMLButtonElement | null>(null);
+    const [endModuleHeightPx, setEndModuleHeightPx] = useState<number>(
+      isCompactLandscape ? 42 : 52
+    );
 
-      // Complete (1560ms): Settle back to idle
-      const tIdle = window.setTimeout(() => {
-        setTrackChangePhase('idle');
-      }, TRACK_CHANGE_TIMELINE_MS.lowerTonearmEndMs);
+    const measureControlBarAlignment = useCallback(() => {
+      const plateEl = playPausePlateRef.current;
+      const btnEl = playPauseBtnRef.current;
+      if (!plateEl || !btnEl) return;
+      const plateRect = plateEl.getBoundingClientRect();
+      const btnRect = btnEl.getBoundingClientRect();
+      const totalH = Math.round(plateRect.bottom - btnRect.top);
+      if (totalH >= 32) {
+        setEndModuleHeightPx((prev) => (prev !== totalH ? totalH : prev));
+      }
+    }, []);
 
-      trackChangeTimersRef.current.push(
-        tReturnBox,
-        tBringNewBox,
-        tSlideVinyl,
-        tLowerArm,
-        tIdle
+    useLayoutEffect(() => {
+      measureControlBarAlignment();
+      const ro =
+        typeof ResizeObserver !== 'undefined'
+          ? new ResizeObserver(measureControlBarAlignment)
+          : null;
+      if (ro && playPausePlateRef.current) {
+        ro.observe(playPausePlateRef.current);
+      }
+      window.addEventListener('resize', measureControlBarAlignment);
+      return () => {
+        ro?.disconnect();
+        window.removeEventListener('resize', measureControlBarAlignment);
+      };
+    }, [measureControlBarAlignment, viewportLayout]);
+
+    // --- Requirement 6 & 10: Freely Draggable Holder Box with Counterweight Tilt Physics ---
+    const [holderOffset, setHolderOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+    const [holderTiltDeg, setHolderTiltDeg] = useState<number>(0);
+    const [isDraggingHolder, setIsDraggingHolder] = useState<boolean>(false);
+    const holderDragOriginRef = useRef<{
+      pointerX: number;
+      pointerY: number;
+      lastPointerX: number;
+      lastDeltaX: number;
+      startX: number;
+      startY: number;
+      surfaceWidth: number;
+      surfaceHeight: number;
+      homeCenterX: number;
+      homeCenterY: number;
+    } | null>(null);
+
+    const handleHolderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+      e.stopPropagation();
+      const surfaceRect =
+        topSurfaceRef.current?.getBoundingClientRect() ||
+        plinthBedRef.current?.getBoundingClientRect();
+      const homeRect = holderHomeSlotRef.current?.getBoundingClientRect();
+      const surfaceW = surfaceRect ? surfaceRect.width : 560;
+      const surfaceH = surfaceRect ? surfaceRect.height : 460;
+      const homeCenterX =
+        surfaceRect && homeRect
+          ? homeRect.left - surfaceRect.left + homeRect.width / 2
+          : 6 + holderBoxSizePx / 2;
+      const homeCenterY =
+        surfaceRect && homeRect
+          ? homeRect.top - surfaceRect.top + homeRect.height / 2
+          : surfaceH / 2;
+
+      holderDragOriginRef.current = {
+        pointerX: e.clientX,
+        pointerY: e.clientY,
+        lastPointerX: e.clientX,
+        lastDeltaX: 0,
+        startX: holderOffset.x,
+        startY: holderOffset.y,
+        surfaceWidth: surfaceW,
+        surfaceHeight: surfaceH,
+        homeCenterX,
+        homeCenterY,
+      };
+      setIsDraggingHolder(true);
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    };
+
+    const handleHolderPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+      const origin = holderDragOriginRef.current;
+      if (!origin) return;
+      const stepDeltaX = e.clientX - origin.lastPointerX;
+      origin.lastPointerX = e.clientX;
+      if (Math.abs(stepDeltaX) >= 0.5) {
+        origin.lastDeltaX = stepDeltaX;
+      }
+      const rawX = origin.startX + (e.clientX - origin.pointerX);
+      const rawY = origin.startY + (e.clientY - origin.pointerY);
+      const clamped = clampHolderBoxDragOffset({
+        offsetX: rawX,
+        offsetY: rawY,
+        boardWidth: origin.surfaceWidth,
+        boardHeight: origin.surfaceHeight,
+        boxSize: holderBoxSizePx,
+        homeCenterX: origin.homeCenterX,
+        homeCenterY: origin.homeCenterY,
+        snapRadiusPx: 8,
+      });
+      setHolderOffset({ x: clamped.offsetX, y: clamped.offsetY });
+      setHolderTiltDeg(calculateHolderBoxDragTiltDeg(stepDeltaX, true));
+    };
+
+    const handleHolderPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+      const origin = holderDragOriginRef.current;
+      if (!origin) return;
+      const finalRestTilt = calculateHolderBoxRestTiltDeg(
+        holderOffset.x,
+        origin.lastDeltaX,
+        Math.hypot(holderOffset.x, holderOffset.y) < 1
       );
-    }, [track, lowPowerMode, prefersReducedMotion]);
+      holderDragOriginRef.current = null;
+      setIsDraggingHolder(false);
+      setHolderTiltDeg(finalRestTilt);
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    };
+
+    // --- 6-Step Choreographed Track-Change Animation ---
+    const [trackChangePhase, setTrackChangePhase] = useState<TrackChangePhase>('idle');
+    const prevTrackIdForStageRef = useRef<string>(track.id);
+
+    useEffect(() => {
+      if (prevTrackIdForStageRef.current === track.id) return;
+      prevTrackIdForStageRef.current = track.id;
+
+      if (isDocumentHidden || lowPowerMode || prefersReducedMotion || isStandby) {
+        setTrackChangePhase('idle');
+        return;
+      }
+
+      setTrackChangePhase('lifting-vinyl-to-box');
+      const t1 = window.setTimeout(
+        () => setTrackChangePhase('returning-box-to-playlist'),
+        TRACK_CHANGE_TIMELINE_MS.liftVinylEndMs
+      );
+      const t2 = window.setTimeout(
+        () => setTrackChangePhase('bringing-new-box-from-playlist'),
+        TRACK_CHANGE_TIMELINE_MS.returnBoxEndMs
+      );
+      const t3 = window.setTimeout(
+        () => setTrackChangePhase('sliding-vinyl-to-spindle'),
+        TRACK_CHANGE_TIMELINE_MS.bringNewBoxEndMs
+      );
+      const t4 = window.setTimeout(
+        () => setTrackChangePhase('lowering-tonearm'),
+        TRACK_CHANGE_TIMELINE_MS.slideVinylToSpindleEndMs
+      );
+      const t5 = window.setTimeout(
+        () => setTrackChangePhase('idle'),
+        TRACK_CHANGE_TIMELINE_MS.lowerTonearmEndMs
+      );
+
+      return () => {
+        window.clearTimeout(t1);
+        window.clearTimeout(t2);
+        window.clearTimeout(t3);
+        window.clearTimeout(t4);
+        window.clearTimeout(t5);
+      };
+    }, [track.id, isDocumentHidden, lowPowerMode, prefersReducedMotion, isStandby]);
 
     const stagePose = useMemo(
       () => getTrackChangeStagePose(trackChangePhase),
       [trackChangePhase]
     );
 
-    const activeBoxTrack = stagePose.showOutgoingTrackInBox ? displayedBoxTrack : track;
-
-    // Multi-URL album art resolution & fallback state for the active holder box track
-    const [failedAttemptCount, setFailedAttemptCount] = useState<number>(0);
-    const [imgLoaded, setImgLoaded] = useState<boolean>(false);
-
-    // Draggable square album-art holder box position state (offset in px from home position above the vinyl)
-    const [holderBoxOffset, setHolderBoxOffset] = useState<{ offsetX: number; offsetY: number }>(() => {
-      if (typeof window === 'undefined') return { offsetX: 0, offsetY: 0 };
-      try {
-        const raw = window.localStorage.getItem(HOLDER_BOX_POS_STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (typeof parsed.offsetX === 'number' && typeof parsed.offsetY === 'number') {
-            return { offsetX: parsed.offsetX, offsetY: parsed.offsetY };
-          }
-        }
-      } catch {
-        // ignore
-      }
-      return { offsetX: 0, offsetY: 0 };
-    });
-    const [isDraggingHolderBox, setIsDraggingHolderBox] = useState<boolean>(false);
-
-    const [draggedTonearmAngle, setDraggedTonearmAngle] = useState<number | null>(null);
-
-    const scratchStartAngleRef = useRef<number>(0);
-    const scratchHoldIntervalRef = useRef<number | null>(null);
-    const lastDragHapticMsRef = useRef<number>(0);
-    const platterRef = useRef<HTMLDivElement | null>(null);
-    const chassisRef = useRef<HTMLDivElement | null>(null);
-    const plinthBedRef = useRef<HTMLDivElement | null>(null);
-    const holderBoxSlotRef = useRef<HTMLDivElement | null>(null);
-    const holderBoxRef = useRef<HTMLDivElement | null>(null);
-    const holderDragStartRef = useRef<{
-      startX: number;
-      startY: number;
-      initialOffsetX: number;
-      initialOffsetY: number;
-    } | null>(null);
-
-    // Reset artwork error attempts and loading skeleton when holder box track changes
-    const candidateSignature = useMemo(
-      () =>
-        `${activeBoxTrack.id}|${activeBoxTrack.artworkUrl}|${
-          activeBoxTrack.images ? activeBoxTrack.images.map((i) => i.url).join(',') : ''
-        }`,
-      [activeBoxTrack.id, activeBoxTrack.artworkUrl, activeBoxTrack.images]
-    );
-
-    useEffect(() => {
-      setFailedAttemptCount(0);
-      setImgLoaded(false);
-    }, [candidateSignature]);
-
-    const artworkState = useMemo(
-      () => resolveActiveArtworkState(activeBoxTrack, failedAttemptCount),
-      [activeBoxTrack, failedAttemptCount]
-    );
-
-    const isHolderAtHome =
-      Math.hypot(holderBoxOffset.offsetX, holderBoxOffset.offsetY) <= 12;
-
-    const persistHolderBoxOffset = (next: { offsetX: number; offsetY: number }) => {
-      setHolderBoxOffset(next);
-      try {
-        window.localStorage.setItem(HOLDER_BOX_POS_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // ignore
-      }
-    };
-
-    const effectiveRate = useMemo(() => {
-      const base = rpm === 45 ? 45 / 33.333 : 1;
-      return Number((base * Math.max(0.5, 1 + pitchPercent / 100)).toFixed(3));
-    }, [rpm, pitchPercent]);
-
     const spinDurationSec = useMemo(() => {
-      return Number((1.8 / effectiveRate).toFixed(2));
-    }, [effectiveRate]);
+      const baseRpm = rpm === 45 ? 45 : 33.333;
+      const effectiveRpm = Math.max(12, baseRpm * (1 + pitchPercent / 100));
+      return Number((60 / effectiveRpm).toFixed(3));
+    }, [rpm, pitchPercent]);
 
     const spinTimingFunction = useMemo(
       () => calculateVinylSpinTiming(spinDurationSec, lowPowerMode),
       [spinDurationSec, lowPowerMode]
     );
 
-    const shouldSpin =
-      isPlaying && !isScratching && !isStandby && !isDocumentHidden && !prefersReducedMotion;
+    const shouldSpin = Boolean(
+      isPlaying && !isStandby && !isDocumentHidden && !prefersReducedMotion
+    );
 
-    const shouldAnimateDustMotes =
-      isPlaying && !isDocumentHidden && !lowPowerMode && !prefersReducedMotion;
-
-    const handleTriggerScratch = (intensity: 'light' | 'classic' | 'backspin') => {
-      onScratch(intensity);
-      triggerScratchHaptic(lowPowerMode, intensity);
-      setScratchFlash(true);
-      const delta = intensity === 'backspin' ? -145 : intensity === 'classic' ? -68 : 42;
-      setScratchAngleOffset((prev) => (prev + delta) % 360);
-      window.setTimeout(() => setScratchFlash(false), 320);
-    };
-
-    const handleScratchButtonHoldStart = () => {
-      handleTriggerScratch('classic');
-      if (scratchHoldIntervalRef.current !== null) {
-        window.clearInterval(scratchHoldIntervalRef.current);
-      }
-      scratchHoldIntervalRef.current = window.setInterval(() => {
-        handleTriggerScratch('light');
-      }, 220);
-    };
-
-    const handleScratchButtonHoldEnd = () => {
-      if (scratchHoldIntervalRef.current !== null) {
-        window.clearInterval(scratchHoldIntervalRef.current);
-        scratchHoldIntervalRef.current = null;
-      }
-    };
+    const [scratchPulseActive, setScratchPulseActive] = useState<boolean>(false);
+    const scratchTimerRef = useRef<number | null>(null);
 
     useEffect(() => {
       return () => {
-        if (scratchHoldIntervalRef.current !== null) {
-          window.clearInterval(scratchHoldIntervalRef.current);
+        if (scratchTimerRef.current !== null) {
+          window.clearTimeout(scratchTimerRef.current);
         }
       };
     }, []);
 
-    // Pointer drag handlers for the SQUARE Album-Art Holder Box sitting above the vinyl
-    const computeClampedHolderOffset = (rawOffsetX: number, rawOffsetY: number) => {
-      const boardEl = plinthBedRef.current;
-      const slotEl = holderBoxSlotRef.current;
-      const boxEl = holderBoxRef.current;
-      if (!boardEl || !slotEl) {
-        return {
-          offsetX: Math.round(rawOffsetX),
-          offsetY: Math.round(rawOffsetY),
-          isAtHomePosition: Math.hypot(rawOffsetX, rawOffsetY) <= 12,
-        };
-      }
-      const boardRect = boardEl.getBoundingClientRect();
-      const slotRect = slotEl.getBoundingClientRect();
-      const boxSize = boxEl ? boxEl.getBoundingClientRect().width : slotRect.width;
-      const homeCenterX = slotRect.left - boardRect.left + slotRect.width / 2;
-      const homeCenterY = slotRect.top - boardRect.top + slotRect.height / 2;
-
-      return clampHolderBoxDragOffset({
-        offsetX: rawOffsetX,
-        offsetY: rawOffsetY,
-        boardWidth: boardRect.width,
-        boardHeight: boardRect.height,
-        boxSize,
-        homeCenterX,
-        homeCenterY,
-      });
-    };
-
-    const handleHolderBoxPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-      e.stopPropagation();
+    const handleTriggerScratch = useCallback(() => {
       triggerButtonHaptic(lowPowerMode);
-      setIsDraggingHolderBox(true);
-      holderDragStartRef.current = {
-        startX: e.clientX,
-        startY: e.clientY,
-        initialOffsetX: holderBoxOffset.offsetX,
-        initialOffsetY: holderBoxOffset.offsetY,
-      };
-      try {
-        e.currentTarget.setPointerCapture(e.pointerId);
-      } catch {
-        // ignore
+      onScratch('classic');
+      setScratchPulseActive(true);
+      if (scratchTimerRef.current !== null) {
+        window.clearTimeout(scratchTimerRef.current);
       }
-    };
+      scratchTimerRef.current = window.setTimeout(() => {
+        setScratchPulseActive(false);
+        scratchTimerRef.current = null;
+      }, 220);
+    }, [lowPowerMode, onScratch]);
 
-    const handleHolderBoxPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!isDraggingHolderBox || !holderDragStartRef.current) return;
-      e.stopPropagation();
-      const dx = e.clientX - holderDragStartRef.current.startX;
-      const dy = e.clientY - holderDragStartRef.current.startY;
-      const clamped = computeClampedHolderOffset(
-        holderDragStartRef.current.initialOffsetX + dx,
-        holderDragStartRef.current.initialOffsetY + dy
-      );
-      setHolderBoxOffset({ offsetX: clamped.offsetX, offsetY: clamped.offsetY });
-    };
 
-    const handleHolderBoxPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!isDraggingHolderBox || !holderDragStartRef.current) return;
-      e.stopPropagation();
-      const dx = e.clientX - holderDragStartRef.current.startX;
-      const dy = e.clientY - holderDragStartRef.current.startY;
-      const clamped = computeClampedHolderOffset(
-        holderDragStartRef.current.initialOffsetX + dx,
-        holderDragStartRef.current.initialOffsetY + dy
-      );
-      setIsDraggingHolderBox(false);
-      holderDragStartRef.current = null;
-      persistHolderBoxOffset({ offsetX: clamped.offsetX, offsetY: clamped.offsetY });
-      try {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      } catch {
-        // ignore
-      }
-    };
+    const handleStopClick = useCallback(() => {
+      triggerButtonHaptic(lowPowerMode);
+      setIsStoppedAtRest(true);
+      onStop();
+    }, [lowPowerMode, onStop]);
 
-    // Rotational scratch handlers on the plain vinyl record (vinyl stays fixed on spindle, never translates on drag)
-    const handlePlatterPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-      e.stopPropagation();
-      if (!platterRef.current) return;
-      const rect = platterRef.current.getBoundingClientRect();
-      const cx = rect.left + rect.width / 2;
-      const cy = rect.top + rect.height / 2;
-      scratchStartAngleRef.current =
-        Math.atan2(e.clientY - cy, e.clientX - cx) * (180 / Math.PI);
-      setIsScratching(true);
-      onScratch('light');
-      triggerScratchHaptic(lowPowerMode, 'light');
-      lastDragHapticMsRef.current = performance.now();
-      try {
-        e.currentTarget.setPointerCapture(e.pointerId);
-      } catch {
-        // ignore
-      }
-    };
-
-    const handlePlatterPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!isScratching || !platterRef.current) return;
-      const rect = platterRef.current.getBoundingClientRect();
-      const cx = rect.left + rect.width / 2;
-      const cy = rect.top + rect.height / 2;
-      const currentAngle = Math.atan2(e.clientY - cy, e.clientX - cx) * (180 / Math.PI);
-      const delta = currentAngle - scratchStartAngleRef.current;
-      scratchStartAngleRef.current = currentAngle;
-      setScratchAngleOffset((prev) => (prev + delta) % 360);
-      if (Math.abs(delta) > 14) {
-        onScratch('classic');
-        const now = performance.now();
-        if (now - lastDragHapticMsRef.current >= 140) {
-          lastDragHapticMsRef.current = now;
-          triggerScratchHaptic(lowPowerMode, 'classic');
-        }
-      }
-    };
-
-    const handlePlatterPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!isScratching) return;
-      setIsScratching(false);
-      try {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      } catch {
-        // ignore
-      }
-    };
-
-    // Shared exact dimensions for leftmost Stacked Shuffle/Repeat and rightmost Time Display
-    const matchedEndModuleDimensionClass = isLandscapeMobile
-      ? 'w-[66px] h-[36px]'
-      : 'w-[70px] xl:w-[92px] h-[40px] xl:h-[46px]';
-
-    const stageAnimTransition =
-      lowPowerMode || prefersReducedMotion
-        ? 'none'
-        : 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms ease';
-
-    return (
-      <section
-        id="turntable-stage-panel"
-        data-track-change-phase={trackChangePhase}
-        aria-label="Unified 3D Wooden Turntable Console"
-        className="walnut-furniture-cabinet panel-contain relative flex flex-col justify-between select-none w-full h-full min-h-0 overflow-hidden"
-      >
-        {/* Four Corner Slot-Head Screws on the Raised Walnut Frame (Matching TV & Playlist) */}
-        <img
-          src="/console/screw-head.webp"
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-          className="pointer-events-none absolute top-1 left-1 w-2.5 h-2.5 z-50 opacity-85"
-        />
-        <img
-          src="/console/screw-head.webp"
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-          className="pointer-events-none absolute top-1 right-1 w-2.5 h-2.5 z-50 opacity-85"
-        />
-        <img
-          src="/console/screw-head.webp"
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-          className="pointer-events-none absolute bottom-1 left-1 w-2.5 h-2.5 z-50 opacity-85"
-        />
-        <img
-          src="/console/screw-head.webp"
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-          className="pointer-events-none absolute bottom-1 right-1 w-2.5 h-2.5 z-50 opacity-85"
-        />
-
-        {/* Static Warm Top-Left Studio Lamp Light Gradient Over the Whole Scene */}
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 z-30 bg-[radial-gradient(circle_at_14%_10%,rgba(255,214,153,0.16)_0%,rgba(255,190,110,0.05)_42%,transparent_75%)]"
-        />
-
-        {/* Floating Dust Motes Lit by the Lamp */}
-        {!lowPowerMode && (
+    // Shared song-specific artwork node for both Left Holder Box and Spinning Vinyl Center Label
+    const renderSongArtworkContent = (
+      imgId: string,
+      skeletonTestId?: string,
+      attachRef = false
+    ) => (
+      <>
+        {!artworkLoaded && !artworkState.isPlaceholder && (
           <div
-            id="console-dust-motes"
-            aria-hidden="true"
-            data-motes-running={shouldAnimateDustMotes ? 'true' : 'false'}
-            className="pointer-events-none absolute inset-0 z-30 overflow-hidden"
+            data-testid={skeletonTestId}
+            data-artwork-skeleton="true"
+            className="absolute inset-0 bg-gradient-to-br from-[#2a1a0e] via-[#3d2514] to-[#140c06] flex items-center justify-center z-10"
           >
-            {FLOATING_DUST_MOTES.map((mote) => (
-              <span
-                key={mote.id}
-                style={{
-                  left: mote.left,
-                  top: mote.top,
-                  width: `${mote.size}px`,
-                  height: `${mote.size}px`,
-                  animationDelay: mote.delay,
-                  animationDuration: mote.duration,
-                  animationPlayState: shouldAnimateDustMotes ? 'running' : 'paused',
-                }}
-                className="console-dust-mote absolute rounded-full bg-amber-100/60"
-              />
-            ))}
+            <Disc3 className="w-5 h-5 text-amber-200/45" />
           </div>
         )}
 
-        {/* =====================================================================
-            UPPER WOODEN TOP DECK SURFACE (Matching TV Walnut Grain & Bevel Frame)
-           ===================================================================== */}
-        <div
-          id="console-top-surface"
-          className={`relative flex-1 min-h-0 w-full flex flex-col justify-between ${
-            isLandscapeMobile ? 'p-1.5 gap-1' : 'p-2 sm:p-2.5 gap-1'
-          } overflow-hidden`}
-        >
-          {/* Photorealistic Walnut Top Deck Texture */}
+        {!artworkState.isPlaceholder && artworkState.activeUrl ? (
           <img
-            src="/console/console-top-wood.webp"
-            alt=""
-            aria-hidden="true"
+            ref={attachRef ? albumArtImgRef : undefined}
+            id={imgId}
+            src={artworkState.activeUrl}
+            alt={`${track.title} by ${track.artist} artwork`}
+            referrerPolicy="no-referrer"
+            onLoad={handleArtworkLoad}
+            onError={handleArtworkError}
+            className={`w-full h-full object-cover select-none pointer-events-none transition-opacity duration-200 ${
+              artworkLoaded ? 'opacity-100' : 'opacity-0'
+            }`}
             draggable={false}
-            className="pointer-events-none absolute inset-0 w-full h-full object-cover"
           />
-
-          {/* Subtle Static Dust-and-Wear Overlay on the Wood (~9% Opacity) */}
-          <img
-            src="/turntable/vinyl-dust-overlay.png"
-            alt=""
-            aria-hidden="true"
-            draggable={false}
-            style={{ opacity: 0.09 }}
-            className="pointer-events-none absolute inset-0 w-full h-full object-cover"
-          />
-
-          {/* Mitered Walnut Frame Inner Bevel Shadow */}
+        ) : (
           <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 shadow-[inset_2px_2px_6px_rgba(255,220,175,0.22),inset_-3px_-4px_12px_rgba(0,0,0,0.72)]"
-          />
+            id={imgId}
+            data-fallback-artwork="true"
+            style={{
+              backgroundImage: 'url(/turntable/vinyl-label-paper.webp)',
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+            }}
+            className="w-full h-full bg-[#24150b] flex flex-col items-center justify-center p-1.5 text-center select-none pointer-events-none"
+          >
+            <Disc3 className="w-4 h-4 text-amber-300/85 mb-0.5 shrink-0" />
+            <span className="font-display text-[7px] font-bold uppercase tracking-wider text-[#1c130b] bg-amber-100/80 px-1 rounded truncate max-w-full">
+              {track.title}
+            </span>
+          </div>
+        )}
+      </>
+    );
 
-          {/* 1. TOP EDGE: Full-Width Two-Line Screwed-In Brushed-Metal Song Title Plate */}
-          <div className="relative z-20 shrink-0 w-full">
-            <ScrewedSongTitlePlate
-              title={track.title}
-              artist={track.artist}
-              isStandby={isStandby}
-              compactLandscape={isLandscapeMobile}
+    return (
+      <section
+        id="turntable-console-root"
+        aria-label="Unified 3D Walnut Turntable Console"
+        data-track-change-phase={trackChangePhase}
+        className="walnut-furniture-cabinet panel-contain relative w-full h-full min-h-0 flex flex-col justify-between overflow-hidden select-none p-2 sm:p-2.5 lg:p-3"
+      >
+        {/* Four Corner Slot-Head Screws on the Raised Walnut Frame */}
+        <img
+          src="/console/screw-head.webp"
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          className="pointer-events-none absolute top-1 left-1 w-2 h-2 z-40 opacity-85"
+        />
+        <img
+          src="/console/screw-head.webp"
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          className="pointer-events-none absolute top-1 right-1 w-2 h-2 z-40 opacity-85"
+        />
+        <img
+          src="/console/screw-head.webp"
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          className="pointer-events-none absolute bottom-1 left-1 w-2 h-2 z-40 opacity-85"
+        />
+        <img
+          src="/console/screw-head.webp"
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          className="pointer-events-none absolute bottom-1 right-1 w-2 h-2 z-40 opacity-85"
+        />
+
+        {/* ===================================================================
+            1. WOODEN TOP SURFACE
+            Note: gap-0 so #turntable-plinth-bed spans the exact vertical space
+            between #console-title-plate bottom and #lyrics-strip-slot top.
+            =================================================================== */}
+        <div
+          ref={topSurfaceRef}
+          id="console-top-surface"
+          className="relative z-20 flex-1 min-h-0 flex flex-col justify-between gap-0"
+        >
+          {/* --- REQUIREMENT 1: REVERTED SIMPLE EMBOSSED BRUSHED-METAL SONG-TITLE PLATE --- */}
+          <div
+            ref={titlePlateRef}
+            id="console-title-plate"
+            className={`relative z-10 w-full rounded-[6px] overflow-hidden border border-[#d6c7b2]/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.6),0_3px_8px_rgba(0,0,0,0.75)] ${
+              isCompactLandscape ? 'px-4 py-1' : 'px-5 py-1.5'
+            } shrink-0`}
+          >
+            <img
+              src="/console/metal-plate.webp"
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+              className="pointer-events-none absolute inset-0 w-full h-full object-cover opacity-95"
             />
+            <div
+              aria-hidden="true"
+              style={{
+                background:
+                  'linear-gradient(180deg, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.02) 48%, rgba(0,0,0,0.18) 100%)',
+              }}
+              className="pointer-events-none absolute inset-0"
+            />
+            <img
+              src="/console/screw-head.webp"
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+              className="pointer-events-none absolute top-1 left-1 w-2 h-2 z-20"
+            />
+            <img
+              src="/console/screw-head.webp"
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+              className="pointer-events-none absolute top-1 right-1 w-2 h-2 z-20"
+            />
+            <img
+              src="/console/screw-head.webp"
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+              className="pointer-events-none absolute bottom-1 left-1 w-2 h-2 z-20"
+            />
+            <img
+              src="/console/screw-head.webp"
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+              className="pointer-events-none absolute bottom-1 right-1 w-2 h-2 z-20"
+            />
+
+            <div className="relative z-10 w-full flex flex-row items-center justify-between gap-3 sm:gap-4 min-w-0">
+              <h2
+                id="console-track-title"
+                className={`font-display ${
+                  isCompactLandscape ? 'text-xs sm:text-sm' : 'text-sm sm:text-base lg:text-lg'
+                } font-black tracking-wide text-[#17120d] drop-shadow-[0_1px_0_rgba(255,255,255,0.55)] text-left truncate min-w-0 flex-1 leading-tight`}
+              >
+                {track.title}
+              </h2>
+              <p
+                id="console-track-artist"
+                className={`font-mono ${
+                  isCompactLandscape ? 'text-[9.5px]' : 'text-[10.5px] sm:text-xs'
+                } font-bold uppercase tracking-wider text-[#2f2419] drop-shadow-[0_0.5px_0_rgba(255,255,255,0.45)] text-right truncate shrink-0 max-w-[44%] leading-tight`}
+              >
+                {track.artist}
+              </p>
+            </div>
           </div>
 
-          {/* 2. MIDDLE: Separate Square Album-Art Vinyl Box Holder (Directly Above) + Plain Spinning Vinyl Record (Below) */}
-          <div className="relative z-20 flex-1 min-h-0 w-full flex flex-col justify-between gap-1">
+          {/* --- CENTER TURNTABLE AREA (#turntable-plinth-bed) ---
+              Spans the exact vertical space between #console-title-plate bottom and #lyrics-strip-slot top.
+              z-40 with overflow-visible lets the z-50 draggable album-art holder box layer freely above
+              #console-title-plate, #lyrics-strip-slot, #top-seek-timeline, vinyl, and tonearm. */}
+          <div
+            ref={plinthBedRef}
+            id="turntable-plinth-bed"
+            className="relative z-40 flex-1 min-h-0 w-full flex items-center justify-center overflow-visible"
+          >
+            {/* Subtle Floating Dust Particle Canvas Overlay (Pauses cleanly when turntable is stopped) */}
+            <TurntableDustCanvas
+              width={plinthBedSize.width}
+              height={plinthBedSize.height}
+              isAnimating={Boolean(shouldSpin)}
+            />
+
+            {/* ===============================================================
+                REQUIREMENT 6: FREELY DRAGGABLE LEFT-DOCKED ALBUM-ART HOLDER BOX
+                - Sized at (vinylDiameterPx + 5px) in both width and height
+                - Positioned by default on the LEFT side of the wooden board
+                - Free dragging across the ENTIRE #console-top-surface above all panels
+                =============================================================== */}
             <div
-              id="turntable-plinth-bed"
-              ref={plinthBedRef}
-              style={
-                {
-                  containerType: 'size',
-                  '--holder-box-size': 'clamp(42px, min(21cqw, 25cqh), 124px)',
-                  '--chassis-size': 'clamp(104px, min(76cqw, 71cqh), 410px)',
-                } as React.CSSProperties
-              }
-              className="relative flex-1 min-h-0 min-w-0 flex flex-col items-center justify-evenly overflow-hidden"
+              ref={holderHomeSlotRef}
+              id="album-art-holder-home-slot"
+              aria-hidden={hideBoxArt ? 'true' : undefined}
+              style={{
+                left: '6px',
+                top: '50%',
+                transform: hideBoxArt ? 'translateY(-50%) scale(0.92)' : 'translateY(-50%) scale(1)',
+                opacity: hideBoxArt ? 0 : 1,
+                transition: prefersReducedMotion ? 'none' : 'opacity 240ms ease, transform 240ms ease',
+                width: `${holderBoxSizePx}px`,
+                height: `${holderBoxSizePx}px`,
+              }}
+              className="pointer-events-none absolute z-50 flex items-center justify-center select-none"
             >
-              {/* =====================================================================
-                  SEPARATE SQUARE ALBUM-ART VINYL BOX HOLDER SITTING ABOVE THE VINYL RECORD
-                  - Draggable square holder box itself (#album-art-holder-box / #album-art-cover)
-                  - Animates back to playlist & brings new track's box out during track changes
-                 ===================================================================== */}
+              {/* Wooden Record-Sleeve Holder Cradle Pocket */}
               <div
-                id="album-art-holder-home-slot"
-                ref={holderBoxSlotRef}
-                style={{
-                  width: 'var(--holder-box-size)',
-                  height: 'var(--holder-box-size)',
+                aria-hidden="true"
+                className="pointer-events-none absolute -bottom-1 inset-x-3 h-2.5 rounded-b-md bg-gradient-to-b from-[#452814] to-[#1a0e06] border border-[#8c5d34]/75 shadow-[0_4px_10px_rgba(0,0,0,0.9)] z-30"
+              />
+
+              <div
+                id="album-art-holder-box"
+                data-testid="album-art-holder-box"
+                data-dragging={isDraggingHolder ? 'true' : 'false'}
+                data-holder-tilt={holderTiltDeg.toFixed(2)}
+                data-slot-open={stagePose.holderSlotOpen ? 'true' : 'false'}
+                onPointerDown={handleHolderPointerDown}
+                onPointerMove={handleHolderPointerMove}
+                onPointerUp={handleHolderPointerUp}
+                onPointerCancel={handleHolderPointerUp}
+                onDoubleClick={() => {
+                  setHolderOffset({ x: 0, y: 0 });
+                  setHolderTiltDeg(calculateHolderBoxRestTiltDeg(0, -1, true));
                 }}
-                className="relative z-30 flex items-center justify-center shrink-0"
+                title="Drag album sleeve holder box anywhere on the wooden board (double-click to re-dock left)"
+                style={{
+                  width: `${holderBoxSizePx}px`,
+                  height: `${holderBoxSizePx}px`,
+                  transformOrigin: '50% 10%',
+                  transform: `translate3d(${holderOffset.x}px, ${holderOffset.y}px, 0) rotate(${holderTiltDeg}deg) ${stagePose.holderBoxTransform}`,
+                  opacity: stagePose.holderBoxOpacity,
+                  transition:
+                    isDraggingHolder || isDocumentHidden || lowPowerMode || prefersReducedMotion
+                      ? 'none'
+                      : 'transform 340ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease-out',
+                }}
+                className={`${
+                  hideBoxArt ? 'pointer-events-none' : 'pointer-events-auto'
+                } relative rounded-[8px] p-[3px] bg-gradient-to-br from-[#6b4426] via-[#331e0f] to-[#170c05] border-2 border-[#b88655]/85 shadow-[0_14px_30px_rgba(0,0,0,0.92),inset_0_1px_1px_rgba(255,225,185,0.4)] ${
+                  isDraggingHolder ? 'cursor-grabbing' : 'cursor-grab'
+                } touch-none select-none z-50`}
               >
-                <div
-                  id="album-art-holder-box"
-                  ref={holderBoxRef}
-                  data-holder-box="true"
-                  data-at-home={isHolderAtHome ? 'true' : 'false'}
-                  data-offset-x={holderBoxOffset.offsetX}
-                  data-offset-y={holderBoxOffset.offsetY}
-                  data-track-change-phase={trackChangePhase}
-                  onPointerDown={handleHolderBoxPointerDown}
-                  onPointerMove={handleHolderBoxPointerMove}
-                  onPointerUp={handleHolderBoxPointerUp}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    triggerButtonHaptic(lowPowerMode);
-                    persistHolderBoxOffset({ offsetX: 0, offsetY: 0 });
-                  }}
-                  title="Drag the square vinyl box holder anywhere on the wooden board (Double-click to snap back above turntable)"
-                  style={{
-                    transform: `translate3d(${holderBoxOffset.offsetX}px, ${holderBoxOffset.offsetY}px, 0)`,
-                    touchAction: 'none',
-                  }}
-                  className="group relative w-full h-full cursor-grab active:cursor-grabbing select-none"
-                >
-                  {/* Track-Change Stage Pose Wrapper (Animates holder box to/from playlist on song change) */}
+                <div className="relative w-full h-full rounded-[5px] overflow-hidden bg-[#0c0704] border border-[#4a3019]">
+                  {renderSongArtworkContent('album-art-cover', 'album-art-skeleton', true)}
+                  {/* Laminated record-sleeve sheen */}
                   <div
-                    id="album-art-cover"
-                    data-offset-x={holderBoxOffset.offsetX}
-                    data-offset-y={holderBoxOffset.offsetY}
-                    data-artwork-url={artworkState.activeUrl || ''}
-                    data-artwork-attempt={artworkState.attemptIndex}
-                    data-slot-open={stagePose.holderSlotOpen ? 'true' : 'false'}
+                    aria-hidden="true"
                     style={{
-                      transform: stagePose.holderBoxTransform,
-                      opacity: stagePose.holderBoxOpacity,
-                      transition: isDraggingHolderBox ? 'none' : stageAnimTransition,
+                      background:
+                        'linear-gradient(135deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.02) 45%, rgba(0,0,0,0.38) 100%)',
                     }}
-                    className="relative w-full h-full rounded-[4px] p-[3px] bg-gradient-to-b from-[#6e4726] via-[#3d2412] to-[#1f1209] border-2 border-[#b88958] shadow-[0_8px_20px_rgba(0,0,0,0.82),inset_0_1px_0_rgba(255,228,190,0.45)] flex flex-col items-center justify-center overflow-visible"
-                  >
-                    {/* Four Corner Brass Rivet Screws on the Square Vinyl Box Holder Frame */}
-                    <img
-                      src="/console/screw-head.webp"
-                      alt=""
-                      aria-hidden="true"
-                      draggable={false}
-                      className="pointer-events-none absolute top-[2px] left-[2px] w-1.5 h-1.5 z-30 opacity-90"
-                    />
-                    <img
-                      src="/console/screw-head.webp"
-                      alt=""
-                      aria-hidden="true"
-                      draggable={false}
-                      className="pointer-events-none absolute top-[2px] right-[2px] w-1.5 h-1.5 z-30 opacity-90"
-                    />
-                    <img
-                      src="/console/screw-head.webp"
-                      alt=""
-                      aria-hidden="true"
-                      draggable={false}
-                      className="pointer-events-none absolute bottom-[2px] left-[2px] w-1.5 h-1.5 z-30 opacity-90"
-                    />
-                    <img
-                      src="/console/screw-head.webp"
-                      alt=""
-                      aria-hidden="true"
-                      draggable={false}
-                      className="pointer-events-none absolute bottom-[2px] right-[2px] w-1.5 h-1.5 z-30 opacity-90"
-                    />
-
-                    {/* Bottom LP Sleeve Opening Slot (Opens When Vinyl Slides In/Out of Holder Box) */}
-                    <div
-                      id="holder-box-open-slot"
-                      aria-hidden="true"
-                      style={{
-                        transform: stagePose.holderSlotOpen ? 'scaleY(1.8)' : 'scaleY(1)',
-                        opacity: stagePose.holderSlotOpen ? 1 : 0.45,
-                        transition: stageAnimTransition,
-                      }}
-                      className="pointer-events-none absolute -bottom-[3px] inset-x-[12%] h-[4px] rounded-full bg-[#090604] border border-amber-300/55 z-30"
-                    />
-
-                    {/* Inner Square Album Sleeve Window */}
-                    <div className="relative w-full h-full rounded-[2px] overflow-hidden border border-black/85 bg-[#14100d] flex items-center justify-center">
-                      {/* Loading Skeleton While Artwork Loads */}
-                      {!artworkState.isPlaceholder && !imgLoaded && (
-                        <div
-                          id="album-art-skeleton"
-                          aria-hidden="true"
-                          className="absolute inset-0 z-10 bg-gradient-to-br from-[#2a221b] via-[#1c1612] to-[#120e0b] flex items-center justify-center"
-                        >
-                          <Disc3 strokeWidth={1.5} className="w-5 h-5 text-amber-300/45" />
-                        </div>
-                      )}
-
-                      {/* Resolved Track Artwork with Multi-Candidate onError Fallback */}
-                      {!artworkState.isPlaceholder && artworkState.activeUrl ? (
-                        <img
-                          id="album-art-img"
-                          key={`${activeBoxTrack.id}-${artworkState.attemptIndex}-${artworkState.activeUrl}`}
-                          ref={(el) => {
-                            if (el && el.complete && el.naturalWidth > 0 && !imgLoaded) {
-                              setImgLoaded(true);
-                            }
-                          }}
-                          src={artworkState.activeUrl}
-                          alt={`${activeBoxTrack.title} album art`}
-                          referrerPolicy="no-referrer"
-                          draggable={false}
-                          onLoad={() => setImgLoaded(true)}
-                          onError={() => {
-                            setImgLoaded(false);
-                            setFailedAttemptCount((prev) => prev + 1);
-                          }}
-                          className="relative z-10 w-full h-full object-cover pointer-events-none"
-                        />
-                      ) : (
-                        /* Generic Vinyl-Sleeve Placeholder Graphic When All Image Candidates Fail or Standby */
-                        <div
-                          id="album-art-vinyl-placeholder"
-                          style={{ background: themePalette.tvCabinetGradient }}
-                          className="relative z-10 w-full h-full flex flex-col items-center justify-center p-1.5 text-center"
-                        >
-                          <Disc3
-                            strokeWidth={1.75}
-                            style={{ color: themePalette.lightHex }}
-                            className="w-4 h-4 mb-0.5 opacity-85"
-                          />
-                          <p className="font-display text-[7.5px] sm:text-[9px] font-bold text-white/90 leading-tight line-clamp-1 px-1">
-                            {isStandby ? 'MaxVinyFy' : activeBoxTrack.title}
-                          </p>
-                          <p className="font-mono text-[6.5px] sm:text-[7.5px] text-white/65 leading-tight line-clamp-1 px-1">
-                            {isStandby ? 'LP Holder' : activeBoxTrack.artist}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Subtle Sleeve Gloss & Texture Overlay */}
-                      <div
-                        aria-hidden="true"
-                        className="pointer-events-none absolute inset-0 z-20 bg-[linear-gradient(135deg,rgba(255,255,255,0.16)_0%,transparent_42%,rgba(0,0,0,0.38)_100%)]"
-                      />
-                    </div>
-
-                    {/* Hover / Active Drag Affordance Badge on the Square Holder Box */}
-                    <div
-                      id="album-art-drag-handle"
-                      aria-hidden="true"
-                      className={`pointer-events-none absolute -top-2.5 left-1/2 -translate-x-1/2 z-40 px-1.5 py-[1px] rounded-[2px] bg-black/90 border border-amber-300/65 text-amber-200 font-mono text-[6.5px] font-bold uppercase tracking-wider flex items-center gap-0.5 shadow-md whitespace-nowrap transition-opacity duration-150 ${
-                        isDraggingHolderBox ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                      }`}
-                    >
-                      <Move className="w-2.5 h-2.5 text-amber-300" />
-                      <span>{isHolderAtHome ? 'DRAG BOX' : 'LP BOX'}</span>
-                    </div>
-                  </div>
+                    className="pointer-events-none absolute inset-0"
+                  />
                 </div>
               </div>
+            </div>
 
-              {/* =====================================================================
-                  FIXED TURNTABLE PLATTER + PLAIN SPINNING VINYL RECORD BELOW THE HOLDER BOX
-                  - Vinyl record has NO album art on it (just record grooves, plain label, and spindle hole)
-                  - Vinyl spindle position is fixed/non-draggable; during track change, vinyl slides into/out of holder box above it
-                 ===================================================================== */}
+            {/* ===============================================================
+                REQUIREMENTS 1, 2, 3, 4: DYNAMICALLY SIZED SPINNING VINYL RECORD
+                - Top & bottom edge cleared cleanly from #console-title-plate and #lyrics-strip-slot
+                - Centered vertically in #turntable-plinth-bed, right-docked adjacent to controls
+                - Static lighting highlight overlay stays fixed while only the vinyl rotates
+                =============================================================== */}
+            <div
+              id="turntable-chassis-square"
+              data-scratching={scratchPulseActive ? 'true' : 'false'}
+              style={{
+                top: '50%',
+                left: `${(vinylCenterXPct * 100).toFixed(2)}%`,
+                width: `${vinylDiameterPx}px`,
+                height: `${vinylDiameterPx}px`,
+              }}
+              className="absolute z-10 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center"
+            >
+              {/* Requirement 3: Raised Circular Platter Plinth with Visible Beveled Edge & Groove-Ring Perimeter */}
               <div
-                id="turntable-chassis-square"
-                ref={chassisRef}
+                id="turntable-raised-platter-plinth"
+                data-platter-plinth="true"
                 style={{
-                  width: 'var(--chassis-size)',
-                  height: 'var(--chassis-size)',
+                  inset: '-11px',
+                  background:
+                    'radial-gradient(circle at 32% 28%, #6d4726 0%, #3a2110 56%, #180d06 88%, #070402 100%)',
+                  boxShadow:
+                    '0 12px 26px rgba(0,0,0,0.94), 0 0 0 1px rgba(0,0,0,0.9), inset 0 2px 3px rgba(255,224,180,0.42), inset 0 -3px 6px rgba(0,0,0,0.95)',
+                  border: '2px solid rgba(206, 152, 95, 0.72)',
                 }}
-                className={`relative z-20 shrink-0 transition-transform duration-150 ${
-                  scratchFlash ? 'scale-[0.99]' : ''
-                }`}
+                className="pointer-events-none absolute rounded-full flex items-center justify-center select-none"
               >
-                {/* Static Platter + Metallic Strobe Rim */}
+                {/* Chamfered Brass Strobe Bevel Rim */}
+                <div className="pointer-events-none absolute inset-[2px] rounded-full border border-dashed border-amber-300/45" />
+                <div className="pointer-events-none absolute inset-[5px] rounded-full border border-[#8e6239]/75 shadow-[inset_0_3px_8px_rgba(0,0,0,0.95)]" />
+
+                {/* Concentric Platter Groove-Ring Texture Extending Beyond & Under the Vinyl */}
+                <div
+                  id="turntable-under-record-grooves"
+                  data-under-record-grooves="true"
+                  style={{
+                    backgroundImage:
+                      'repeating-radial-gradient(circle at center, rgba(240, 200, 148, 0.22) 0px, rgba(240, 200, 148, 0.22) 1px, rgba(16, 9, 4, 0.55) 2px, rgba(16, 9, 4, 0.55) 4.5px)',
+                  }}
+                  className="pointer-events-none absolute inset-[5px] rounded-full"
+                />
+
+                {/* Recessed Rubber Platter Mat */}
                 <img
                   src="/turntable/platter-mat.webp"
                   alt=""
                   aria-hidden="true"
                   draggable={false}
-                  style={{
-                    left: '0%',
-                    top: '2%',
-                    width: '96%',
-                    height: '96%',
-                  }}
-                  className="pointer-events-none absolute object-contain"
+                  className="pointer-events-none relative w-[93%] h-[93%] rounded-full object-contain opacity-92"
                 />
+              </div>
 
-                {/* PLAIN ROTATING VINYL RECORD LAYER (Slides into/out of the Holder Box Above on Track Change) */}
+              {/* Track-change slide wrapper (only animates during track change) */}
+              <div
+                id="vinyl-record-transition-wrapper"
+                style={{
+                  transform: stagePose.vinylTransform,
+                  opacity: stagePose.vinylOpacity,
+                  transition:
+                    isDocumentHidden || lowPowerMode || prefersReducedMotion
+                      ? 'none'
+                      : 'transform 300ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease-out',
+                }}
+                className="relative w-full h-full rounded-full"
+              >
+                {/* LAYER 2: THE ONLY CONTINUOUSLY ROTATING ELEMENT IN THE TURNTABLE */}
                 <div
-                  id="vinyl-record-transition-wrapper"
-                  data-track-change-phase={trackChangePhase}
+                  id="vinyl-record-spin-layer"
+                  data-spinning={shouldSpin ? 'true' : 'false'}
                   style={{
-                    left: '3%',
-                    top: '5%',
-                    width: '90%',
-                    height: '90%',
-                    transform: stagePose.vinylTransform,
-                    opacity: stagePose.vinylOpacity,
-                    transition: stageAnimTransition,
+                    animationDuration: `${spinDurationSec}s`,
+                    animationTimingFunction: spinTimingFunction,
+                    animationPlayState: shouldSpin ? 'running' : 'paused',
                   }}
-                  className="absolute z-10"
+                  className="vinyl-platter-gpu-spin relative w-full h-full rounded-full overflow-hidden shadow-[0_6px_16px_rgba(0,0,0,0.92)]"
                 >
-                  <div
-                    style={{
-                      transform: `rotate(${scratchAngleOffset}deg)`,
-                      transition: isScratching
-                        ? 'none'
-                        : 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1)',
-                    }}
-                    className="w-full h-full rounded-full"
-                  >
-                    <div
-                      id="vinyl-record-spin-layer"
-                      ref={platterRef}
-                      data-plain-vinyl="true"
-                      onPointerDown={handlePlatterPointerDown}
-                      onPointerMove={handlePlatterPointerMove}
-                      onPointerUp={handlePlatterPointerUp}
-                      role="slider"
-                      aria-label="Interactive Vinyl Platter — Drag to Scratch Record"
-                      aria-valuenow={Math.round(scratchAngleOffset)}
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === ' ' || e.key === 'Enter') {
-                          e.preventDefault();
-                          handleTriggerScratch('classic');
-                        }
-                      }}
-                      style={{
-                        animationDuration: `${spinDurationSec}s`,
-                        animationTimingFunction: spinTimingFunction,
-                        animationPlayState: shouldSpin ? 'running' : 'paused',
-                        touchAction: 'none',
-                      }}
-                      className="vinyl-platter-gpu-spin relative w-full h-full rounded-full cursor-grab active:cursor-grabbing flex items-center justify-center overflow-hidden"
-                    >
-                      <img
-                        src="/turntable/vinyl-record.webp"
-                        alt=""
-                        aria-hidden="true"
-                        draggable={false}
-                        className="pointer-events-none absolute inset-0 w-full h-full object-contain"
-                      />
+                  <img
+                    src="/turntable/vinyl-record.webp"
+                    alt="Spinning Vinyl Record"
+                    draggable={false}
+                    className="pointer-events-none w-full h-full object-contain select-none"
+                  />
 
-                      {/* Plain Vintage Record Center Label & Spindle Hole (No Album Art Overlaid on the Vinyl) */}
+                  {/* Concentric micro-groove rings */}
+                  <div className="pointer-events-none absolute inset-0">
+                    {PRE_RENDERED_GROOVE_RINGS.map((ring) => (
                       <div
-                        id="vinyl-plain-center-label"
-                        style={{ background: themePalette.tvCabinetGradient }}
-                        className="relative z-10 w-[34%] h-[34%] rounded-full overflow-hidden border border-black/80 flex items-center justify-center"
-                      >
-                        <span className="font-display font-bold text-[8.5px] sm:text-[10px] text-white/85 -translate-y-2.5 sm:-translate-y-3">
-                          MVF
-                        </span>
-                        <img
-                          src="/turntable/vinyl-label-paper.webp"
-                          alt=""
-                          aria-hidden="true"
-                          draggable={false}
-                          style={{ opacity: 0.32 }}
-                          className="pointer-events-none absolute inset-0 w-full h-full object-cover"
-                        />
-                        <div className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-gradient-to-br from-zinc-200 via-zinc-400 to-zinc-700 border border-black/85 flex items-center justify-center">
-                          <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full bg-[#090807]" />
-                        </div>
-                      </div>
-                    </div>
+                        key={ring.id}
+                        style={{
+                          inset: `${ring.insetPct}%`,
+                          opacity: ring.opacity,
+                          borderWidth: `${ring.widthPx}px`,
+                        }}
+                        className="pointer-events-none absolute rounded-full border border-white"
+                      />
+                    ))}
                   </div>
+
+                  {/* ===========================================================
+                      REQUIREMENT 4: CIRCULAR ALBUM-ART OVERLAY CENTERED ON THE SPINNING VINYL
+                      Visible simultaneously alongside the left-side square holder box
+                      =========================================================== */}
+                  <div
+                    id="vinyl-center-label-art"
+                    data-testid="vinyl-center-label-art"
+                    className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[34%] h-[34%] rounded-full overflow-hidden border-2 border-[#d4af37]/70 shadow-[0_0_10px_rgba(0,0,0,0.9),inset_0_0_6px_rgba(0,0,0,0.85)] z-10"
+                  >
+                    {renderSongArtworkContent('vinyl-label-artwork-img', 'vinyl-label-art-skeleton')}
+                    <div className="pointer-events-none absolute inset-1 rounded-full border border-white/20" />
+                  </div>
+
+                  {/* Center Spindle Pin */}
+                  <div className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-[#120d09] border border-zinc-400/80 shadow-inner z-20" />
                 </div>
 
-                {/* STATIC Anisotropic Lamp Light Reflection Overlay */}
-                <img
+                {/* ===========================================================
+                    REQUIREMENT 11: STATIC VINYL LIGHTING HIGHLIGHT OVERLAY
+                    Fixed non-rotating sibling above #vinyl-record-spin-layer so the
+                    light source/shine stays static in a fixed position while only the
+                    vinyl record and its center label rotate underneath it.
+                    =========================================================== */}
+                <div
                   id="vinyl-static-light-overlay"
-                  src="/turntable/vinyl-light-overlay.png"
-                  alt=""
-                  aria-hidden="true"
-                  draggable={false}
-                  style={{
-                    left: '3%',
-                    top: '5%',
-                    width: '90%',
-                    height: '90%',
-                    opacity: stagePose.vinylOpacity,
-                    transition: 'opacity 200ms ease',
-                  }}
-                  className="pointer-events-none absolute object-contain z-20"
-                />
-
-                {/* STATIC Dust Specks, Hairline Scratches & Fingerprints Overlay (~10% Opacity) */}
-                <img
-                  id="vinyl-static-dust-overlay"
-                  src="/turntable/vinyl-dust-overlay.png"
-                  alt=""
-                  aria-hidden="true"
-                  draggable={false}
-                  style={{
-                    left: '3%',
-                    top: '5%',
-                    width: '90%',
-                    height: '90%',
-                    opacity: 0.1 * stagePose.vinylOpacity,
-                  }}
-                  className="pointer-events-none absolute object-contain z-20"
-                />
-
-                {/* Photoreal Top-Down Tonearm (Lifts & swings to rest during track-change swap, then lowers onto record) */}
-                <RasterTonearm
-                  trackId={track.id}
-                  durationSec={track.durationSec}
-                  isPlaying={isPlaying}
-                  isStandby={isStandby}
-                  isDocumentHidden={isDocumentHidden}
-                  lowPowerMode={lowPowerMode}
-                  prefersReducedMotion={prefersReducedMotion}
-                  forceTonearmRest={stagePose.forceTonearmRest}
-                  chassisRef={chassisRef}
-                  draggedTonearmAngle={draggedTonearmAngle}
-                  onDragAngleChange={setDraggedTonearmAngle}
-                  onDragTonearmToTime={onDragTonearmToTime}
-                />
+                  data-static-light="true"
+                  className="pointer-events-none absolute inset-0 rounded-full overflow-hidden select-none z-20"
+                >
+                  <img
+                    src="/turntable/vinyl-light-overlay.png"
+                    alt=""
+                    aria-hidden="true"
+                    draggable={false}
+                    className="pointer-events-none w-full h-full object-contain opacity-85 mix-blend-screen select-none"
+                  />
+                  <img
+                    src="/turntable/vinyl-dust-overlay.png"
+                    alt=""
+                    aria-hidden="true"
+                    draggable={false}
+                    className="pointer-events-none absolute inset-0 w-full h-full object-contain opacity-30 select-none"
+                  />
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      background:
+                        'conic-gradient(from 315deg at 50% 50%, rgba(255,248,230,0.22) 0deg, rgba(255,248,230,0.0) 38deg, rgba(0,0,0,0.0) 145deg, rgba(255,245,225,0.14) 180deg, rgba(255,245,225,0.0) 220deg, rgba(0,0,0,0.0) 325deg, rgba(255,248,230,0.22) 360deg)',
+                    }}
+                    className="pointer-events-none absolute inset-0 rounded-full"
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Full-Width VFD Lyrics Strip + Matching-Width Slot Seek Control */}
-            <div
-              id="lyrics-and-seek-slot"
-              className="relative z-20 w-full flex flex-col items-stretch gap-1 shrink-0"
-            >
-              <div
-                id="lyrics-strip-slot"
-                className={`w-full ${
-                  isLandscapeMobile
-                    ? 'h-[76px]'
-                    : 'h-[92px] sm:h-[98px] [@media(max-height:640px)]:h-[82px]'
-                } shrink-0`}
-              >
-                <SyncedLyricsPanel
-                  track={track}
-                  isStandby={isStandby}
-                  isPlaying={isPlaying}
-                  isDocumentHidden={isDocumentHidden}
-                  lowPowerMode={lowPowerMode}
-                  nightMode={nightMode}
-                  playbackRate={effectiveRate}
-                  prefersReducedMotion={prefersReducedMotion}
-                  themePalette={themePalette}
-                  onSeek={onSeek}
-                  className="w-full h-full"
-                />
-              </div>
+            {/* ===============================================================
+                REQUIREMENTS 7 & 8: RESPONSIVE TOP-RIGHT TONEARM ASSEMBLY
+                Anchored higher at top-right of #turntable-plinth-bed just below
+                #console-title-plate, clear of the right-side vertical controls column.
+                =============================================================== */}
+            <RasterTonearmAssembly
+              trackId={track.id}
+              durationSec={track.durationSec}
+              bedWidth={plinthBedSize.width}
+              bedHeight={plinthBedSize.height}
+              vinylDiameterPx={vinylDiameterPx}
+              vinylCenterXPct={vinylCenterXPct}
+              rightReservedPx={rightControlsWidthPx}
+              isPlaying={isPlaying}
+              isStandby={isStandby}
+              isStoppedAtRest={isStoppedAtRest}
+              forceTonearmRest={stagePose.forceTonearmRest}
+              isDocumentHidden={isDocumentHidden}
+              lowPowerMode={lowPowerMode}
+              prefersReducedMotion={prefersReducedMotion}
+              onDragTonearmToTime={onDragTonearmToTime}
+            />
 
-              <FrontFaceSeekSlot
-                durationSec={track.durationSec}
-                isStandby={isStandby}
-                nightMode={nightMode}
+            {/* ===============================================================
+                REQUIREMENTS 1 & 2: SIMPLIFIED RIGHT-SIDE VERTICAL CONTROLS COLUMN
+                - ONLY the Vertical Pitch Fader and Vertical Volume Fader (matching metal style)
+                =============================================================== */}
+            <div
+              ref={rightControlsRef}
+              id="turntable-right-controls-column"
+              data-testid="turntable-right-controls-column"
+              className={`absolute right-1 inset-y-1 z-35 flex items-stretch gap-1 rounded-[5px] bg-[#120a05]/85 border border-[#5e3e22]/85 shadow-[inset_0_2px_6px_rgba(0,0,0,0.92),0_3px_10px_rgba(0,0,0,0.75)] ${
+                isCompactLandscape ? 'p-[3px]' : 'p-1'
+              }`}
+            >
+              <VerticalPitchFader
+                pitchPercent={pitchPercent}
+                compact={isCompactLandscape}
                 lowPowerMode={lowPowerMode}
-                compactLandscape={isLandscapeMobile}
-                onSeek={onSeek}
+                onChangePitch={onChangePitch}
+              />
+              <VerticalVolumeFader
+                volume={volume}
+                compact={isCompactLandscape}
+                lowPowerMode={lowPowerMode}
+                onChangeVolume={onChangeVolume}
               />
             </div>
           </div>
-        </div>
 
-        {/* =====================================================================
-            RAISED WALNUT CHAMFER DIVIDER BETWEEN TOP BOARD AND FRONT CONTROL ROW
-           ===================================================================== */}
-        <div
-          aria-hidden="true"
-          className="relative z-20 h-2 w-full bg-[linear-gradient(180deg,rgba(255,214,165,0.28)_0%,rgba(122,78,44,0.88)_48%,rgba(28,16,9,0.96)_100%)] border-t border-amber-100/25 shrink-0"
-        />
-
-        {/* =====================================================================
-            REBUILT SINGLE TURNTABLE CONTROL ROW (Left-to-Right, Bottom-Aligned):
-            1. Leftmost: Stacked Shuffle + Repeat (#shuffle-repeat-stack, bottom-aligned with playback titles)
-            2. Next: Previous-track button (#btn-prev-track)
-            3. Next: Scratch disc button (#btn-scratch-disc — press/hold DJ scratch effect)
-            4. Center: Large Play/Pause primary toggle button (#btn-play-pause)
-            5. Next: Stop button (#btn-stop-playback) & Next-track button (#btn-next-track)
-            6. Rightmost: Taller Time/Duration display (#console-time-display, bottom-aligned with playback titles)
-           ===================================================================== */}
-        <div
-          id="console-front-apron"
-          aria-label="Console Front Face Playback Hardware"
-          className={`relative z-20 w-full ${
-            isLandscapeMobile ? 'px-2 py-1' : 'px-2.5 sm:px-4 py-1.5 sm:py-2'
-          } shrink-0 overflow-hidden`}
-        >
-          <img
-            src="/console/console-front-wood.webp"
-            alt=""
-            aria-hidden="true"
-            draggable={false}
-            className="pointer-events-none absolute inset-0 w-full h-full object-cover"
-          />
+          {/* --- SEEK TIMELINE ABOVE FULL-WIDTH VFD LYRICS SCREEN --- */}
           <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.25)_0%,rgba(0,0,0,0.62)_100%)] shadow-[inset_0_2px_6px_rgba(0,0,0,0.75)]"
-          />
-
-          <div
-            id="turntable-control-row"
-            className="relative z-10 w-full flex items-end justify-between gap-1 xl:gap-2"
+            ref={lyricsStripRef}
+            id="lyrics-strip-slot"
+            className="relative z-10 w-full shrink-0 flex flex-col gap-1"
           >
-            {/* 1. Leftmost: Vertically Stacked Shuffle + Repeat (Bottom-Aligned with Playback Control Titles) */}
-            <StackedShuffleRepeatControl
-              shuffleEnabled={shuffleEnabled}
-              repeatOne={repeatOne}
-              lowPowerMode={lowPowerMode}
-              dimensionClass={matchedEndModuleDimensionClass}
-              onToggleShuffle={onToggleShuffle}
-              onToggleRepeatOne={onToggleRepeatOne}
-            />
-
-            {/* Center Transport Cluster: Prev -> Scratch -> Large Center Play/Pause -> Stop + Next */}
-            <div className="flex-1 flex items-end justify-center gap-1 xl:gap-2.5 min-w-0">
-              {/* 2. Previous Track Button */}
-              <HardwarePushButton
-                id="btn-prev-track"
-                label="PREV"
-                disabled={isStandby}
-                compactLandscape={isLandscapeMobile}
-                ariaLabel="Previous Track"
-                title="Previous Track"
-                onClick={() => {
-                  triggerButtonHaptic(lowPowerMode);
-                  onPrevious();
-                }}
-              >
-                <SkipBack strokeWidth={2.2} className="w-3.5 h-3.5" />
-              </HardwarePushButton>
-
-              {/* 3. Scratch Disc Button (Manual DJ Scratch/Stutter Effect on Press/Hold or Click) */}
-              <HardwarePushButton
-                id="btn-scratch-disc"
-                label="SCRATCH"
-                disabled={isStandby}
-                compactLandscape={isLandscapeMobile}
-                ariaLabel="Scratch Vinyl Disc (Press or Hold for DJ Scratch Effect)"
-                title="Press or Hold to Scratch Vinyl Record"
-                onPointerHoldStart={handleScratchButtonHoldStart}
-                onPointerHoldEnd={handleScratchButtonHoldEnd}
-                onClick={() => {
-                  handleTriggerScratch('classic');
-                }}
-              >
-                <Disc3 strokeWidth={2.2} className="w-3.5 h-3.5" />
-              </HardwarePushButton>
-
-              {/* 4. Center Primary Control: Large Single Play/Pause Button */}
-              <HardwarePushButton
-                id="btn-play-pause"
-                label={isPlaying ? 'PAUSE' : 'PLAY'}
-                disabled={isStandby}
-                isPressed={isPlaying}
-                isPrimaryCenter
-                compactLandscape={isLandscapeMobile}
-                ariaLabel={isPlaying ? 'Pause Playback' : 'Start Playback'}
-                title={isPlaying ? 'Pause' : 'Play'}
-                onClick={() => {
-                  triggerButtonHaptic(lowPowerMode);
-                  onTogglePlay();
-                }}
-              >
-                {isPlaying ? (
-                  <Pause strokeWidth={2.5} className="w-4 h-4 sm:w-5 sm:h-5 fill-current" />
-                ) : (
-                  <Play strokeWidth={2.5} className="w-4 h-4 sm:w-5 sm:h-5 fill-current ml-0.5" />
-                )}
-              </HardwarePushButton>
-
-              {/* 5. Stop Button & Next-Track Button Placed Together to the Right of Play/Pause */}
-              <div className="flex items-end gap-1 sm:gap-2">
-                <HardwarePushButton
-                  id="btn-stop-playback"
-                  label="STOP"
-                  disabled={isStandby}
-                  compactLandscape={isLandscapeMobile}
-                  ariaLabel="Stop Playback and Return Tonearm"
-                  title="Stop Playback"
-                  onClick={() => {
-                    triggerButtonHaptic(lowPowerMode);
-                    onStop();
-                  }}
-                >
-                  <Square strokeWidth={2.2} className="w-3 h-3 fill-current" />
-                </HardwarePushButton>
-
-                <HardwarePushButton
-                  id="btn-next-track"
-                  label="NEXT"
-                  disabled={isStandby}
-                  compactLandscape={isLandscapeMobile}
-                  ariaLabel="Next Track"
-                  title="Next Track"
-                  onClick={() => {
-                    triggerButtonHaptic(lowPowerMode);
-                    onNext();
-                  }}
-                >
-                  <SkipForward strokeWidth={2.2} className="w-3.5 h-3.5" />
-                </HardwarePushButton>
-              </div>
-            </div>
-
-            {/* 6. Rightmost: Taller Time/Duration Display (Bottom-Aligned with Playback Control Titles) */}
-            <FrontFaceTimeDisplay
+            <TopSeekTimelineBar
+              trackId={track.id}
               durationSec={track.durationSec}
               isStandby={isStandby}
-              nightMode={nightMode}
-              compactLandscape={isLandscapeMobile}
-              dimensionClass={matchedEndModuleDimensionClass}
+              lowPowerMode={lowPowerMode}
+              onSeek={onSeek}
             />
+
+            <SyncedLyricsPanel
+              track={track}
+              isStandby={isStandby}
+              isPlaying={isPlaying}
+              isDocumentHidden={isDocumentHidden}
+              lowPowerMode={lowPowerMode}
+              nightMode={nightMode}
+              playbackRate={rpm === 45 ? (45 / 33.333) * (1 + pitchPercent / 100) : 1 + pitchPercent / 100}
+              prefersReducedMotion={prefersReducedMotion}
+              themePalette={themePalette}
+              onSeek={onSeek}
+              className={isCompactLandscape ? 'h-[44px]' : 'h-[58px] sm:h-[64px]'}
+            />
+          </div>
+        </div>
+
+        {/* ===================================================================
+            CHAMFERED WALNUT BEVEL EDGE BETWEEN TOP SURFACE & FRONT APRON
+            =================================================================== */}
+        <div
+          id="console-chamfer-edge"
+          aria-hidden="true"
+          style={{
+            background:
+              'linear-gradient(180deg, rgba(255,220,175,0.28) 0%, rgba(138,82,41,0.55) 35%, rgba(42,22,10,0.9) 85%, rgba(12,6,3,0.98) 100%)',
+          }}
+          className={`relative z-10 ${
+            isCompactLandscape ? 'my-0.5 h-1.5' : 'my-1 h-2'
+          } -mx-2 sm:-mx-3 shadow-[0_3px_8px_rgba(0,0,0,0.75)] shrink-0`}
+        />
+
+        {/* ===================================================================
+            2. WOODEN FRONT APRON FACE:
+               Control Bar (Requirements 5 & 6) + Front Rotary Dials
+            =================================================================== */}
+        <div
+          id="console-front-face"
+          style={{
+            backgroundImage: 'url(/console/console-front-wood.webp)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+          }}
+          className={`relative z-10 rounded-lg border border-[#6e4626]/85 shadow-[inset_0_2px_6px_rgba(255,215,170,0.12),0_4px_12px_rgba(0,0,0,0.9)] px-2 sm:px-3 ${
+            isCompactLandscape ? 'py-1' : 'py-1.5'
+          } shrink-0`}
+        >
+          <div
+            aria-hidden="true"
+            style={{
+              background:
+                'linear-gradient(180deg, rgba(20,10,5,0.52) 0%, rgba(12,6,3,0.78) 100%)',
+            }}
+            className="pointer-events-none absolute inset-0 rounded-lg"
+          />
+
+          <div className="relative z-10 flex flex-col items-center">
+            {/* --- CONTROL BAR ROW (Anchored Flush at Bottom of #console-front-face) --- */}
+            <div
+              id="turntable-control-row"
+              className="w-full flex items-end justify-between gap-1 sm:gap-2 px-0.5"
+            >
+              {/* LEFT END: Vertically Stacked Classic Analog Toggle Switches (Shuffle + Repeat)
+                  Top & Bottom edges match Play/Pause button plate (Requirements 5 & 6) */}
+              <div
+                id="shuffle-repeat-stack"
+                style={{ height: `${endModuleHeightPx}px` }}
+                className={`flex flex-col justify-between gap-[2px] p-[3px] rounded-[4px] bg-[#0c0704]/95 border border-[#5e3e22]/90 shadow-[inset_0_2px_5px_rgba(0,0,0,0.95),0_1px_0_rgba(255,214,165,0.16)] shrink-0 ${
+                  isCompactLandscape ? 'w-[58px]' : 'w-[60px] lg:w-[86px] xl:w-[100px]'
+                }`}
+              >
+                <ClassicAnalogToggleSwitch
+                  id="toggle-shuffle"
+                  label="SHF"
+                  isOn={shuffleEnabled}
+                  disabled={isStandby}
+                  compact={isCompactLandscape}
+                  ariaLabel="Toggle Shuffle"
+                  title={`Shuffle: ${shuffleEnabled ? 'ON' : 'OFF'}`}
+                  onClick={() => {
+                    triggerButtonHaptic(lowPowerMode);
+                    onToggleShuffle();
+                  }}
+                />
+                <ClassicAnalogToggleSwitch
+                  id="toggle-repeat"
+                  label="RPT"
+                  isOn={repeatOne}
+                  disabled={isStandby}
+                  compact={isCompactLandscape}
+                  ariaLabel="Toggle Repeat Current Song"
+                  title={`Repeat One: ${repeatOne ? 'ON' : 'OFF'}`}
+                  onClick={() => {
+                    triggerButtonHaptic(lowPowerMode);
+                    onToggleRepeatOne();
+                  }}
+                />
+              </div>
+
+              {/* CENTER: Hardware Transport Push-Buttons (Prev / Scratch / Play-Pause / Stop / Next) */}
+              <div
+                id="transport-buttons-group"
+                className="flex items-end justify-center gap-0.5 sm:gap-1.5 lg:gap-2"
+              >
+                {/* Prev */}
+                <div className="flex flex-col items-center justify-end gap-0.5">
+                  <button
+                    id="btn-prev-track"
+                    type="button"
+                    disabled={isStandby}
+                    onClick={() => {
+                      triggerButtonHaptic(lowPowerMode);
+                      onPrevious();
+                    }}
+                    aria-label="Previous Track"
+                    title="Previous Track"
+                    className={`relative ${
+                      isCompactLandscape ? 'w-6 h-6' : 'w-7 h-7 sm:w-8 sm:h-8 xl:w-9 xl:h-9'
+                    } rounded-full flex items-center justify-center cursor-pointer active:translate-y-[1px] disabled:opacity-40`}
+                  >
+                    <img
+                      src="/console/pushbutton-up.webp"
+                      alt=""
+                      aria-hidden="true"
+                      draggable={false}
+                      className="pointer-events-none absolute inset-0 w-full h-full object-contain"
+                    />
+                    <SkipBack className="relative z-10 w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#18130e] fill-current" />
+                  </button>
+                  <HardwareEngravedPlate label="PREV" compact={isCompactLandscape} />
+                </div>
+
+                {/* Scratch Pushbutton — Positioned Immediately to the LEFT of Play/Pause (Requirement 9) */}
+                <div className="flex flex-col items-center justify-end gap-0.5">
+                  <button
+                    id="btn-scratch-vinyl"
+                    type="button"
+                    disabled={isStandby}
+                    onClick={handleTriggerScratch}
+                    aria-label="Scratch Vinyl"
+                    title="Vinyl Scratch FX"
+                    className={`relative ${
+                      isCompactLandscape ? 'w-6 h-6' : 'w-7 h-7 sm:w-8 sm:h-8 xl:w-9 xl:h-9'
+                    } rounded-full flex items-center justify-center cursor-pointer active:translate-y-[1px] disabled:opacity-40`}
+                  >
+                    <img
+                      src={
+                        scratchPulseActive
+                          ? '/console/pushbutton-down.webp'
+                          : '/console/pushbutton-up.webp'
+                      }
+                      alt=""
+                      aria-hidden="true"
+                      draggable={false}
+                      className="pointer-events-none absolute inset-0 w-full h-full object-contain"
+                    />
+                    <Disc3
+                      className={`relative z-10 w-3 h-3 sm:w-3.5 sm:h-3.5 ${
+                        scratchPulseActive ? 'text-amber-300' : 'text-[#18130e]'
+                      }`}
+                    />
+                  </button>
+                  <HardwareEngravedPlate label="SCRATCH" compact={isCompactLandscape} />
+                </div>
+
+                {/* Primary Play / Pause Hardware Key (Reference height for #shuffle-repeat-stack & #console-time-display) */}
+                <div
+                  id="play-pause-plate"
+                  ref={playPausePlateRef}
+                  className="flex flex-col items-center justify-end gap-0.5"
+                >
+                  <button
+                    id="btn-play-pause"
+                    ref={playPauseBtnRef}
+                    type="button"
+                    disabled={isStandby}
+                    onClick={() => {
+                      triggerButtonHaptic(lowPowerMode);
+                      onTogglePlay();
+                    }}
+                    aria-label={isPlaying ? 'Pause' : 'Play'}
+                    title={isPlaying ? 'Pause Turntable' : 'Play Turntable'}
+                    className={`relative ${
+                      isCompactLandscape
+                        ? 'w-[28px] h-[28px]'
+                        : 'w-[36px] h-[36px] sm:w-[38px] sm:h-[38px] xl:w-[44px] xl:h-[44px]'
+                    } rounded-full flex items-center justify-center cursor-pointer active:translate-y-[1px] disabled:opacity-40`}
+                  >
+                    <img
+                      src={isPlaying ? '/console/pushbutton-down.webp' : '/console/pushbutton-up.webp'}
+                      alt=""
+                      aria-hidden="true"
+                      draggable={false}
+                      className="pointer-events-none absolute inset-0 w-full h-full object-contain"
+                    />
+                    {isPlaying ? (
+                      <Pause className="relative z-10 w-4 h-4 xl:w-5 xl:h-5 text-amber-300 fill-current" />
+                    ) : (
+                      <Play className="relative z-10 w-4 h-4 xl:w-5 xl:h-5 text-[#18130e] fill-current ml-0.5" />
+                    )}
+                  </button>
+                  <HardwareEngravedPlate
+                    label={isPlaying ? 'PAUSE' : 'PLAY'}
+                    compact={isCompactLandscape}
+                  />
+                </div>
+
+                {/* Stop */}
+                <div className="flex flex-col items-center justify-end gap-0.5">
+                  <button
+                    id="btn-stop-playback"
+                    type="button"
+                    disabled={isStandby}
+                    onClick={handleStopClick}
+                    aria-label="Stop Playback and Return Tonearm"
+                    title="Stop & Return Tonearm to Rest"
+                    className={`relative ${
+                      isCompactLandscape ? 'w-6 h-6' : 'w-7 h-7 sm:w-8 sm:h-8 xl:w-9 xl:h-9'
+                    } rounded-full flex items-center justify-center cursor-pointer active:translate-y-[1px] disabled:opacity-40`}
+                  >
+                    <img
+                      src="/console/pushbutton-up.webp"
+                      alt=""
+                      aria-hidden="true"
+                      draggable={false}
+                      className="pointer-events-none absolute inset-0 w-full h-full object-contain"
+                    />
+                    <Square className="relative z-10 w-2.5 h-2.5 sm:w-3 sm:h-3 text-[#18130e] fill-current" />
+                  </button>
+                  <HardwareEngravedPlate label="STOP" compact={isCompactLandscape} />
+                </div>
+
+                {/* Next */}
+                <div className="flex flex-col items-center justify-end gap-0.5">
+                  <button
+                    id="btn-next-track"
+                    type="button"
+                    disabled={isStandby}
+                    onClick={() => {
+                      triggerButtonHaptic(lowPowerMode);
+                      onNext();
+                    }}
+                    aria-label="Next Track"
+                    title="Next Track"
+                    className={`relative ${
+                      isCompactLandscape ? 'w-6 h-6' : 'w-7 h-7 sm:w-8 sm:h-8 xl:w-9 xl:h-9'
+                    } rounded-full flex items-center justify-center cursor-pointer active:translate-y-[1px] disabled:opacity-40`}
+                  >
+                    <img
+                      src="/console/pushbutton-up.webp"
+                      alt=""
+                      aria-hidden="true"
+                      draggable={false}
+                      className="pointer-events-none absolute inset-0 w-full h-full object-contain"
+                    />
+                    <SkipForward className="relative z-10 w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#18130e] fill-current" />
+                  </button>
+                  <HardwareEngravedPlate label="NEXT" compact={isCompactLandscape} />
+                </div>
+              </div>
+
+              {/* RIGHT END: Live Current Time (Larger Font) + Date with Weekday (Smaller Font)
+                  Top & Bottom edges match #shuffle-repeat-stack and Play/Pause button plate */}
+              <ConsoleClockDateBox
+                heightPx={endModuleHeightPx}
+                compact={isCompactLandscape}
+                isDocumentHidden={isDocumentHidden}
+              />
+            </div>
           </div>
         </div>
       </section>
     );
   }
 );
-
