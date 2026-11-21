@@ -14,6 +14,7 @@ import {
 import { retroAudio } from '../utils/retroAudioEngine';
 import { SyncedLyricsPanel } from './SyncedLyricsPanel';
 import type { TurntableDeckProps } from './TurntableDeck';
+import { useDoubleTapHideArt } from '../hooks/useDoubleTapHideArt';
 
 export const StreamlineDeck: React.FC<TurntableDeckProps> = ({
   track,
@@ -27,9 +28,14 @@ export const StreamlineDeck: React.FC<TurntableDeckProps> = ({
   viewportLayout,
   themePalette,
   hideBoxArt = false,
+  onToggleHideBoxArt,
   onSeek,
   onResolvedPerTrackArtwork,
 }) => {
+  const doubleTapHideHandlers = useDoubleTapHideArt({
+    enabled: !hideBoxArt,
+    onHide: onToggleHideBoxArt,
+  });
   const isStandby = track.id === 'standby-empty' || track.durationSec <= 0;
   const activeLoopsEnabled = shouldRunActiveAnimationLoops(
     isPlaying,
@@ -250,12 +256,12 @@ export const StreamlineDeck: React.FC<TurntableDeckProps> = ({
           style={{
             opacity: hideBoxArt ? 0 : 1,
             maxHeight: hideBoxArt ? '0px' : '520px',
-            transform: hideBoxArt ? 'scale(0.92)' : 'scale(1)',
+            transform: hideBoxArt ? 'scale(0.94)' : 'scale(1)',
             pointerEvents: hideBoxArt ? 'none' : 'auto',
             overflow: hideBoxArt ? 'hidden' : 'visible',
             transition: prefersReducedMotion
               ? 'none'
-              : 'opacity 240ms ease, max-height 260ms ease, transform 240ms ease',
+              : 'opacity 220ms ease, max-height 240ms ease, transform 220ms ease',
           }}
           className="relative z-20 flex flex-col items-center justify-center shrink-0"
         >
@@ -274,16 +280,15 @@ export const StreamlineDeck: React.FC<TurntableDeckProps> = ({
             id="album-art-holder-box"
             ref={holderRef}
             role="region"
-            aria-label="Draggable Album Art Card (Double-click to center)"
-            title="Drag card freely · Double-click to center"
+            aria-label="Draggable Album Art Card (Double-click to hide)"
+            title="Drag card freely · Double-click to hide album art"
             onPointerDown={handleHolderPointerDown}
+            onPointerDownCapture={doubleTapHideHandlers.onPointerDownCapture}
             onPointerMove={handleHolderPointerMove}
             onPointerUp={handleHolderPointerUp}
+            onPointerUpCapture={doubleTapHideHandlers.onPointerUpCapture}
             onPointerCancel={handleHolderPointerUp}
-            onDoubleClick={() => {
-              setHolderOffset({ x: 0, y: 0 });
-              setDragTiltDeg(0);
-            }}
+            onDoubleClick={doubleTapHideHandlers.onDoubleClick}
             data-holder-tilt={dragTiltDeg}
             data-dragging={isDraggingHolder ? 'true' : 'false'}
             style={{

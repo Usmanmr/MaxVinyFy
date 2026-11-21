@@ -265,6 +265,58 @@ export const CD_HIFI_THEME: ThemeDefinition = {
   },
 };
 
+export const PC_WINAMP_THEME: ThemeDefinition = {
+  id: 'pc-winamp',
+  name: 'PC / Winamp',
+  description: '1998 Beige Dell Windows 98 Desktop, Pentium II Tower, Winamp 2.x Suite & Floppy Desk',
+  scopeSelectorValue: 'pc-winamp',
+  swatch: {
+    primaryHex: '#00FF00',
+    secondaryHex: '#232531',
+    cabinetHex: '#D4CEC0',
+    accentHex: '#008080',
+  },
+  tokens: {
+    shellBgHex: '#2C241E',
+    shellTextHex: '#F4F2EA',
+    cabinetSurfaceBg: '#D4CEC0',
+    cabinetBorderHex: '#8E8878',
+    woodGrainAsset: '',
+    frontWoodAsset: '',
+    platterMatAsset: '',
+    vinylAsset: '',
+    fontDisplay: "'Space Grotesk', 'Tahoma', sans-serif",
+    fontSans: "'Plus Jakarta Sans', 'Tahoma', sans-serif",
+    fontMono: "'Share Tech Mono', 'VT323', monospace",
+  },
+};
+
+export const SPOTIFY_THEME: ThemeDefinition = {
+  id: 'spotify',
+  name: 'Spotify',
+  description: 'Original Spotify dark interface replica with #1DB954 accents, sticky tracklist & mini-player',
+  scopeSelectorValue: 'spotify',
+  swatch: {
+    primaryHex: '#1DB954',
+    secondaryHex: '#181818',
+    cabinetHex: '#121212',
+    accentHex: '#1DB954',
+  },
+  tokens: {
+    shellBgHex: '#000000',
+    shellTextHex: '#FFFFFF',
+    cabinetSurfaceBg: '#121212',
+    cabinetBorderHex: '#282828',
+    woodGrainAsset: '',
+    frontWoodAsset: '',
+    platterMatAsset: '',
+    vinylAsset: '',
+    fontDisplay: "'Plus Jakarta Sans', 'Inter', system-ui, sans-serif",
+    fontSans: "'Plus Jakarta Sans', 'Inter', system-ui, sans-serif",
+    fontMono: "'JetBrains Mono', 'Space Mono', monospace",
+  },
+};
+
 export const THEME_REGISTRY: readonly ThemeDefinition[] = [
   RETRO_TURNTABLE_THEME,
   REEL_TO_REEL_THEME,
@@ -275,6 +327,8 @@ export const THEME_REGISTRY: readonly ThemeDefinition[] = [
   DESKTOP_98_THEME,
   STREAMLINE_THEME,
   AURORA_DECK_THEME,
+  PC_WINAMP_THEME,
+  SPOTIFY_THEME,
 ] as const;
 
 export function getThemeById(themeId?: string | null): ThemeDefinition {

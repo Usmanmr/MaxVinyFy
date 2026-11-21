@@ -364,4 +364,5 @@ test('computeExpandedBoomboxStageLayout enforces 50px bottom speaker padding and
   assert.equal(mobExpanded.cassetteDoorWidthPx - mobExpanded.cassetteTapeWidthPx, 20);
   assert.equal(mobExpanded.cassetteDoorHeightPx - mobExpanded.cassetteTapeHeightPx, 20);
   assert.ok(mobExpanded.cassetteAspectRatio >= 1.54 && mobExpanded.cassetteAspectRatio <= 1.62);
+  assert.ok(mobExpanded.speakerDiameterPx >= 60 && mobExpanded.speakerDiameterPx < 105);
 });

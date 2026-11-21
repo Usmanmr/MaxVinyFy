@@ -560,10 +560,79 @@
 }
 
 /* Mobile Horizontal (Landscape) Screen Optimization:
-   Completely hide the 5-Band Graphic Equalizer in mobile landscape to free up critical vertical viewport height */
-@media (max-height: 500px) and (orientation: landscape) {
+   Completely hide the 5-Band Graphic Equalizer in mobile landscape and use 1-column vertical Cassette Rack */
+@media (max-height: 580px) and (orientation: landscape) {
   [data-theme="cassette-deck"] #cas-graphic-eq {
     display: none !important;
   }
+
+  [data-theme="cassette-deck"] #playlist-tracks-scroll {
+    display: flex !important;
+    flex-direction: column;
+    gap: 6px;
+    overflow-y: auto;
+  }
 }
+
+/* Mobile Vertical (Portrait) Optimization:
+   Single non-scrolling 100vw x 100dvh viewport with Boombox + 2-Column Cassette Playlist Selector below */
+@media (max-width: 767px) and (orientation: portrait) {
+  [data-theme="cassette-deck"].app-viewport-shell {
+    width: 100vw;
+    height: 100dvh;
+    min-height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 4px);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4px);
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  [data-theme="cassette-deck"] .main-deck-grid {
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  [data-theme="cassette-deck"] #retro-tv {
+    flex-shrink: 0;
+    width: 100%;
+  }
+
+  [data-theme="cassette-deck"] #retro-tv-chassis {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: clamp(175px, 28dvh, 240px) !important;
+    box-sizing: border-box;
+    margin-inline: auto;
+  }
+
+  [data-theme="cassette-deck"] #turntable {
+    flex: 0 0 auto;
+    min-height: 0;
+    height: auto;
+    overflow: visible;
+  }
+
+  [data-theme="cassette-deck"] #playlist-queue {
+    display: flex !important;
+    flex: 1 1 0%;
+    min-height: 112px;
+    overflow: hidden;
+  }
+
+  [data-theme="cassette-deck"] #cas-bottom-transport-well {
+    position: relative;
+    width: 100%;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    z-index: 20;
+    padding: 0 4px 2px;
+  }
+}
+
 

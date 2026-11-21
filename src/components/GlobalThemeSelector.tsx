@@ -1,12 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
-  Disc3,
-  Radio,
-  Tv,
-  SlidersHorizontal,
-  Sparkles,
   Image as ImageIcon,
   EyeOff,
+  Smartphone,
+  X,
 } from 'lucide-react';
 import { triggerButtonHaptic, type DominantThemePalette } from '../utils/playerLogic';
 import { DEFAULT_THEME_ID, type ThemeDefinition } from '../themes/themeRegistry';
@@ -27,6 +24,8 @@ export const DRAWER_CANONICAL_THEMES: readonly DrawerThemeEntry[] = [
   { id: 'retro-turntable', conciseName: 'Turntable' },
   { id: 'reel-to-reel', conciseName: 'Reel-to-Reel' },
   { id: 'aurora-deck', conciseName: 'Hologram' },
+  { id: 'pc-winamp', conciseName: 'PC / Winamp' },
+  { id: 'spotify', conciseName: 'Spotify' },
 ] as const;
 
 export const THEME_DRAWER_DISCOVERY_STORAGE_KEY = 'hasOpenedThemeDrawer';
@@ -243,6 +242,66 @@ export function resolveThemeAdaptiveDrawerSkin(activeThemeId: string): ThemeAdap
         hasScanlines: true,
       };
 
+    case 'pc-winamp':
+      return {
+        tabBackground:
+          'linear-gradient(180deg, #3A3D4D 0%, #232531 50%, #191B24 100%)',
+        tabBorder: '1px solid #65697D',
+        tabBoxShadow:
+          '-4px 0 16px rgba(0, 0, 0, 0.78), inset 1px 1px 0 #65697D, inset -1px -1px 0 #0E1016',
+        tabSvgStartHex: '#3A3D4D',
+        tabSvgMidHex: '#232531',
+        tabSvgEndHex: '#191B24',
+        tabSvgStrokeHex: '#65697D',
+        tabSvgFilterShadow: 'drop-shadow(-3px 2px 7px rgba(0, 0, 0, 0.7))',
+        chevronWellBackground: '#000000',
+        chevronColor: '#00FF00',
+        gripLineColor: 'rgba(200, 168, 88, 0.72)',
+        drawerBackground:
+          'linear-gradient(180deg, #3A3D4D 0%, #232531 50%, #191B24 100%)',
+        drawerBorderLeft: '2px solid #65697D',
+        drawerBoxShadow:
+          '-12px 0 36px rgba(0, 0, 0, 0.88), inset 1px 1px 0 #65697D, inset -1px -1px 0 #0E1016',
+        drawerTextHex: '#00FF00',
+        drawerSubTextHex: '#C8A858',
+        activeRowBackground: '#0000C6',
+        activeRowBorder: '#E6C245',
+        activeRowTextHex: '#FFFFFF',
+        inactiveRowBackground: '#000000',
+        inactiveRowBorder: '#65697D',
+        footerBorderTop: '1px solid #65697D',
+      };
+
+    case 'spotify':
+      return {
+        tabBackground:
+          'linear-gradient(180deg, #1E1E1E 0%, #121212 60%, #0A0A0A 100%)',
+        tabBorder: '1px solid #282828',
+        tabBoxShadow:
+          '-4px 0 16px rgba(0, 0, 0, 0.8), -1px 0 8px rgba(29, 185, 84, 0.28), inset 0 1px 0 rgba(255,255,255,0.08)',
+        tabSvgStartHex: '#202020',
+        tabSvgMidHex: '#151515',
+        tabSvgEndHex: '#0C0C0C',
+        tabSvgStrokeHex: '#1DB954',
+        tabSvgFilterShadow: 'drop-shadow(-3px 0 8px rgba(29, 185, 84, 0.35))',
+        chevronWellBackground: '#000000',
+        chevronColor: '#1DB954',
+        gripLineColor: 'rgba(179, 179, 179, 0.45)',
+        drawerBackground:
+          'linear-gradient(180deg, #181818 0%, #121212 58%, #0B0B0B 100%)',
+        drawerBorderLeft: '1px solid #282828',
+        drawerBoxShadow:
+          '-12px 0 36px rgba(0, 0, 0, 0.88), -2px 0 14px rgba(29, 185, 84, 0.18)',
+        drawerTextHex: '#FFFFFF',
+        drawerSubTextHex: '#B3B3B3',
+        activeRowBackground: 'rgba(29, 185, 84, 0.16)',
+        activeRowBorder: '#1DB954',
+        activeRowTextHex: '#1DB954',
+        inactiveRowBackground: '#181818',
+        inactiveRowBorder: '#282828',
+        footerBorderTop: '1px solid #282828',
+      };
+
     case 'retro-turntable':
     default:
       return {
@@ -309,31 +368,121 @@ export interface GlobalThemeSelectorProps {
   availableThemes: readonly ThemeDefinition[];
   themePalette: DominantThemePalette;
   hideBoxArt?: boolean;
+  isDeviceOnlyMode?: boolean;
   isPlaying?: boolean;
   isStandby?: boolean;
   isDocumentHidden?: boolean;
   prefersReducedMotion?: boolean;
   onSelectTheme: (themeId: string) => void;
   onToggleHideBoxArt?: () => void;
+  onToggleDeviceOnlyMode?: () => void;
 }
 
 const renderMinimalistThemeIcon = (themeId: string, colorHex: string) => {
+  const sharedProps = {
+    width: 20,
+    height: 20,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: colorHex,
+    strokeWidth: 1.75,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    'aria-hidden': true as const,
+    style: { width: '20px', height: '20px', flexShrink: 0 },
+  };
+
   switch (themeId) {
     case 'cassette-deck':
-      return <Radio style={{ color: colorHex }} className="w-4 h-4 shrink-0" />;
+      /* Cassette: Horizontal tape shell with twin circular spool holes & trapezoid base */
+      return (
+        <svg {...sharedProps}>
+          <rect x="2.5" y="5.5" width="19" height="13" rx="2" />
+          <circle cx="8" cy="11.5" r="2" />
+          <circle cx="16" cy="11.5" r="2" />
+          <path d="M9.8 11.5h4.4" />
+          <path d="M6.5 18.5l1.2-3h8.6l1.2 3" />
+        </svg>
+      );
     case 'cd-hifi':
-      return <Disc3 style={{ color: colorHex }} className="w-4 h-4 shrink-0" />;
+      /* CD: Outer polycarbonate ring, center spindle aperture, and optical glint arc */
+      return (
+        <svg {...sharedProps}>
+          <circle cx="12" cy="12" r="9.5" />
+          <circle cx="12" cy="12" r="2.75" />
+          <path d="M16.2 7.8a5.8 5.8 0 0 1 1.6 4.2" />
+        </svg>
+      );
     case 'click-wheel':
-      return <SlidersHorizontal style={{ color: colorHex }} className="w-4 h-4 shrink-0" />;
+      /* iPod: Vertical rectangle chassis, crisp upper display, and lower circular Click Wheel */
+      return (
+        <svg {...sharedProps}>
+          <rect x="5.5" y="2.5" width="13" height="19" rx="2.5" />
+          <rect x="8" y="5" width="8" height="5.5" rx="1" />
+          <circle cx="12" cy="15.5" r="3.2" />
+          <circle cx="12" cy="15.5" r="1" />
+        </svg>
+      );
     case 'squircle-pmp':
-      return <Tv style={{ color: colorHex }} className="w-4 h-4 shrink-0" />;
+      /* Zune: Vertical silhouette, tall top screen, and rounded squircle control pad */
+      return (
+        <svg {...sharedProps}>
+          <rect x="5.5" y="2.5" width="13" height="19" rx="2.2" />
+          <rect x="7.8" y="4.8" width="8.4" height="7.4" rx="0.8" />
+          <rect x="9.3" y="14.2" width="5.4" height="5.4" rx="1.9" />
+        </svg>
+      );
     case 'retro-turntable':
-      return <Disc3 style={{ color: colorHex }} className="w-4 h-4 shrink-0" />;
+      /* Turntable: Rectangular plinth, vinyl record platter, and offset tonearm */
+      return (
+        <svg {...sharedProps}>
+          <rect x="3" y="4.5" width="18" height="15" rx="2" />
+          <circle cx="10.2" cy="12" r="5" />
+          <circle cx="10.2" cy="12" r="1.2" />
+          <path d="M17.5 7v5.5l-2.8 2.2" />
+        </svg>
+      );
     case 'reel-to-reel':
-      return <Radio style={{ color: colorHex }} className="w-4 h-4 shrink-0" />;
+      /* Reel-to-Reel: Twin symmetric open tape reels above transport block */
+      return (
+        <svg {...sharedProps}>
+          <rect x="3" y="3.5" width="18" height="17" rx="2" />
+          <circle cx="8" cy="10" r="3.1" />
+          <circle cx="16" cy="10" r="3.1" />
+          <circle cx="8" cy="10" r="0.8" />
+          <circle cx="16" cy="10" r="0.8" />
+          <path d="M6.5 16.5h11" />
+        </svg>
+      );
+    case 'pc-winamp':
+      /* PC / Winamp: Boxy 4:3 CRT monitor silhouette with tiny lightning-bolt / EQ glyph inside */
+      return (
+        <svg {...sharedProps}>
+          <rect x="3" y="3.5" width="18" height="13.5" rx="1.5" />
+          <path d="M12.6 6.8 9.8 10.6h2.7l-1.1 3.3 3-3.9h-2.6l.8-3.2z" />
+          <path d="M9.5 17v2.8M14.5 17v2.8M7.5 19.8h9" />
+        </svg>
+      );
+    case 'spotify':
+      /* Spotify: Circular glyph with 3 crisp curved soundwave arcs */
+      return (
+        <svg {...sharedProps}>
+          <circle cx="12" cy="12" r="9.5" />
+          <path d="M7.6 9.6c2.9-.85 6.4-.65 9.1.75" />
+          <path d="M8.3 12.6c2.4-.7 5.2-.5 7.4.65" />
+          <path d="M9.1 15.4c1.8-.45 3.9-.3 5.5.5" />
+        </svg>
+      );
     case 'aurora-deck':
     default:
-      return <Sparkles style={{ color: colorHex }} className="w-4 h-4 shrink-0" />;
+      /* Hologram: Layered geometric holographic prism & diamond planes */
+      return (
+        <svg {...sharedProps}>
+          <polygon points="12 2.8 20.2 9.5 12 21.2 3.8 9.5" />
+          <path d="M3.8 9.5h16.4" />
+          <path d="M12 2.8l-3.6 6.7L12 21.2l3.6-11.7Z" />
+        </svg>
+      );
   }
 };
 
@@ -353,7 +502,8 @@ export const GlobalMytBrandEmblem = React.memo<{
   isStandby: boolean;
   isDocumentHidden: boolean;
   prefersReducedMotion: boolean;
-}>(({ activeThemeId, themePalette, isPlaying, isStandby, isDocumentHidden, prefersReducedMotion }) => {
+  drawerTextHex?: string;
+}>(({ activeThemeId, themePalette, isPlaying, isStandby, isDocumentHidden, prefersReducedMotion, drawerTextHex }) => {
   const shouldSpin = Boolean(
     isPlaying && !isStandby && !isDocumentHidden && !prefersReducedMotion
   );
@@ -396,6 +546,18 @@ export const GlobalMytBrandEmblem = React.memo<{
           border: '#00FFFF',
           textHex: '#00FFFF',
         };
+      case 'pc-winamp':
+        return {
+          bg: 'linear-gradient(180deg, #2D3140 0%, #14161F 100%)',
+          border: '#00FF00',
+          textHex: '#00FF00',
+        };
+      case 'spotify':
+        return {
+          bg: 'radial-gradient(circle, #181818 0%, #0A0A0A 100%)',
+          border: '#1DB954',
+          textHex: '#1DB954',
+        };
       case 'retro-turntable':
       default:
         return {
@@ -409,7 +571,6 @@ export const GlobalMytBrandEmblem = React.memo<{
   const renderThemeOuterRotatingRing = () => {
     switch (activeThemeId) {
       case 'cassette-deck':
-        /* Cassette Mode: Miniature 6-tooth cassette tape reel hub ring with spoked dark-grey/silver teeth */
         return (
           <svg viewBox="0 0 64 64" className="w-full h-full">
             <circle cx="32" cy="32" r="30.5" fill="#18191B" stroke="#D0D3D6" strokeWidth="2" />
@@ -432,7 +593,6 @@ export const GlobalMytBrandEmblem = React.memo<{
         );
 
       case 'cd-hifi':
-        /* CD Player Mode: Miniature optical CD ring with rainbow iridescent polycarbonate glint & RGB rim */
         return (
           <div
             className="w-full h-full rounded-full border-[2px] border-[#00F0FF] shadow-[0_0_10px_rgba(0,240,255,0.65),inset_0_0_6px_rgba(255,0,128,0.5)]"
@@ -444,18 +604,18 @@ export const GlobalMytBrandEmblem = React.memo<{
         );
 
       case 'reel-to-reel':
-        /* Reel-to-Reel Mode: Miniature 3-spoke brushed aluminum tape reel flange rim with radial cutouts */
         return (
           <svg viewBox="0 0 64 64" className="w-full h-full">
             <circle cx="32" cy="32" r="30.5" fill="#C8CCD0" stroke="#5A5E62" strokeWidth="1.8" />
             <circle cx="32" cy="32" r="28" fill="none" stroke="#FFB347" strokeWidth="1" opacity="0.7" />
-            {[0, 120, 240].map((deg) => (
+            {[0, 60, 120, 180, 240, 300].map((deg) => (
               <path
                 key={deg}
-                d="M 27 7 L 37 7 L 34.5 19 L 29.5 19 Z"
-                fill="#1F1914"
+                d="M 29.8 18.2 C 29.5 17 30.2 16 31 14 L 26.2 8.2 C 25.4 7.1 26.1 5.6 27.6 5.3 Q 32 4.3 36.4 5.3 C 37.9 5.6 38.6 7.1 37.8 8.2 L 33 14 C 33.8 16 34.5 17 34.2 18.2 C 33.8 19.2 30.2 19.2 29.8 18.2 Z"
+                fill="#2A1D14"
                 stroke="#787C82"
-                strokeWidth="0.9"
+                strokeWidth="0.85"
+                strokeLinejoin="round"
                 transform={`rotate(${deg} 32 32)`}
               />
             ))}
@@ -463,7 +623,6 @@ export const GlobalMytBrandEmblem = React.memo<{
         );
 
       case 'click-wheel':
-        /* iPod Mode: Clean concentric Click Wheel / brushed metallic orbital ring with directional tick markers */
         return (
           <svg viewBox="0 0 64 64" className="w-full h-full">
             <circle cx="32" cy="32" r="30.5" fill="#F2F4F8" stroke="#C3C8D1" strokeWidth="1.6" />
@@ -482,7 +641,6 @@ export const GlobalMytBrandEmblem = React.memo<{
         );
 
       case 'squircle-pmp':
-        /* Zune Mode: Matte dark-brown/charcoal circular pad ring with subtle olive-green highlight arc */
         return (
           <svg viewBox="0 0 64 64" className="w-full h-full">
             <circle cx="32" cy="32" r="30.5" fill="#2A2019" stroke="#7E8F4E" strokeWidth="2" />
@@ -504,7 +662,6 @@ export const GlobalMytBrandEmblem = React.memo<{
         );
 
       case 'aurora-deck':
-        /* Hologram Mode: Dual concentric neon cyan/magenta HUD arcs */
         return (
           <svg viewBox="0 0 64 64" className="w-full h-full">
             <circle
@@ -528,9 +685,39 @@ export const GlobalMytBrandEmblem = React.memo<{
           </svg>
         );
 
+      case 'pc-winamp':
+        return (
+          <svg viewBox="0 0 64 64" className="w-full h-full">
+            <circle cx="32" cy="32" r="30.5" fill="#181A22" stroke="#65697D" strokeWidth="1.6" />
+            <circle cx="32" cy="32" r="21.5" fill="#C4C8D0" stroke="#7E8391" strokeWidth="1.2" />
+            <rect x="29.5" y="13.5" width="5" height="6" rx="0.8" fill="#232531" />
+            <rect x="25" y="45" width="4" height="4.5" rx="0.6" fill="#232531" />
+            {[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330].map((deg, idx) => (
+              <rect
+                key={deg}
+                x="30.8"
+                y="3.5"
+                width="2.4"
+                height={idx % 2 === 0 ? '5.5' : '3.8'}
+                rx="0.6"
+                fill={idx % 3 === 0 ? '#E6C245' : '#00FF00'}
+                transform={`rotate(${deg} 32 32)`}
+              />
+            ))}
+          </svg>
+        );
+
+      case 'spotify':
+        return (
+          <svg viewBox="0 0 64 64" className="w-full h-full">
+            <circle cx="32" cy="32" r="30.5" fill="#121212" stroke="#1DB954" strokeWidth="2" />
+            <circle cx="32" cy="32" r="26" fill="none" stroke="#1DB954" strokeWidth="2.2" strokeDasharray="18 6" opacity={shouldSpin ? '0.95' : '0.6'} />
+            <circle cx="32" cy="32" r="22" fill="none" stroke="#1ED760" strokeWidth="1.2" strokeDasharray="8 10" opacity="0.55" />
+          </svg>
+        );
+
       case 'retro-turntable':
       default:
-        /* Turntable Mode: Micro-grooved black vinyl record rim with realistic specular light sheen */
         return (
           <div
             className="w-full h-full rounded-full border border-[#3d291a]"
@@ -545,66 +732,20 @@ export const GlobalMytBrandEmblem = React.memo<{
     }
   };
 
-  const brandTitleStyle = useMemo(() => {
-    switch (activeThemeId) {
-      case 'click-wheel':
-        return {
-          color: '#1D1D1F',
-          textShadow: '0 1px 0 rgba(255,255,255,0.75)',
-        };
-      case 'cassette-deck':
-        return {
-          color: '#F4F6F8',
-          textShadow: '0 1px 6px rgba(0,0,0,0.85)',
-        };
-      case 'cd-hifi':
-        return {
-          color: '#F1F5F9',
-          textShadow: '0 1px 10px rgba(0,240,255,0.35), 0 1px 3px rgba(0,0,0,0.9)',
-        };
-      case 'squircle-pmp':
-        return {
-          color: '#FFFFFF',
-          textShadow: '0 1px 6px rgba(0,0,0,0.85)',
-          textTransform: 'lowercase' as const,
-        };
-      case 'aurora-deck':
-        return {
-          color: '#EAF2FF',
-          textShadow: '0 0 10px rgba(0,255,255,0.45)',
-        };
-      case 'reel-to-reel':
-      case 'retro-turntable':
-      default:
-        return {
-          color: '#F8EAD6',
-          textShadow: '0 1px 4px rgba(0,0,0,0.88)',
-        };
-    }
-  }, [activeThemeId]);
-
   return (
     <div
       id="global-myt-brand-emblem"
       data-testid="global-myt-brand-emblem"
       data-theme-emblem={activeThemeId}
       data-emblem-spinning={shouldSpin ? 'true' : 'false'}
-      aria-label="MaxYoutify Global Brand Header"
-      style={{
-        position: 'fixed',
-        top: 'calc(env(safe-area-inset-top, 0px) + 10px)',
-        left: '12px',
-        zIndex: 9998,
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
-      }}
-      className="md:!top-[16px] md:!left-[16px] select-none pointer-events-auto"
+      aria-label="MaxYoutify Brand Header"
+      className="relative flex flex-col items-center text-center select-none shrink-0 pt-1 pb-2"
     >
       <div
         id="myt-logo-badge"
         data-spinning={shouldSpin ? 'true' : 'false'}
-        className="relative w-[44px] h-[44px] md:w-[56px] md:h-[56px] shrink-0 rounded-full shadow-[0_6px_16px_rgba(0,0,0,0.45)]"
+        style={{ width: '56px', height: '56px' }}
+        className="relative shrink-0 rounded-full shadow-[0_6px_16px_rgba(0,0,0,0.42)]"
       >
         {/* LAYER 1 (z-index: 1): Rotating Outer Mechanical/Graphic Ring ONLY */}
         <div
@@ -658,7 +799,7 @@ export const GlobalMytBrandEmblem = React.memo<{
                 letterSpacing: '0.08em',
                 transform: 'none',
               }}
-              className="font-sans text-[9.5px] md:text-[11px] uppercase leading-none select-none"
+              className="font-sans text-[11px] uppercase leading-none select-none"
             >
               MYT
             </span>
@@ -666,20 +807,41 @@ export const GlobalMytBrandEmblem = React.memo<{
         </div>
       </div>
 
-      {/* PART 1.1: Fixed App Title Locked Strictly to the Right of the Rotating Disc Emblem (Zero Rotation) */}
+      {/* App Title Centered Strictly Below Rotating Logo */}
       <h1
         id="app-brand-title"
         data-testid="app-brand-title"
         style={{
+          marginTop: '10px',
+          fontSize: '1.05rem',
+          fontWeight: 700,
+          letterSpacing: '0.04em',
+          textAlign: 'center',
           transform: 'none',
-          color: brandTitleStyle.color,
-          textShadow: brandTitleStyle.textShadow,
-          textTransform: brandTitleStyle.textTransform,
+          color: drawerTextHex || 'inherit',
         }}
-        className="font-display text-[17px] md:text-[21px] font-extrabold tracking-tight leading-none whitespace-nowrap shrink-0 pointer-events-none select-none"
+        className="font-display leading-tight whitespace-nowrap select-none"
       >
         MaxYoutify
       </h1>
+
+      {/* Studio Attribution Line Centered Directly Below App Title */}
+      <p
+        id="app-brand-attribution"
+        data-testid="app-brand-attribution"
+        style={{
+          marginTop: '3px',
+          fontSize: '0.72rem',
+          fontWeight: 500,
+          letterSpacing: '0.06em',
+          opacity: 0.72,
+          textAlign: 'center',
+          color: drawerTextHex || 'inherit',
+        }}
+        className="font-sans leading-tight whitespace-nowrap select-none"
+      >
+        by xuMax interActive
+      </p>
     </div>
   );
 });
@@ -690,12 +852,14 @@ export const GlobalThemeSelector = React.memo<GlobalThemeSelectorProps>(
     availableThemes,
     themePalette,
     hideBoxArt = false,
+    isDeviceOnlyMode = false,
     isPlaying = false,
     isStandby = false,
     isDocumentHidden = false,
     prefersReducedMotion = false,
     onSelectTheme,
     onToggleHideBoxArt,
+    onToggleDeviceOnlyMode,
   }) => {
     const [isOpen, setIsOpen] = useState<boolean>(false);
     const [hasOpenedBefore, setHasOpenedBefore] = useState<boolean>(() => {
@@ -707,6 +871,30 @@ export const GlobalThemeSelector = React.memo<GlobalThemeSelectorProps>(
     });
 
     const skin = useMemo(() => resolveThemeAdaptiveDrawerSkin(activeThemeId), [activeThemeId]);
+
+    const middleScrollRef = useRef<HTMLDivElement | null>(null);
+    const [scrollShadows, setScrollShadows] = useState<{ top: boolean; bottom: boolean }>({
+      top: false,
+      bottom: false,
+    });
+
+    const updateMiddleScrollShadows = useCallback(() => {
+      const el = middleScrollRef.current;
+      if (!el) return;
+      const hasOverflow = el.scrollHeight > el.clientHeight + 2;
+      const top = hasOverflow && el.scrollTop > 4;
+      const bottom = hasOverflow && el.scrollTop + el.clientHeight < el.scrollHeight - 4;
+      setScrollShadows((prev) =>
+        prev.top === top && prev.bottom === bottom ? prev : { top, bottom }
+      );
+    }, []);
+
+    useEffect(() => {
+      updateMiddleScrollShadows();
+      const handleResize = () => updateMiddleScrollShadows();
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }, [isOpen, activeThemeId, updateMiddleScrollShadows]);
 
     const markDrawerDiscovered = useCallback(() => {
       setHasOpenedBefore((prev) => {
@@ -854,16 +1042,6 @@ export const GlobalThemeSelector = React.memo<GlobalThemeSelectorProps>(
 
     return (
       <>
-        {/* PART 2: Global Top-Left Brand Emblem — Static "MYT" Core & Concentric Rotating Outer Ring */}
-        <GlobalMytBrandEmblem
-          activeThemeId={activeThemeId}
-          themePalette={themePalette}
-          isPlaying={isPlaying}
-          isStandby={isStandby}
-          isDocumentHidden={isDocumentHidden}
-          prefersReducedMotion={prefersReducedMotion}
-        />
-
         {/* PART 1.4: Refined Right-Edge Sculpted Concave-Fillet SVG Pull-Tab */}
         <div
           id="global-theme-drawer-tab-anchor"
@@ -886,12 +1064,23 @@ export const GlobalThemeSelector = React.memo<GlobalThemeSelectorProps>(
             data-drawer-open={isOpen ? 'true' : 'false'}
             data-discovery-bounce={showDiscoveryBounce ? 'true' : 'false'}
             data-active-theme-skin={activeThemeId}
+            data-device-only-active={
+              isDeviceOnlyMode && (activeThemeId === 'squircle-pmp' || activeThemeId === 'click-wheel')
+                ? 'true'
+                : 'false'
+            }
             onClick={toggleDrawer}
             style={{
               filter: skin.tabSvgFilterShadow,
             }}
             className={`global-theme-pull-tab relative w-[26px] h-[104px] md:w-[28px] md:h-[110px] flex items-center justify-end pr-[3px] bg-transparent border-0 p-0 cursor-pointer focus:outline-none ${
               showDiscoveryBounce ? 'theme-tab-discovery-bounce' : ''
+            } ${
+              !isOpen &&
+              isDeviceOnlyMode &&
+              (activeThemeId === 'squircle-pmp' || activeThemeId === 'click-wheel')
+                ? 'global-theme-pull-tab-dimmed'
+                : ''
             }`}
           >
             {/* Expanded Invisible Touch/Pointer Hit Target (min 44px touch clearance) */}
@@ -995,7 +1184,55 @@ export const GlobalThemeSelector = React.memo<GlobalThemeSelectorProps>(
           />
         )}
 
-        {/* PART 1.3: Theme-Adaptive Slide-Out Drawer Panel — Bottom-Aligned Thumb Ergonomics */}
+        {/* PART 1.2: Top-Left Focus-Mode Exit Button (ONLY rendered when Device Only Mode is active on iPod or Zune) */}
+        {isDeviceOnlyMode &&
+          onToggleDeviceOnlyMode &&
+          (activeThemeId === 'click-wheel' || activeThemeId === 'squircle-pmp') && (
+            <button
+              id="focus-mode-exit-btn"
+              data-testid="focus-mode-exit-btn"
+              type="button"
+              aria-label="Exit Device Only Mode"
+              title="Exit Device Only Mode"
+              onClick={() => {
+                triggerButtonHaptic(false);
+                onToggleDeviceOnlyMode();
+              }}
+              style={{
+                position: 'fixed',
+                top: 'calc(env(safe-area-inset-top, 0px) + 14px)',
+                left: '14px',
+                zIndex: 9999,
+                width: '34px',
+                height: '34px',
+                borderRadius: '9999px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                cursor: 'pointer',
+                backgroundColor:
+                  activeThemeId === 'click-wheel'
+                    ? 'rgba(255, 255, 255, 0.72)'
+                    : 'rgba(36, 32, 30, 0.78)',
+                border:
+                  activeThemeId === 'click-wheel'
+                    ? '1px solid rgba(0, 0, 0, 0.14)'
+                    : '1px solid rgba(126, 143, 78, 0.48)',
+                color: activeThemeId === 'click-wheel' ? '#1D1D1F' : '#F4EFEA',
+                boxShadow:
+                  activeThemeId === 'click-wheel'
+                    ? '0 4px 12px rgba(0, 0, 0, 0.12)'
+                    : '0 4px 12px rgba(0, 0, 0, 0.45)',
+              }}
+              className="transition-transform active:scale-95 hover:scale-105"
+            >
+              <X className="w-[14px] h-[14px]" strokeWidth={2} aria-hidden="true" />
+            </button>
+          )}
+
+        {/* PART 1.1: Three-Zone Pinned Right-Swipe Drawer (Middle-Only Scrolling) */}
         <aside
           id="global-theme-slide-drawer"
           data-testid="global-theme-slide-drawer"
@@ -1020,90 +1257,209 @@ export const GlobalThemeSelector = React.memo<GlobalThemeSelectorProps>(
             pointerEvents: isOpen ? 'auto' : 'none',
             display: 'flex',
             flexDirection: 'column',
-            justifyContent: 'flex-end',
-            height: '100%',
-            paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 20px)',
+            height: '100dvh',
+            padding: 0,
+            overflow: 'hidden',
           }}
-          className="w-[248px] sm:w-[272px] px-4 pt-4 select-none overflow-hidden"
+          className="w-[248px] sm:w-[272px] select-none"
         >
-          <div className="w-full max-h-full overflow-y-auto flex flex-col justify-end gap-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {/* Drawer Header */}
-            <div className="flex items-center justify-between pb-2.5 border-b border-current/15 shrink-0">
-              <span className="font-sans text-xs font-extrabold uppercase tracking-[0.14em]">
-                Hardware Mode
-              </span>
-              <button
-                id="global-theme-drawer-close-btn"
-                type="button"
-                onClick={closeDrawer}
-                aria-label="Close Theme Drawer"
-                style={{
-                  color: skin.drawerTextHex,
-                  borderColor: skin.inactiveRowBorder,
-                }}
-                className="w-7 h-7 rounded-md border flex items-center justify-center text-sm font-bold cursor-pointer hover:opacity-80"
-              >
-                ›
-              </button>
-            </div>
-
-            {/* Minimalist 7-Theme Vertical List Positioned in Bottom-Half Thumb Reach */}
-            <nav
-              id="global-theme-drawer-list"
-              role="listbox"
-              aria-label="Hardware Themes"
-              className="space-y-2 shrink-0"
+          {/* ZONE 1 — Top Pinned Brand Header (flex-shrink: 0; never scrolls out of view) */}
+          <div
+            style={{
+              padding: 'calc(env(safe-area-inset-top, 0px) + 16px) 16px 12px',
+              borderBottom: skin.footerBorderTop,
+            }}
+            className="relative w-full flex flex-col items-center shrink-0"
+          >
+            {activeThemeId === 'pc-winamp' && (
+              <div className="w-full flex items-center gap-2 mb-1.5 px-1" aria-hidden="true">
+                <span className="flex-1 h-[8px] pcw-winamp-ridges" />
+                <span className="font-mono text-[9px] font-bold tracking-[0.14em] text-[#E6C245] uppercase">
+                  WINAMP 2.91
+                </span>
+                <span className="flex-1 h-[8px] pcw-winamp-ridges" />
+              </div>
+            )}
+            <button
+              id="global-theme-drawer-close-btn"
+              type="button"
+              onClick={closeDrawer}
+              aria-label="Close Theme Drawer"
+              style={{
+                color: skin.drawerTextHex,
+                borderColor: skin.inactiveRowBorder,
+                top: 'calc(env(safe-area-inset-top, 0px) + 14px)',
+                right: '14px',
+              }}
+              className="absolute w-7 h-7 rounded-md border flex items-center justify-center text-sm font-bold cursor-pointer hover:opacity-80"
             >
-              {drawerThemes.map((entry) => {
-                const isSelected = entry.id === activeThemeId;
-                const rowTextColor = isSelected ? skin.activeRowTextHex : skin.drawerTextHex;
-                return (
-                  <button
-                    key={entry.id}
-                    id={`theme-option-${entry.id}`}
-                    data-theme-option={entry.id}
-                    type="button"
-                    role="option"
-                    aria-selected={isSelected}
-                    onClick={() => {
-                      triggerButtonHaptic(false);
-                      onSelectTheme(entry.id);
-                      closeDrawer();
-                    }}
-                    style={{
-                      background: isSelected
-                        ? skin.activeRowBackground
-                        : skin.inactiveRowBackground,
-                      borderColor: isSelected ? skin.activeRowBorder : skin.inactiveRowBorder,
-                      color: rowTextColor,
-                    }}
-                    className="w-full h-[42px] px-3 rounded-[8px] border flex items-center justify-between gap-2.5 text-left cursor-pointer transition-transform active:scale-[0.99]"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
+              ›
+            </button>
+            <GlobalMytBrandEmblem
+              activeThemeId={activeThemeId}
+              themePalette={themePalette}
+              isPlaying={isPlaying}
+              isStandby={isStandby}
+              isDocumentHidden={isDocumentHidden}
+              prefersReducedMotion={prefersReducedMotion}
+              drawerTextHex={skin.drawerTextHex}
+            />
+          </div>
+
+          {/* ZONE 2 — Middle Scrollable Theme List (flex: 1; min-height: 0; overflow-y: auto) */}
+          <div className="relative flex-1 min-h-0 w-full flex flex-col">
+            {scrollShadows.top && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute top-0 left-0 right-0 h-4 z-10"
+                style={{
+                  background:
+                    activeThemeId === 'click-wheel' || activeThemeId === 'cassette-deck'
+                      ? 'linear-gradient(to bottom, rgba(0,0,0,0.12), transparent)'
+                      : 'linear-gradient(to bottom, rgba(0,0,0,0.38), transparent)',
+                }}
+              />
+            )}
+            <div
+              ref={middleScrollRef}
+              onScroll={updateMiddleScrollShadows}
+              style={{
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                WebkitOverflowScrolling: 'touch',
+                padding: '10px 16px',
+                ['--drawer-scroll-thumb' as string]:
+                  activeThemeId === 'click-wheel' || activeThemeId === 'cassette-deck'
+                    ? 'rgba(0, 0, 0, 0.25)'
+                    : 'rgba(255, 255, 255, 0.28)',
+              }}
+              className="drawer-middle-scroll flex-1 min-h-0 w-full"
+            >
+              <nav
+                id="global-theme-drawer-list"
+                role="listbox"
+                aria-label="Hardware Themes"
+                className="space-y-2"
+              >
+                {drawerThemes.map((entry) => {
+                  const isSelected = entry.id === activeThemeId;
+                  const rowTextColor = isSelected ? skin.activeRowTextHex : skin.drawerTextHex;
+                  return (
+                    <button
+                      key={entry.id}
+                      id={`theme-option-${entry.id}`}
+                      data-theme-option={entry.id}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      onClick={() => {
+                        triggerButtonHaptic(false);
+                        onSelectTheme(entry.id);
+                        closeDrawer();
+                      }}
+                      style={{
+                        background: isSelected
+                          ? skin.activeRowBackground
+                          : skin.inactiveRowBackground,
+                        borderColor: isSelected ? skin.activeRowBorder : skin.inactiveRowBorder,
+                        color: rowTextColor,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        width: '100%',
+                        height: '42px',
+                        padding: '0 12px',
+                      }}
+                      className={`${
+                        activeThemeId === 'pc-winamp' ? 'pcw-drawer-row rounded-[2px]' : 'rounded-[8px]'
+                      } border text-left cursor-pointer transition-transform active:scale-[0.99]`}
+                    >
                       {renderMinimalistThemeIcon(entry.id, rowTextColor)}
-                      <span className="font-sans text-[13px] font-bold tracking-tight truncate">
+                      <span className="flex-1 min-w-0 font-sans text-[13px] font-bold tracking-tight truncate">
                         {entry.conciseName}
                       </span>
-                    </div>
-                    {isSelected && (
-                      <span
-                        aria-hidden="true"
-                        style={{ backgroundColor: rowTextColor }}
-                        className="w-2 h-2 rounded-full shrink-0"
-                      />
-                    )}
-                  </button>
-                );
-              })}
-            </nav>
-
-            {/* Dedicated Settings Footer Housing Persistent Show / Hide Album Art / Case Toggle */}
-            {onToggleHideBoxArt && (
+                      {isSelected && (
+                        <span
+                          aria-hidden="true"
+                          style={{ backgroundColor: rowTextColor }}
+                          className="w-2 h-2 rounded-full shrink-0"
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+            {scrollShadows.bottom && (
               <div
-                id="global-theme-drawer-footer"
-                style={{ borderTop: skin.footerBorderTop }}
-                className="pt-2.5 shrink-0"
-              >
+                aria-hidden="true"
+                className="pointer-events-none absolute bottom-0 left-0 right-0 h-4 z-10"
+                style={{
+                  background:
+                    activeThemeId === 'click-wheel' || activeThemeId === 'cassette-deck'
+                      ? 'linear-gradient(to top, rgba(0,0,0,0.12), transparent)'
+                      : 'linear-gradient(to top, rgba(0,0,0,0.38), transparent)',
+                }}
+              />
+            )}
+          </div>
+
+          {/* ZONE 3 — Bottom Pinned Utility Controls (flex-shrink: 0; always locked at bottom) */}
+          {(onToggleHideBoxArt ||
+            (onToggleDeviceOnlyMode &&
+              (activeThemeId === 'squircle-pmp' || activeThemeId === 'click-wheel'))) && (
+            <div
+              id="global-theme-drawer-footer"
+              style={{
+                borderTop: skin.footerBorderTop,
+                padding: '12px 16px calc(env(safe-area-inset-bottom, 0px) + 16px)',
+              }}
+              className="w-full flex flex-col gap-2 shrink-0"
+            >
+              {onToggleDeviceOnlyMode &&
+                (activeThemeId === 'squircle-pmp' || activeThemeId === 'click-wheel') && (
+                  <button
+                    id="toggle-device-only-btn"
+                    data-testid="toggle-device-only-btn"
+                    type="button"
+                    aria-pressed={isDeviceOnlyMode}
+                    aria-label={
+                      isDeviceOnlyMode
+                        ? 'Exit Device Only Mode'
+                        : 'Enable Device Only Mode'
+                    }
+                    title="Hide all workspace surroundings to showcase only the handheld player"
+                    onClick={() => {
+                      triggerButtonHaptic(false);
+                      onToggleDeviceOnlyMode();
+                    }}
+                    style={{
+                      background: isDeviceOnlyMode
+                        ? skin.activeRowBackground
+                        : skin.inactiveRowBackground,
+                      borderColor: isDeviceOnlyMode
+                        ? skin.activeRowBorder
+                        : skin.inactiveRowBorder,
+                      color: isDeviceOnlyMode ? skin.activeRowTextHex : skin.drawerTextHex,
+                    }}
+                    className="w-full h-[40px] px-3 rounded-[8px] border flex items-center justify-between gap-2 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      <Smartphone className="w-4 h-4 shrink-0" />
+                      <span className="font-sans text-[12px] font-bold truncate">
+                        Device Only Mode
+                      </span>
+                    </span>
+                    <span
+                      aria-hidden="true"
+                      className="font-mono text-[10px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-black/20"
+                    >
+                      {isDeviceOnlyMode ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
+                )}
+
+              {onToggleHideBoxArt && (
                 <button
                   id="toggle-box-art-btn"
                   type="button"
@@ -1146,9 +1502,9 @@ export const GlobalThemeSelector = React.memo<GlobalThemeSelectorProps>(
                     {hideBoxArt ? 'OFF' : 'ON'}
                   </span>
                 </button>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </aside>
       </>
     );

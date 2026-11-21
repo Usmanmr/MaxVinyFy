@@ -52,6 +52,12 @@ import {
   splitPlaylistIntoOrganizerColumns,
 } from '../utils/cassetteDeckLogic';
 import { useCassetteSpinePalette } from '../utils/cassetteSpineColor';
+import { useCdSpinePalette } from '../utils/cdSpineColor';
+import {
+  buildYouTubeCandidateQueue,
+  loadYouTubeIframeApi,
+  type YTPlayerInstance,
+} from '../utils/youtubePlayer';
 import { formatDesktop98PlaylistEntry } from '../utils/desktop98Logic';
 import { hexToRgbaString, STREAMLINE_CHANNEL_COUNT } from '../utils/streamlineLogic';
 import { auroraHexToRgba, AURORA_PALETTE } from '../utils/auroraLogic';
@@ -85,7 +91,7 @@ export const BrandHeader = React.memo<{
   return (
     <div
       id="app-brand-header"
-      className={`relative z-30 flex items-center gap-2 min-w-0 shrink pl-[168px] md:pl-[194px] ${className}`}
+      className={`relative z-30 flex items-center gap-2 min-w-0 shrink pl-1 ${className}`}
     >
       <div className="flex flex-col justify-center leading-none min-w-0">
         <p
@@ -464,6 +470,328 @@ const TvFrameCrossfadeStage = React.memo<{
   }
 );
 
+/**
+ * Persistent YouTube IFrame API player for Sony Bravia Plasma TV (cd-hifi):
+ * - Validates and sanitizes strict 11-char YouTube IDs & cycles candidate fallbacks on error/stall
+ * - Keeps frame mounted and visible (opacity-100) when paused so the video freezes cleanly without blackout
+ */
+const PlasmaBraviaYouTubePlayer: React.FC<{
+  candidateQueue: string[];
+  isPlaying: boolean;
+  isFullscreen: boolean;
+  volumePct: number;
+  seekEvent?: { timeSec: number; nonce: number };
+  onUnavailableChange?: (unavailable: boolean) => void;
+}> = React.memo(
+  ({ candidateQueue, isPlaying, isFullscreen, volumePct, seekEvent, onUnavailableChange }) => {
+    const hostRef = useRef<HTMLDivElement | null>(null);
+    const playerRef = useRef<YTPlayerInstance | null>(null);
+    const isPlayerReadyRef = useRef(false);
+    const loadedVideoIdRef = useRef<string | null>(null);
+    const pendingVideoIdRef = useRef<string | null>(null);
+    const stallTimerRef = useRef<number | null>(null);
+    const debounceTimerRef = useRef<number | null>(null);
+    const isPlayingRef = useRef(isPlaying);
+    isPlayingRef.current = isPlaying;
+    const isFullscreenRef = useRef(isFullscreen);
+    isFullscreenRef.current = isFullscreen;
+    const volumePctRef = useRef(volumePct);
+    volumePctRef.current = volumePct;
+
+    const [candidateIdx, setCandidateIdx] = useState(0);
+    const [isMaskingSwitch, setIsMaskingSwitch] = useState(true);
+    const [allFailed, setAllFailed] = useState(false);
+
+    const queueKey = candidateQueue.join(',');
+    const activeVideoId = candidateQueue[candidateIdx] || '';
+
+    useEffect(() => {
+      onUnavailableChange?.(allFailed || isMaskingSwitch);
+    }, [allFailed, isMaskingSwitch, onUnavailableChange]);
+
+    const clearStallTimer = React.useCallback(() => {
+      if (stallTimerRef.current !== null) {
+        window.clearTimeout(stallTimerRef.current);
+        stallTimerRef.current = null;
+      }
+    }, []);
+
+    const advanceToNextCandidate = React.useCallback(() => {
+      clearStallTimer();
+      setIsMaskingSwitch(true);
+      setCandidateIdx((prev) => {
+        const next = prev + 1;
+        if (next >= candidateQueue.length) {
+          setAllFailed(true);
+          return prev;
+        }
+        return next;
+      });
+    }, [candidateQueue.length, clearStallTimer]);
+
+    useEffect(() => {
+      setCandidateIdx(0);
+      setAllFailed(candidateQueue.length === 0);
+      setIsMaskingSwitch(true);
+    }, [queueKey, candidateQueue.length]);
+
+    const startStallWatch = React.useCallback(() => {
+      clearStallTimer();
+      stallTimerRef.current = window.setTimeout(() => {
+        advanceToNextCandidate();
+      }, 6000);
+    }, [clearStallTimer, advanceToNextCandidate]);
+
+    const syncAudioMode = React.useCallback((player: YTPlayerInstance | null) => {
+      if (!player) return;
+      try {
+        if (isFullscreenRef.current) {
+          player.unMute?.();
+          player.setVolume?.(volumePctRef.current);
+        } else {
+          player.mute?.();
+        }
+      } catch {
+        // ignore cross-origin YT command error
+      }
+    }, []);
+
+    // Mount persistent YT.Player once
+    useEffect(() => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        setAllFailed(true);
+        return;
+      }
+      if (!activeVideoId || allFailed) return;
+
+      let cancelled = false;
+
+      loadYouTubeIframeApi()
+        .then((YT) => {
+          if (cancelled || !hostRef.current) return;
+          if (playerRef.current) return;
+
+          const origin = typeof window !== 'undefined' ? window.location.origin : '';
+          const widgetReferrer = typeof window !== 'undefined' ? window.location.href : '';
+
+          const mountTarget = document.createElement('div');
+          mountTarget.style.width = '100%';
+          mountTarget.style.height = '100%';
+          hostRef.current.innerHTML = '';
+          hostRef.current.appendChild(mountTarget);
+
+          startStallWatch();
+
+          const player = new YT.Player(mountTarget, {
+            width: '100%',
+            height: '100%',
+            videoId: activeVideoId,
+            playerVars: {
+              autoplay: isPlayingRef.current ? 1 : 0,
+              mute: isFullscreenRef.current ? 0 : 1,
+              controls: 0,
+              modestbranding: 1,
+              rel: 0,
+              iv_load_policy: 3,
+              playsinline: 1,
+              enablejsapi: 1,
+              origin,
+              widget_referrer: widgetReferrer,
+            },
+            events: {
+              onReady: (ev) => {
+                if (cancelled) return;
+                isPlayerReadyRef.current = true;
+                loadedVideoIdRef.current = activeVideoId;
+                const p = ev.target;
+                syncAudioMode(p);
+
+                try {
+                  const iframeEl = p.getIframe?.();
+                  if (iframeEl) {
+                    iframeEl.id = 'retro-tv-youtube-iframe';
+                    iframeEl.setAttribute('data-tv-media-fill', 'true');
+                    iframeEl.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+                    iframeEl.setAttribute(
+                      'allow',
+                      'autoplay; encrypted-media; picture-in-picture; fullscreen'
+                    );
+                    iframeEl.style.width = '100%';
+                    iframeEl.style.height = '100%';
+                    iframeEl.style.border = '0';
+                    iframeEl.style.pointerEvents = 'none';
+                  }
+                } catch {
+                  // ignore DOM attribute errors
+                }
+
+                const curSec = Math.max(0, Math.floor(playbackClockStore.getCurrentTimeSec()));
+                if (pendingVideoIdRef.current && pendingVideoIdRef.current !== activeVideoId) {
+                  const queuedId = pendingVideoIdRef.current;
+                  pendingVideoIdRef.current = null;
+                  loadedVideoIdRef.current = queuedId;
+                  if (isPlayingRef.current) {
+                    p.loadVideoById?.({ videoId: queuedId, startSeconds: curSec });
+                  } else {
+                    p.cueVideoById?.({ videoId: queuedId, startSeconds: curSec });
+                    clearStallTimer();
+                    setIsMaskingSwitch(false);
+                  }
+                  syncAudioMode(p);
+                  return;
+                }
+
+                if (curSec > 0) {
+                  p.seekTo?.(curSec, true);
+                }
+                if (isPlayingRef.current) {
+                  p.playVideo?.();
+                } else {
+                  p.pauseVideo?.();
+                  clearStallTimer();
+                  setIsMaskingSwitch(false);
+                }
+              },
+              onStateChange: (ev) => {
+                if (cancelled) return;
+                syncAudioMode(ev.target);
+                // 1 = PLAYING, 2 = PAUSED, 5 = CUED
+                if (ev.data === 1 || ev.data === 2 || ev.data === 5) {
+                  clearStallTimer();
+                  setIsMaskingSwitch(false);
+                } else if (ev.data === -1) {
+                  startStallWatch();
+                }
+              },
+              onError: () => {
+                if (cancelled) return;
+                advanceToNextCandidate();
+              },
+            },
+          });
+
+          playerRef.current = player;
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setAllFailed(true);
+          }
+        });
+
+      return () => {
+        cancelled = true;
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [allFailed]);
+
+    // Switch video ID smoothly using persistent player without unmounting
+    useEffect(() => {
+      if (!activeVideoId || allFailed) return;
+      if (loadedVideoIdRef.current === activeVideoId) return;
+
+      if (debounceTimerRef.current !== null) {
+        window.clearTimeout(debounceTimerRef.current);
+      }
+
+      debounceTimerRef.current = window.setTimeout(() => {
+        debounceTimerRef.current = null;
+        const p = playerRef.current;
+        if (!p || !isPlayerReadyRef.current) {
+          pendingVideoIdRef.current = activeVideoId;
+          return;
+        }
+        loadedVideoIdRef.current = activeVideoId;
+        const curSec = Math.max(0, Math.floor(playbackClockStore.getCurrentTimeSec()));
+        try {
+          if (isPlayingRef.current) {
+            setIsMaskingSwitch(true);
+            startStallWatch();
+            p.loadVideoById?.({ videoId: activeVideoId, startSeconds: curSec });
+          } else {
+            clearStallTimer();
+            p.cueVideoById?.({ videoId: activeVideoId, startSeconds: curSec });
+            setIsMaskingSwitch(false);
+          }
+          syncAudioMode(p);
+        } catch {
+          advanceToNextCandidate();
+        }
+      }, 90);
+
+      return () => {
+        if (debounceTimerRef.current !== null) {
+          window.clearTimeout(debounceTimerRef.current);
+          debounceTimerRef.current = null;
+        }
+      };
+    }, [activeVideoId, allFailed, advanceToNextCandidate, clearStallTimer, startStallWatch, syncAudioMode]);
+
+    // Freeze-on-Pause / Play sync without hiding or destroying the player
+    useEffect(() => {
+      const p = playerRef.current;
+      if (!p || !isPlayerReadyRef.current) return;
+      try {
+        if (isPlaying) {
+          const audioPos = Math.max(0, Math.floor(playbackClockStore.getCurrentTimeSec()));
+          p.seekTo?.(audioPos, true);
+          p.playVideo?.();
+        } else {
+          p.pauseVideo?.();
+        }
+      } catch {
+        // ignore
+      }
+    }, [isPlaying]);
+
+    // Seek event sync
+    useEffect(() => {
+      if (!seekEvent || seekEvent.nonce === 0) return;
+      const p = playerRef.current;
+      if (!p || !isPlayerReadyRef.current) return;
+      try {
+        p.seekTo?.(Math.max(0, Math.floor(seekEvent.timeSec)), true);
+      } catch {
+        // ignore
+      }
+    }, [seekEvent?.nonce, seekEvent?.timeSec]);
+
+    // Fullscreen unmute + volume sync
+    useEffect(() => {
+      const p = playerRef.current;
+      if (!p || !isPlayerReadyRef.current) return;
+      syncAudioMode(p);
+    }, [isFullscreen, volumePct, syncAudioMode]);
+
+    // Destroy on unmount
+    useEffect(() => {
+      return () => {
+        clearStallTimer();
+        if (debounceTimerRef.current !== null) {
+          window.clearTimeout(debounceTimerRef.current);
+        }
+        try {
+          playerRef.current?.destroy?.();
+        } catch {
+          // ignore
+        }
+        playerRef.current = null;
+        isPlayerReadyRef.current = false;
+      };
+    }, [clearStallTimer]);
+
+    if (allFailed) return null;
+
+    return (
+      <div
+        ref={hostRef}
+        data-testid="bravia-plasma-yt-host"
+        data-plasma-paused={!isPlaying ? 'frozen' : 'playing'}
+        className="w-full h-full pointer-events-none"
+      />
+    );
+  }
+);
+
 export const RetroTvTable = React.memo<RetroTvTableProps>(
   ({
     track,
@@ -515,6 +843,7 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
     const [isChannelChanging, setIsChannelChanging] = useState<boolean>(false);
     const [channelFlashTick, setChannelFlashTick] = useState<number>(0);
     const [iframeUnavailable, setIframeUnavailable] = useState<boolean>(false);
+    const [plasmaStillFallback, setPlasmaStillFallback] = useState<boolean>(false);
     const [cwDockVisible, setCwDockVisible] = useState<boolean>(true);
     const [cwHoveredDockIdx, setCwHoveredDockIdx] = useState<number | null>(null);
 
@@ -811,6 +1140,15 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
       [track, activeChannelVideoId, activeChannelFrames]
     );
 
+    const plasmaCandidateQueue = useMemo(
+      () =>
+        buildYouTubeCandidateQueue(
+          activeChannelVideoId,
+          songChannels.map((c) => c.videoId)
+        ),
+      [activeChannelVideoId, songChannels]
+    );
+
     // Reset YouTube embed error state whenever track or channel video changes
     useEffect(() => {
       setIframeUnavailable(false);
@@ -1089,7 +1427,7 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
           <div
             id="tv-top-header-bar"
             className={`relative w-full flex items-center justify-between px-1 ${
-              compactLandscape ? 'min-h-[38px] pb-0.5' : 'min-h-[42px] md:min-h-[54px] pb-1'
+              compactLandscape ? 'min-h-[26px] pb-0.5' : 'min-h-[28px] md:min-h-[34px] pb-1'
             } shrink-0 z-30`}
           >
             <BrandHeader
@@ -1673,11 +2011,17 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                       />
                     ) : (
                       <>
-                        {/* Song Screen-Grab / Thumbnail Crossfade Layer (Elevated cleanly over paused iframe so CRT never goes blank/dark when paused) */}
+                        {/* Song Screen-Grab / Thumbnail Crossfade Layer (On non-CD themes elevated over paused iframe; on CD Plasma only raised when loading/error) */}
                         <div
                           id="tv-still-frame-stage"
                           className={`absolute inset-0 ${
-                            !effectiveTvPlaying || iframeUnavailable ? 'z-[3]' : 'z-[1]'
+                            isCdHifiTheme
+                              ? plasmaStillFallback
+                                ? 'z-[3]'
+                                : 'z-[1]'
+                              : !effectiveTvPlaying || iframeUnavailable
+                                ? 'z-[3]'
+                                : 'z-[1]'
                           }`}
                         >
                           <TvFrameCrossfadeStage
@@ -1692,58 +2036,80 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                           />
                         </div>
 
-                        {/* Live Synchronized YouTube Broadcast Embed (Visible when playing; hidden cleanly when paused or unavailable so last screen-grab stays visible) */}
-                        {activeChannelVideoId && !iframeUnavailable && (
+                        {/* Live Synchronized YouTube Broadcast Embed:
+                            - cd-hifi uses persistent YT.Player that keeps frame mounted & visible when paused (freeze-on-pause)
+                            - other themes preserve iframe crossfade */}
+                        {isCdHifiTheme ? (
                           <div
                             className={`relative z-[2] ${
                               isTvFullscreen
                                 ? 'w-full h-full max-w-full max-h-full aspect-video'
                                 : 'w-full h-full'
-                            } flex items-center justify-center transition-opacity duration-200 ${
-                              effectiveTvPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                            }`}
+                            } flex items-center justify-center opacity-100`}
                           >
-                            <iframe
-                              id="retro-tv-youtube-iframe"
-                              key={`${track.id}-${activeChannelVideoId}-${channelIndex}`}
-                              ref={ytIframeRef}
-                              data-tv-media-fill="true"
-                              title={`YouTube broadcast for ${track.title} (${channelNumberLabel})`}
-                              src={buildCleanYouTubeEmbedUrl(
-                                activeChannelVideoId,
-                                effectiveTvPlaying,
-                                iframeMountTimeSec,
-                                typeof window !== 'undefined' ? window.location.origin : undefined,
-                                !isTvFullscreen
-                              )}
-                              onLoad={() => {
-                                const win = ytIframeRef.current?.contentWindow;
-                                if (!win) return;
-                                try {
-                                  win.postMessage(
-                                    JSON.stringify({ event: 'listening', id: 'retro-tv-youtube-iframe' }),
-                                    '*'
-                                  );
-                                } catch {
-                                  // ignore
-                                }
-                                const curSec = Math.floor(playbackClockStore.getCurrentTimeSec());
-                                if (isTvFullscreen) {
-                                  sendYouTubePlayerCommand('unMute');
-                                  sendYouTubePlayerCommand('setVolume', [volumePct]);
-                                } else {
-                                  sendYouTubePlayerCommand('mute');
-                                }
-                                sendYouTubePlayerCommand('seekTo', [curSec, true]);
-                                sendYouTubePlayerCommand(
-                                  effectiveTvPlaying ? 'playVideo' : 'pauseVideo'
-                                );
-                              }}
-                              className="w-full h-full object-contain scale-100 border-0 pointer-events-none"
-                              allow="autoplay; encrypted-media; fullscreen"
-                              allowFullScreen
+                            <PlasmaBraviaYouTubePlayer
+                              candidateQueue={plasmaCandidateQueue}
+                              isPlaying={effectiveTvPlaying}
+                              isFullscreen={isTvFullscreen}
+                              volumePct={volumePct}
+                              seekEvent={seekEvent}
+                              onUnavailableChange={setPlasmaStillFallback}
                             />
                           </div>
+                        ) : (
+                          activeChannelVideoId &&
+                          !iframeUnavailable && (
+                            <div
+                              className={`relative z-[2] ${
+                                isTvFullscreen
+                                  ? 'w-full h-full max-w-full max-h-full aspect-video'
+                                  : 'w-full h-full'
+                              } flex items-center justify-center transition-opacity duration-200 ${
+                                effectiveTvPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                              }`}
+                            >
+                              <iframe
+                                id="retro-tv-youtube-iframe"
+                                key={`${track.id}-${activeChannelVideoId}-${channelIndex}`}
+                                ref={ytIframeRef}
+                                data-tv-media-fill="true"
+                                title={`YouTube broadcast for ${track.title} (${channelNumberLabel})`}
+                                src={buildCleanYouTubeEmbedUrl(
+                                  activeChannelVideoId,
+                                  effectiveTvPlaying,
+                                  iframeMountTimeSec,
+                                  typeof window !== 'undefined' ? window.location.origin : undefined,
+                                  !isTvFullscreen
+                                )}
+                                onLoad={() => {
+                                  const win = ytIframeRef.current?.contentWindow;
+                                  if (!win) return;
+                                  try {
+                                    win.postMessage(
+                                      JSON.stringify({ event: 'listening', id: 'retro-tv-youtube-iframe' }),
+                                      '*'
+                                    );
+                                  } catch {
+                                    // ignore
+                                  }
+                                  const curSec = Math.floor(playbackClockStore.getCurrentTimeSec());
+                                  if (isTvFullscreen) {
+                                    sendYouTubePlayerCommand('unMute');
+                                    sendYouTubePlayerCommand('setVolume', [volumePct]);
+                                  } else {
+                                    sendYouTubePlayerCommand('mute');
+                                  }
+                                  sendYouTubePlayerCommand('seekTo', [curSec, true]);
+                                  sendYouTubePlayerCommand(
+                                    effectiveTvPlaying ? 'playVideo' : 'pauseVideo'
+                                  );
+                                }}
+                                className="w-full h-full object-contain scale-100 border-0 pointer-events-none"
+                                allow="autoplay; encrypted-media; fullscreen"
+                                allowFullScreen
+                              />
+                            </div>
+                          )
                         )}
                       </>
                     )}
@@ -1811,7 +2177,7 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                         background:
                           'linear-gradient(145deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.03) 26%, transparent 50%)',
                       }}
-                      className="pointer-events-none absolute inset-0 z-50"
+                      className="pointer-events-none absolute inset-0 z-[15]"
                     />
                   ) : isClickWheelTheme ? (
                     <div
@@ -2942,21 +3308,28 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                       width: '20.8%',
                       height: '90%',
                       padding: '0.75cqw',
+                      borderRadius: isCassetteTheme ? '18% / 9%' : '16% / 8.5%',
                     }
                   : {
-                      left: '79.5%',
-                      top: '6.6%',
-                      width: '18.5%',
-                      height: '85.2%',
-                      padding: '0.85cqw',
+                      left: '79.2%',
+                      top: '12.0%',
+                      width: '18.8%',
+                      height: '69.0%',
+                      padding: '0.75cqw',
+                      borderRadius: '16% / 8.8%',
+                      background:
+                        'linear-gradient(155deg, #322d2a 0%, #231f1c 48%, #161311 100%)',
+                      border: '1.5px solid #0b0908',
+                      boxShadow:
+                        'inset 1.5px 1.5px 0 rgba(255, 244, 228, 0.22), inset -1.5px -1.5px 0 rgba(0, 0, 0, 0.85), inset 0 0 0 2.5px #3d332c, -2px 3px 8px rgba(0, 0, 0, 0.56), 0 4px 10px rgba(0, 0, 0, 0.72)',
                     }
               }
               className={
                 isCassetteTheme
-                  ? 'cas-brushed-steel absolute z-40 rounded-[3px] flex flex-col justify-between items-center overflow-hidden'
+                  ? 'cas-brushed-steel absolute z-40 flex flex-col justify-between items-center overflow-hidden'
                   : isReelTheme
-                    ? 'r2r-aluminum-fascia absolute z-40 rounded-[3px] flex flex-col justify-between items-center overflow-hidden'
-                    : 'absolute z-40 rounded-[3px] border border-[#3d291a] bg-gradient-to-b from-[#d8cfc2] via-[#b8ac9b] to-[#8f8272] shadow-[inset_0_1px_0_rgba(255,255,255,0.65),0_2px_6px_rgba(0,0,0,0.65)] flex flex-col justify-between items-center overflow-hidden'
+                    ? 'r2r-aluminum-fascia absolute z-40 flex flex-col justify-between items-center overflow-hidden'
+                    : 'absolute z-40 flex flex-col justify-between items-center overflow-hidden'
               }
             >
               {/* Top Brand & Power LED Strip */}
@@ -3186,10 +3559,10 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                   {/* THREE ROTARY KNOBS: 1) POWER, 2) CHANNEL (CH 1..5), 3) FILTER/TINT */}
                   <div
                     id="retro-tv-large-knobs"
-                    className="flex-1 w-full flex flex-col items-center justify-evenly min-h-0 py-[0.25cqw]"
+                    className="flex-1 w-full flex flex-col items-center justify-evenly min-h-0 py-[0.2cqw]"
                   >
                     {/* Knob 1: POWER */}
-                    <div className="w-full flex flex-col items-center justify-center gap-[0.32cqw]">
+                    <div className="w-full flex flex-col items-center justify-center gap-[0.25cqw]">
                       <button
                         id="tv-power-knob"
                         type="button"
@@ -3200,11 +3573,11 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                         aria-label={`TV Power Knob (${tvPoweredOn ? 'On' : 'Off'})`}
                         title={`TV Power: ${tvPoweredOn ? 'ON (Click to turn Off)' : 'OFF (Click to turn On)'}`}
                         onClick={handleTogglePowerKnob}
-                        style={{ width: isReelTheme ? '9.4cqw' : '10.2cqw', height: isReelTheme ? '9.4cqw' : '10.2cqw' }}
-                        className={`relative rounded-full p-[0.45cqw] cursor-pointer flex items-center justify-center shrink-0 ${
+                        style={{ width: isReelTheme ? '9.4cqw' : '7.8cqw', height: isReelTheme ? '9.4cqw' : '7.8cqw' }}
+                        className={`relative rounded-full p-[0.4cqw] cursor-pointer flex items-center justify-center shrink-0 ${
                           isReelTheme
                             ? 'border border-[#5c6064] bg-gradient-to-br from-[#f1f3f5] via-[#C9CCCE] to-[#8a8e92] shadow-[0_2px_5px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.85)] ring-2 ring-[#3c3f42]/50'
-                            : 'border border-black/70 bg-[#18130f] shadow-[0_2px_5px_rgba(0,0,0,0.75),inset_0_1px_1px_rgba(255,255,255,0.25)]'
+                            : 'border border-black/80 bg-[#18130f] shadow-[0_2px_5px_rgba(0,0,0,0.75),inset_0_1px_1px_rgba(255,255,255,0.25)]'
                         }`}
                       >
                         {isReelTheme ? (
@@ -3232,7 +3605,7 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                             />
                             <span
                               aria-hidden="true"
-                              style={{ width: '1.15cqw', height: '1.15cqw', top: '0.35cqw' }}
+                              style={{ width: '1.05cqw', height: '1.05cqw', top: '0.3cqw' }}
                               className={`pointer-events-none absolute left-1/2 -translate-x-1/2 rounded-full border border-black/70 ${
                                 tvPoweredOn ? 'bg-emerald-400' : 'bg-red-500'
                               }`}
@@ -3242,15 +3615,15 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                       </button>
                       <div
                         id="tv-power-label-plate"
-                        style={{ height: isReelTheme ? '3.4cqw' : '4.6cqw', padding: '0 0.45cqw' }}
-                        className={`w-full rounded-[2px] border shadow-inner flex items-center justify-center overflow-hidden shrink-0 ${
-                          isReelTheme ? 'bg-[#EFE9DC] border-[#786e60]' : 'bg-[#1a140f] border-[#3d2e1e]'
+                        style={{ height: isReelTheme ? '3.4cqw' : '3.1cqw', padding: '0 0.4cqw' }}
+                        className={`w-full rounded-[3px] border shadow-inner flex items-center justify-center overflow-hidden shrink-0 ${
+                          isReelTheme ? 'bg-[#EFE9DC] border-[#786e60]' : 'bg-[#120f0d] border-[#443a33]'
                         }`}
                       >
                         <span
-                          style={{ fontSize: isReelTheme ? '1.85cqw' : '2.25cqw' }}
+                          style={{ fontSize: isReelTheme ? '1.85cqw' : '1.75cqw' }}
                           className={`font-mono font-black uppercase tracking-normal leading-none whitespace-nowrap ${
-                            isReelTheme ? 'text-[#2b1a0e]' : 'text-[#fff3d6]'
+                            isReelTheme ? 'text-[#2b1a0e]' : 'text-[#f3e6cf]'
                           }`}
                         >
                           {tvPoweredOn ? 'PWR ON' : 'PWR OFF'}
@@ -3259,7 +3632,7 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                     </div>
 
                     {/* Knob 2: CHANNEL Selector */}
-                    <div className="w-full flex flex-col items-center justify-center gap-[0.32cqw]">
+                    <div className="w-full flex flex-col items-center justify-center gap-[0.25cqw]">
                       <button
                         id="tv-channel-knob"
                         type="button"
@@ -3271,11 +3644,11 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                         onClick={handleTurnChannelKnob}
                         aria-label={`TV Channel Selector Knob (${channelNumberLabel} of ${totalTvChannels})`}
                         title={`Channel Selector: ${channelNumberLabel} of ${totalTvChannels} (${activeSongChannel?.label || activeChannelTheme.name}) — Click to cycle ${totalTvChannels} YouTube videos`}
-                        style={{ width: isReelTheme ? '9.4cqw' : '10.2cqw', height: isReelTheme ? '9.4cqw' : '10.2cqw' }}
-                        className={`relative rounded-full p-[0.45cqw] cursor-pointer flex items-center justify-center shrink-0 ${
+                        style={{ width: isReelTheme ? '9.4cqw' : '7.8cqw', height: isReelTheme ? '9.4cqw' : '7.8cqw' }}
+                        className={`relative rounded-full p-[0.4cqw] cursor-pointer flex items-center justify-center shrink-0 ${
                           isReelTheme
                             ? 'border border-[#5c6064] bg-gradient-to-br from-[#f1f3f5] via-[#C9CCCE] to-[#8a8e92] shadow-[0_2px_5px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.85)] ring-2 ring-[#3c3f42]/50'
-                            : 'border border-black/70 bg-[#18130f] shadow-[0_2px_5px_rgba(0,0,0,0.75),inset_0_1px_1px_rgba(255,255,255,0.25)]'
+                            : 'border border-black/80 bg-[#18130f] shadow-[0_2px_5px_rgba(0,0,0,0.75),inset_0_1px_1px_rgba(255,255,255,0.25)]'
                         }`}
                       >
                         {isReelTheme ? (
@@ -3303,7 +3676,7 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                             />
                             <span
                               aria-hidden="true"
-                              style={{ width: '1.15cqw', height: '1.15cqw', top: '0.35cqw' }}
+                              style={{ width: '1.05cqw', height: '1.05cqw', top: '0.3cqw' }}
                               className="pointer-events-none absolute left-1/2 -translate-x-1/2 rounded-full bg-amber-400 border border-black/70"
                             />
                           </>
@@ -3311,13 +3684,13 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                       </button>
                       <div
                         id="tv-channel-label-plate"
-                        style={{ height: isReelTheme ? '3.4cqw' : '4.6cqw', padding: '0 0.45cqw' }}
-                        className={`w-full rounded-[2px] border shadow-inner flex items-center justify-center overflow-hidden shrink-0 ${
-                          isReelTheme ? 'bg-[#EFE9DC] border-[#786e60]' : 'bg-[#1a140f] border-[#3d2e1e]'
+                        style={{ height: isReelTheme ? '3.4cqw' : '3.1cqw', padding: '0 0.4cqw' }}
+                        className={`w-full rounded-[3px] border shadow-inner flex items-center justify-center overflow-hidden shrink-0 ${
+                          isReelTheme ? 'bg-[#EFE9DC] border-[#786e60]' : 'bg-[#120f0d] border-[#443a33]'
                         }`}
                       >
                         <span
-                          style={{ fontSize: isReelTheme ? '1.85cqw' : '2.25cqw' }}
+                          style={{ fontSize: isReelTheme ? '1.85cqw' : '1.75cqw' }}
                           className={`font-mono font-black uppercase tracking-normal leading-none whitespace-nowrap ${
                             isReelTheme ? 'text-[#2b1a0e]' : 'text-amber-300'
                           }`}
@@ -3328,7 +3701,7 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                     </div>
 
                     {/* Knob 3: FILTER / TINT */}
-                    <div className="w-full flex flex-col items-center justify-center gap-[0.32cqw]">
+                    <div className="w-full flex flex-col items-center justify-center gap-[0.25cqw]">
                       <button
                         id="tv-tint-knob"
                         type="button"
@@ -3338,11 +3711,11 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                         onClick={handleCycleTintButton}
                         aria-label={`TV Filter and Tint Knob (${activeTintPreset.label})`}
                         title={`Broadcast Filter/Tint Knob: ${activeTintPreset.label} (${activeTintPreset.code})`}
-                        style={{ width: isReelTheme ? '9.4cqw' : '10.2cqw', height: isReelTheme ? '9.4cqw' : '10.2cqw' }}
-                        className={`relative rounded-full p-[0.45cqw] cursor-pointer flex items-center justify-center shrink-0 ${
+                        style={{ width: isReelTheme ? '9.4cqw' : '7.8cqw', height: isReelTheme ? '9.4cqw' : '7.8cqw' }}
+                        className={`relative rounded-full p-[0.4cqw] cursor-pointer flex items-center justify-center shrink-0 ${
                           isReelTheme
                             ? 'border border-[#5c6064] bg-gradient-to-br from-[#f1f3f5] via-[#C9CCCE] to-[#8a8e92] shadow-[0_2px_5px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.85)] ring-2 ring-[#3c3f42]/50'
-                            : 'border border-black/70 bg-[#18130f] shadow-[0_2px_5px_rgba(0,0,0,0.75),inset_0_1px_1px_rgba(255,255,255,0.25)]'
+                            : 'border border-black/80 bg-[#18130f] shadow-[0_2px_5px_rgba(0,0,0,0.75),inset_0_1px_1px_rgba(255,255,255,0.25)]'
                         }`}
                       >
                         {isReelTheme ? (
@@ -3370,7 +3743,7 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                             />
                             <span
                               aria-hidden="true"
-                              style={{ width: '1.15cqw', height: '1.15cqw', top: '0.35cqw' }}
+                              style={{ width: '1.05cqw', height: '1.05cqw', top: '0.3cqw' }}
                               className={`pointer-events-none absolute left-1/2 -translate-x-1/2 rounded-full border border-black/70 ${
                                 tintPresetIndex > 0 ? 'bg-cyan-300' : 'bg-amber-200'
                               }`}
@@ -3380,15 +3753,15 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                       </button>
                       <div
                         id="tv-tint-label-plate"
-                        style={{ height: isReelTheme ? '3.4cqw' : '4.6cqw', padding: '0 0.45cqw' }}
-                        className={`w-full rounded-[2px] border shadow-inner flex items-center justify-center overflow-hidden shrink-0 ${
-                          isReelTheme ? 'bg-[#EFE9DC] border-[#786e60]' : 'bg-[#1a140f] border-[#3d2e1e]'
+                        style={{ height: isReelTheme ? '3.4cqw' : '3.1cqw', padding: '0 0.4cqw' }}
+                        className={`w-full rounded-[3px] border shadow-inner flex items-center justify-center overflow-hidden shrink-0 ${
+                          isReelTheme ? 'bg-[#EFE9DC] border-[#786e60]' : 'bg-[#120f0d] border-[#443a33]'
                         }`}
                       >
                         <span
-                          style={{ fontSize: isReelTheme ? '1.8cqw' : '2.25cqw' }}
+                          style={{ fontSize: isReelTheme ? '1.8cqw' : '1.7cqw' }}
                           className={`font-mono font-black uppercase tracking-normal leading-none whitespace-nowrap ${
-                            isReelTheme ? 'text-[#2b1a0e]' : 'text-[#fff3d6]'
+                            isReelTheme ? 'text-[#2b1a0e]' : 'text-[#f3e6cf]'
                           }`}
                         >
                           {`TINT ${activeTintPreset.code}`}
@@ -3402,8 +3775,8 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                     id="retro-tv-analogue-buttons"
                     role="group"
                     aria-label="TV Analogue Push Buttons"
-                    style={{ paddingTop: '0.5cqw', gap: '0.5cqw' }}
-                    className="w-full grid grid-cols-2 border-t border-black/35 shrink-0"
+                    style={{ paddingTop: '0.4cqw', gap: '0.45cqw' }}
+                    className="w-full grid grid-cols-2 border-t border-white/15 shrink-0"
                   >
                     <button
                       id="tv-btn-fullscreen"
@@ -3412,22 +3785,22 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                       onClick={handleToggleTvFullscreen}
                       aria-label={isTvFullscreen ? 'Exit TV Fullscreen' : 'Enter TV Fullscreen'}
                       title="Fullscreen Video (FULL)"
-                      style={{ height: isReelTheme ? '5.4cqw' : '7.1cqw' }}
-                      className={`rounded-[3px] border border-black/85 ${
+                      style={{ height: isReelTheme ? '5.4cqw' : '4.6cqw' }}
+                      className={`rounded-[4px] border border-black/85 ${
                         isTvFullscreen
                           ? 'bg-gradient-to-b from-[#45382b] to-[#261e16] text-amber-300 translate-y-[0.5px]'
                           : isReelTheme
                             ? 'bg-gradient-to-b from-[#f0f3f5] via-[#C9CCCE] to-[#9EA2A6] text-[#1f1914]'
-                            : 'bg-gradient-to-b from-[#faf4ec] via-[#dccfb9] to-[#9b8c79] text-[#17120d]'
-                      } shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_2px_4px_rgba(0,0,0,0.75)] flex flex-col items-center justify-center gap-[0.2cqw] cursor-pointer active:translate-y-[1px]`}
+                            : 'bg-gradient-to-b from-[#554c44] via-[#3d352e] to-[#29231e] text-[#f3e6cf]'
+                      } shadow-[inset_0_1px_0_rgba(255,255,255,0.28),0_2px_4px_rgba(0,0,0,0.75)] flex flex-col items-center justify-center gap-[0.15cqw] cursor-pointer active:translate-y-[1px]`}
                     >
                       {isTvFullscreen ? (
-                        <Minimize2 strokeWidth={2.4} style={{ width: '2.2cqw', height: '2.2cqw' }} />
+                        <Minimize2 strokeWidth={2.4} style={{ width: '1.8cqw', height: '1.8cqw' }} />
                       ) : (
-                        <Maximize2 strokeWidth={2.4} style={{ width: '2.2cqw', height: '2.2cqw' }} />
+                        <Maximize2 strokeWidth={2.4} style={{ width: '1.8cqw', height: '1.8cqw' }} />
                       )}
                       <span
-                        style={{ fontSize: '1.6cqw' }}
+                        style={{ fontSize: '1.35cqw' }}
                         className="font-mono font-black uppercase tracking-tight leading-none"
                       >
                         FULL
@@ -3445,20 +3818,20 @@ export const RetroTvTable = React.memo<RetroTvTableProps>(
                       }}
                       aria-label="Toggle CRT Scanlines Overlay"
                       title={`CRT Scanlines: ${crtScanlinesOn ? 'ON' : 'OFF'}`}
-                      style={{ height: isReelTheme ? '5.4cqw' : '7.1cqw' }}
-                      className={`rounded-[3px] border border-black/85 ${
+                      style={{ height: isReelTheme ? '5.4cqw' : '4.6cqw' }}
+                      className={`rounded-[4px] border border-black/85 ${
                         crtScanlinesOn
                           ? isReelTheme
                             ? 'bg-gradient-to-b from-[#4a301c] to-[#2e1c0f] text-[#FF9F43] translate-y-[0.5px]'
                             : 'bg-gradient-to-b from-[#45382b] to-[#261e16] text-amber-300 translate-y-[0.5px]'
                           : isReelTheme
                             ? 'bg-gradient-to-b from-[#f0f3f5] via-[#C9CCCE] to-[#9EA2A6] text-[#1f1914]'
-                            : 'bg-gradient-to-b from-[#faf4ec] via-[#dccfb9] to-[#9b8c79] text-[#17120d]'
-                      } shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_2px_4px_rgba(0,0,0,0.75)] flex flex-col items-center justify-center gap-[0.2cqw] cursor-pointer active:translate-y-[1px]`}
+                            : 'bg-gradient-to-b from-[#554c44] via-[#3d352e] to-[#29231e] text-[#f3e6cf]'
+                      } shadow-[inset_0_1px_0_rgba(255,255,255,0.28),0_2px_4px_rgba(0,0,0,0.75)] flex flex-col items-center justify-center gap-[0.15cqw] cursor-pointer active:translate-y-[1px]`}
                     >
-                      <Tv strokeWidth={2.4} style={{ width: '2.2cqw', height: '2.2cqw' }} />
+                      <Tv strokeWidth={2.4} style={{ width: '1.8cqw', height: '1.8cqw' }} />
                       <span
-                        style={{ fontSize: '1.6cqw' }}
+                        style={{ fontSize: '1.35cqw' }}
                         className="font-mono font-black uppercase tracking-tight leading-none"
                       >
                         SCAN
@@ -3945,6 +4318,7 @@ interface PlaylistQueueBoxProps {
   showCompactBrandHeader?: boolean;
   themePalette: DominantThemePalette;
   activeThemeId?: string;
+  viewportLayout?: 'desktop' | 'mobile-landscape' | 'mobile-portrait';
   auroraAccents?: { primaryHex: string; secondaryHex: string };
   availableThemes?: readonly ThemeDefinition[];
   onSelectTheme?: (themeId: string) => void;
@@ -4073,13 +4447,18 @@ const PlaylistTrackRow = React.memo<{
       isCassetteTheme && !artState.isPlaceholder ? artState.activeUrl : '',
       isCassetteTheme
     );
+    const cdSpinePalette = useCdSpinePalette(
+      isCdHifiTheme && !artState.isPlaceholder ? artState.activeUrl : '',
+      item.id || item.title,
+      isCdHifiTheme
+    );
 
     if (isCdHifiTheme) {
       return (
         <div
           data-cd-jewel-slot={trackIndex + 1}
           style={{ perspective: '900px' }}
-          className="relative rounded-[4px] bg-[#090C12]/95 border border-[#2E3748] p-[2px] shadow-[inset_0_2px_6px_rgba(0,0,0,0.9)] overflow-visible"
+          className="relative rounded-[3px] bg-[#090C12]/95 border border-[#2E3748] p-[1.5px] shadow-[inset_0_1px_4px_rgba(0,0,0,0.9)] overflow-visible"
         >
           <button
             ref={isCurrent ? activeRowRef : null}
@@ -4087,6 +4466,7 @@ const PlaylistTrackRow = React.memo<{
             data-track-id={item.id}
             data-cd-jewel-case="true"
             data-cd-loaded={isCurrent ? 'true' : 'false'}
+            data-cd-spine-bg={cdSpinePalette.bgHex}
             onClick={() => {
               triggerButtonHaptic(lowPowerMode);
               if (!lowPowerMode) {
@@ -4095,126 +4475,46 @@ const PlaylistTrackRow = React.memo<{
               onSelectTrack(item.id);
             }}
             aria-current={isCurrent ? 'true' : undefined}
-            aria-label={`Load Compact Disc ${item.title} by ${item.artist}`}
-            className={`cd-jewel-case-slot group/jewel relative w-full min-h-[48px] rounded-[3px] flex items-stretch overflow-hidden text-left transition-all duration-200 cursor-pointer ${
+            aria-label={`Load Compact Disc ${item.title}`}
+            className={`cd-jewel-case-slot group/jewel relative w-full h-[26px] min-h-[24px] rounded-[2.5px] flex items-stretch overflow-hidden text-left transition-all duration-200 cursor-pointer ${
               isCurrent
-                ? 'cd-jewel-case-slot--active translate-x-[12px] z-20'
-                : 'translate-x-0 hover:[transform:perspective(900px)_translateZ(28px)_translateX(16px)] hover:shadow-[0_14px_28px_rgba(0,0,0,0.88),0_0_14px_rgba(0,240,255,0.32)] hover:z-30'
+                ? 'cd-jewel-case-slot--active translate-x-[10px] z-20'
+                : 'translate-x-0 hover:[transform:perspective(900px)_translateZ(20px)_translateX(12px)] hover:shadow-[0_10px_20px_rgba(0,0,0,0.85),0_0_10px_rgba(0,240,255,0.28)] hover:z-30'
             }`}
           >
-            {/* 2.1 Left Hinged Frosted/Ribbed Clear Polystyrene Spine Strip (width: 12px) with Hinge Pins & Printed Spine Edge */}
+            {/* Left Hinged Ribbed Clear Polystyrene Endcap (width: 12px) */}
             <div
               aria-hidden="true"
               data-jewel-spine-width="12"
-              className="cd-jewel-ridged-spine w-[12px] shrink-0 flex flex-col items-center justify-between py-1 border-r border-white/30"
+              className="cd-jewel-ridged-spine w-[12px] shrink-0 flex flex-col items-center justify-center border-r border-white/35 bg-[#111722]"
             >
-              {/* Top Plastic Hinge Pin */}
-              <span className="w-[6px] h-[2px] rounded-full bg-white/65 shadow-xs" />
-              {/* Printed Paper Spine Edge Peeking Through */}
-              <span className="font-mono text-[6.5px] font-extrabold text-[#00F0FF] -rotate-90 tracking-tighter tabular-nums">
-                {String(trackIndex + 1).padStart(2, '0')}
-              </span>
-              {/* Bottom Plastic Hinge Pin */}
-              <span className="w-[6px] h-[2px] rounded-full bg-white/65 shadow-xs" />
+              <span
+                className={`w-[3px] h-[14px] rounded-full ${
+                  isCurrent
+                    ? 'bg-[#00F0FF] shadow-[0_0_6px_#00F0FF]'
+                    : 'bg-white/35'
+                }`}
+              />
             </div>
 
-            {/* Clear Acrylic Front Cover + Square Booklet Insert + Semi-Visible Silver Disc Edge */}
-            <div className="relative flex-1 min-w-0 flex items-center justify-between gap-2 px-2 py-1 bg-gradient-to-r from-[#111722]/96 via-[#172030]/92 to-[#0D131D]/96">
-              {/* Clear Acrylic Front Cover Glare (125deg) + 1px Specular Bevel Highlights */}
+            {/* Color-Matched Vibrant CD Jewel Case Spine Face: Zero <img>, Bold Song Title ONLY */}
+            <div
+              style={{
+                background: `linear-gradient(90deg, ${cdSpinePalette.bgHex} 0%, ${cdSpinePalette.borderHex} 100%)`,
+                color: cdSpinePalette.inkHex,
+              }}
+              className="relative flex-1 min-w-0 flex items-center px-2.5 overflow-hidden"
+            >
               <div
                 aria-hidden="true"
                 className="cd-jewel-acrylic-glare pointer-events-none absolute inset-0 z-10"
               />
-
-              {/* Subtle Inner Corner Retention Tabs Holding Square Booklet Insert */}
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute top-0.5 left-9 z-30 w-1.5 h-1.5 border-t border-r border-white/55"
-              />
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute bottom-0.5 left-9 z-30 w-1.5 h-1.5 border-b border-r border-white/55"
-              />
-
-              <div className="relative z-20 flex items-center gap-2.5 min-w-0 flex-1">
-                {/* Square Booklet Insert + Semi-Visible Silver Compact Disc Edge Peeking From Dark Charcoal Tray */}
-                <div className="relative w-10 h-9 flex items-center shrink-0">
-                  {/* Semi-Visible Silver Compact Disc Edge Peeking Behind Right Side of Booklet */}
-                  <div
-                    aria-hidden="true"
-                    data-testid="cd-jewel-disc-edge"
-                    className="cd-optical-disc-rainbow pointer-events-none absolute right-0 w-8 h-8 rounded-full border border-white/75 opacity-90 shadow-[0_2px_6px_rgba(0,0,0,0.85)]"
-                  />
-                  {/* Square Printed Booklet Insert Thumbnail */}
-                  <div className="relative z-10 w-8 h-8 rounded-[2px] overflow-hidden border border-white/40 bg-[#090D14] shrink-0 shadow-[0_2px_6px_rgba(0,0,0,0.85)]">
-                    {!artState.isPlaceholder && artState.activeUrl && (
-                      <img
-                        ref={imgRef}
-                        src={artState.activeUrl}
-                        alt={`${item.title} booklet cover`}
-                        loading="lazy"
-                        decoding="async"
-                        referrerPolicy="no-referrer"
-                        onLoad={() => setImgLoaded(true)}
-                        onError={() => {
-                          setImgLoaded(false);
-                          setFailedCount((prev) => prev + 1);
-                        }}
-                        className={`w-full h-full object-cover transition-opacity duration-200 ${
-                          imgLoaded ? 'opacity-100' : 'opacity-0'
-                        }`}
-                      />
-                    )}
-                    {(artState.isPlaceholder || !imgLoaded) && (
-                      <div className="w-full h-full flex items-center justify-center bg-[#0F172A]">
-                        <Disc3 className="w-4 h-4 text-[#00F0FF]" />
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Printed Spine Title & Artist Typography */}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={`font-mono text-[8px] font-bold px-1 py-[0.5px] rounded-[2px] border tabular-nums shrink-0 ${
-                        isCurrent
-                          ? 'bg-[#00F0FF]/20 border-[#00F0FF] text-[#00F0FF]'
-                          : 'bg-black/55 border-white/20 text-[#94A3B8]'
-                      }`}
-                    >
-                      DISC {((trackIndex % 3) + 1)} · T{String(trackIndex + 1).padStart(2, '0')}
-                    </span>
-                    <p
-                      className={`font-sans text-[11.5px] font-bold truncate ${
-                        isCurrent ? 'text-[#00F0FF] cd-vfd-cyan-glow' : 'text-[#F1F5F9]'
-                      }`}
-                    >
-                      {item.title}
-                    </p>
-                  </div>
-                  <p className="font-sans text-[10px] font-medium text-[#94A3B8] truncate mt-0.5">
-                    {item.artist}
-                  </p>
-                </div>
-              </div>
-
-              {/* Right Interactive "Load Disc" Action Badge + Duration */}
-              <div className="relative z-20 flex items-center gap-1.5 shrink-0">
-                <span
-                  data-testid="cd-jewel-load-disc-badge"
-                  className={`px-1.5 py-0.5 rounded-[2px] border font-mono text-[8px] font-bold uppercase tracking-wider transition-all ${
-                    isCurrent
-                      ? 'bg-[#00F0FF]/20 border-[#00F0FF] text-[#00F0FF] opacity-100 shadow-[0_0_8px_rgba(0,240,255,0.35)]'
-                      : 'bg-[#0F172A]/90 border-[#38BDF8]/50 text-[#38BDF8] opacity-85 group-hover/jewel:opacity-100 group-hover/jewel:bg-[#00F0FF]/20 group-hover/jewel:border-[#00F0FF] group-hover/jewel:text-[#00F0FF]'
-                  }`}
-                >
-                  {isCurrent ? 'IN TRAY' : 'LOAD DISC'}
-                </span>
-                <span className="font-mono text-[10px] font-semibold text-[#CBD5E1] tabular-nums">
-                  {formatDuration(item.durationSec)}
-                </span>
-              </div>
+              <p
+                style={{ color: cdSpinePalette.inkHex }}
+                className="relative z-20 font-sans text-[11px] font-extrabold tracking-tight truncate leading-none"
+              >
+                {item.title}
+              </p>
             </div>
           </button>
         </div>
@@ -4685,6 +4985,7 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
     showCompactBrandHeader = false,
     themePalette,
     activeThemeId = DEFAULT_THEME_ID,
+    viewportLayout = 'desktop',
     auroraAccents,
     availableThemes = THEME_REGISTRY,
     onSelectTheme,
@@ -5803,21 +6104,24 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
               </div>
             </div>
 
-            <div
-              id="playlist-tracks-scroll"
-              ref={tracksScrollRef}
-              className="relative flex-1 grid grid-cols-2 gap-1.5 min-h-0 overflow-hidden p-1 rounded-[3px] bg-gradient-to-b from-[#B8BCC0] via-[#9EA3A8] to-[#8C9094] border border-[#5A5E62] shadow-[inset_0_2px_4px_rgba(0,0,0,0.45)]"
-            >
+            {viewportLayout === 'mobile-portrait' ? (
               <div
-                id="cas-organizer-col-left"
-                data-cas-scroll-col="true"
-                className="cas-rack-slats h-full overflow-y-auto overflow-x-hidden rounded-[2px] border border-[#45484E] p-1 pr-2.5 space-y-1 min-h-0"
+                id="playlist-tracks-scroll"
+                ref={tracksScrollRef}
+                data-cas-rack-layout="mobile-portrait-2col"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                  gap: '8px',
+                  alignContent: 'start',
+                }}
+                className="cas-rack-slats relative flex-1 overflow-y-auto overflow-x-hidden min-h-0 p-1.5 rounded-[3px] border border-[#45484E]"
               >
-                {cassetteOrganizerColumns.leftColumn.map(({ item, trackIndex }) => (
+                {activePlaylist.tracks.map((item, idx) => (
                   <PlaylistTrackRow
-                    key={`${item.id}-${trackIndex}`}
+                    key={`${item.id}-${idx}`}
                     item={item}
-                    trackIndex={trackIndex}
+                    trackIndex={idx}
                     isCurrent={item.id === activeTrackId}
                     lowPowerMode={lowPowerMode}
                     activeThemeId={activeThemeId}
@@ -5829,29 +6133,86 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
                   />
                 ))}
               </div>
+            ) : viewportLayout === 'mobile-landscape' ? (
+              <div
+                id="playlist-tracks-scroll"
+                ref={tracksScrollRef}
+                data-cas-rack-layout="mobile-landscape-1col"
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '6px',
+                }}
+                className="cas-rack-slats relative flex-1 overflow-y-auto overflow-x-hidden min-h-0 p-1.5 rounded-[3px] border border-[#45484E]"
+              >
+                {activePlaylist.tracks.map((item, idx) => (
+                  <PlaylistTrackRow
+                    key={`${item.id}-${idx}`}
+                    item={item}
+                    trackIndex={idx}
+                    isCurrent={item.id === activeTrackId}
+                    lowPowerMode={lowPowerMode}
+                    activeThemeId={activeThemeId}
+                    auroraAccentHex={auroraAccentHex}
+                    parentPlaylistCoverUrl={parentPlaylistCoverUrl}
+                    activeRowRef={activeRowRef}
+                    onSelectTrack={onSelectTrack}
+                    onResolvedPerTrackArtwork={onResolvedPerTrackArtwork}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div
+                id="playlist-tracks-scroll"
+                ref={tracksScrollRef}
+                data-cas-rack-layout="desktop-2col"
+                className="relative flex-1 grid grid-cols-2 gap-1.5 min-h-0 overflow-hidden p-1 rounded-[3px] bg-gradient-to-b from-[#B8BCC0] via-[#9EA3A8] to-[#8C9094] border border-[#5A5E62] shadow-[inset_0_2px_4px_rgba(0,0,0,0.45)]"
+              >
+                <div
+                  id="cas-organizer-col-left"
+                  data-cas-scroll-col="true"
+                  className="cas-rack-slats h-full overflow-y-auto overflow-x-hidden rounded-[2px] border border-[#45484E] p-1 pr-2.5 space-y-1 min-h-0"
+                >
+                  {cassetteOrganizerColumns.leftColumn.map(({ item, trackIndex }) => (
+                    <PlaylistTrackRow
+                      key={`${item.id}-${trackIndex}`}
+                      item={item}
+                      trackIndex={trackIndex}
+                      isCurrent={item.id === activeTrackId}
+                      lowPowerMode={lowPowerMode}
+                      activeThemeId={activeThemeId}
+                      auroraAccentHex={auroraAccentHex}
+                      parentPlaylistCoverUrl={parentPlaylistCoverUrl}
+                      activeRowRef={activeRowRef}
+                      onSelectTrack={onSelectTrack}
+                      onResolvedPerTrackArtwork={onResolvedPerTrackArtwork}
+                    />
+                  ))}
+                </div>
 
-              <div
-                id="cas-organizer-col-right"
-                data-cas-scroll-col="true"
-                className="cas-rack-slats h-full overflow-y-auto overflow-x-hidden rounded-[2px] border border-[#45484E] p-1 pr-2.5 space-y-1 min-h-0"
-              >
-                {cassetteOrganizerColumns.rightColumn.map(({ item, trackIndex }) => (
-                  <PlaylistTrackRow
-                    key={`${item.id}-${trackIndex}`}
-                    item={item}
-                    trackIndex={trackIndex}
-                    isCurrent={item.id === activeTrackId}
-                    lowPowerMode={lowPowerMode}
-                    activeThemeId={activeThemeId}
-                    auroraAccentHex={auroraAccentHex}
-                    parentPlaylistCoverUrl={parentPlaylistCoverUrl}
-                    activeRowRef={activeRowRef}
-                    onSelectTrack={onSelectTrack}
-                    onResolvedPerTrackArtwork={onResolvedPerTrackArtwork}
-                  />
-                ))}
+                <div
+                  id="cas-organizer-col-right"
+                  data-cas-scroll-col="true"
+                  className="cas-rack-slats h-full overflow-y-auto overflow-x-hidden rounded-[2px] border border-[#45484E] p-1 pr-2.5 space-y-1 min-h-0"
+                >
+                  {cassetteOrganizerColumns.rightColumn.map(({ item, trackIndex }) => (
+                    <PlaylistTrackRow
+                      key={`${item.id}-${trackIndex}`}
+                      item={item}
+                      trackIndex={trackIndex}
+                      isCurrent={item.id === activeTrackId}
+                      lowPowerMode={lowPowerMode}
+                      activeThemeId={activeThemeId}
+                      auroraAccentHex={auroraAccentHex}
+                      parentPlaylistCoverUrl={parentPlaylistCoverUrl}
+                      activeRowRef={activeRowRef}
+                      onSelectTrack={onSelectTrack}
+                      onResolvedPerTrackArtwork={onResolvedPerTrackArtwork}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         ) : isCdHifiTheme ? (
           /* 2.2 Interactive 3D Rotating Vertical CD Holder Rack (Cylindrical Spindle + Slotted Jewel Cases) */
@@ -5976,27 +6337,19 @@ export const PlaylistQueueBox = React.memo<PlaylistQueueBoxProps>(
                             : undefined,
                         transition: 'transform 200ms cubic-bezier(0.22, 1, 0.36, 1)',
                       }}
-                      className="cd-jewel-case-slot relative w-full h-[38px] rounded-[3px] flex items-stretch overflow-hidden"
+                      className="cd-jewel-case-slot relative w-full h-[26px] rounded-[2.5px] flex items-stretch overflow-hidden"
                     >
                       <div
                         data-jewel-spine-width="12"
-                        className="cd-jewel-ridged-spine w-[12px] shrink-0 flex flex-col items-center justify-between py-1 border-r border-white/30"
+                        className="cd-jewel-ridged-spine w-[12px] shrink-0 flex flex-col items-center justify-center border-r border-white/30 bg-[#111722]"
                       >
-                        <span className="w-[6px] h-[2px] rounded-full bg-white/65" />
-                        <span className="font-mono text-[6px] font-bold text-[#00F0FF] -rotate-90">
-                          0{slotIdx + 1}
-                        </span>
-                        <span className="w-[6px] h-[2px] rounded-full bg-white/65" />
+                        <span className="w-[3px] h-[12px] rounded-full bg-white/35" />
                       </div>
-                      <div className="relative flex-1 flex items-center justify-between px-2 bg-[#111722]/90">
+                      <div className="relative flex-1 flex items-center px-2.5 bg-[#141C2B]/95">
                         <div className="cd-jewel-acrylic-glare pointer-events-none absolute inset-0" />
-                        <div className="flex items-center gap-2">
-                          <div className="cd-optical-disc-rainbow w-6 h-6 rounded-full border border-white/60" />
-                          <span className="font-mono text-[8.5px] font-bold text-[#CBD5E1] uppercase tracking-wider">
-                            SLOT 0{slotIdx + 1} · EMPTY JEWEL CASE
-                          </span>
-                        </div>
-                        <span className="font-mono text-[7.5px] text-[#00F0FF]">READY</span>
+                        <span className="relative z-20 font-sans text-[10.5px] font-bold text-[#CBD5E1] truncate">
+                          Empty Jewel Slot 0{slotIdx + 1}
+                        </span>
                       </div>
                     </div>
                   ))}

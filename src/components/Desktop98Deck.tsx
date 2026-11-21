@@ -32,6 +32,7 @@ import {
 } from '../utils/desktop98Logic';
 import { usePlaybackSecond } from '../utils/playbackStore';
 import { SyncedLyricsPanel } from './SyncedLyricsPanel';
+import { useDoubleTapHideArt } from '../hooks/useDoubleTapHideArt';
 
 interface Desktop98DeckProps {
   track: TrackItem;
@@ -50,6 +51,7 @@ interface Desktop98DeckProps {
   shuffleEnabled: boolean;
   isFullScreen: boolean;
   hideBoxArt?: boolean;
+  onToggleHideBoxArt?: () => void;
   spotifyConnected: boolean;
   viewportLayout: ViewportLayoutMode;
   themePalette: DominantThemePalette;
@@ -264,6 +266,7 @@ export const Desktop98Deck = React.memo<Desktop98DeckProps>(
     repeatOne,
     shuffleEnabled,
     hideBoxArt = false,
+    onToggleHideBoxArt,
     themePalette,
     onTogglePlay,
     onStop,
@@ -279,6 +282,10 @@ export const Desktop98Deck = React.memo<Desktop98DeckProps>(
     onScratch,
     onResolvedPerTrackArtwork,
   }) => {
+    const doubleTapHideHandlers = useDoubleTapHideArt({
+      enabled: !hideBoxArt,
+      onHide: onToggleHideBoxArt,
+    });
     const isStandby = track.id === 'standby-empty' || track.durationSec <= 0;
     const activeLoopsEnabled =
       isPlaying && !isStandby && !isDocumentHidden && !prefersReducedMotion && !lowPowerMode;
@@ -500,7 +507,7 @@ export const Desktop98Deck = React.memo<Desktop98DeckProps>(
             role="group"
             aria-label="Draggable Album Art Viewer Mini-Window"
             aria-hidden={hideBoxArt ? 'true' : undefined}
-            title="Drag Album Art Viewer Window"
+            title="Drag Album Art Viewer Window · Double-click to hide album art"
             data-dragging={isDraggingHolder ? 'true' : 'false'}
             data-rest-tilt={restTiltDeg}
             onPointerDown={(e) => {
@@ -516,6 +523,7 @@ export const Desktop98Deck = React.memo<Desktop98DeckProps>(
                 originY: holderOffset.y,
               };
             }}
+            onPointerDownCapture={doubleTapHideHandlers.onPointerDownCapture}
             onPointerMove={(e) => {
               const drag = holderDragStartRef.current;
               if (!drag || drag.pointerId !== e.pointerId) return;
@@ -532,10 +540,12 @@ export const Desktop98Deck = React.memo<Desktop98DeckProps>(
                 setIsDraggingHolder(false);
               }
             }}
+            onPointerUpCapture={doubleTapHideHandlers.onPointerUpCapture}
             onPointerCancel={() => {
               holderDragStartRef.current = null;
               setIsDraggingHolder(false);
             }}
+            onDoubleClick={doubleTapHideHandlers.onDoubleClick}
             style={{
               opacity: hideBoxArt ? 0 : 1,
               width: hideBoxArt ? '0px' : undefined,
@@ -545,7 +555,7 @@ export const Desktop98Deck = React.memo<Desktop98DeckProps>(
               overflow: hideBoxArt ? 'hidden' : undefined,
               pointerEvents: hideBoxArt ? 'none' : 'auto',
               transform: `translate3d(${holderOffset.x}px, ${holderOffset.y}px, 0) rotate(0deg) scale(${
-                hideBoxArt ? 0.92 : 1
+                hideBoxArt ? 0.94 : 1
               })`,
               transition: isDraggingHolder
                 ? 'none'

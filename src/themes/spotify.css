@@ -1,0 +1,133 @@
+/* ==========================================================================
+   SPOTIFY THEME (Original Spotify Desktop & Mobile Interface Replica)
+   Strictly scoped under [data-theme="spotify"]
+   ========================================================================== */
+
+[data-theme="spotify"] {
+  --sp-bg-base: #121212;
+  --sp-bg-black: #000000;
+  --sp-bg-elevated: #181818;
+  --sp-bg-card: #1E1E1E;
+  --sp-bg-hover: rgba(255, 255, 255, 0.07);
+  --sp-hairline: #282828;
+  --sp-text-primary: #FFFFFF;
+  --sp-text-secondary: #B3B3B3;
+  --sp-green: #1DB954;
+  --sp-green-hover: #1ED760;
+}
+
+[data-theme="spotify"].app-viewport-shell {
+  padding: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  background-color: #000000;
+  color: #FFFFFF;
+  font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+[data-theme="spotify"] .main-deck-grid {
+  height: 100%;
+  min-height: 0;
+  gap: 0;
+}
+
+[data-theme="spotify"] .sp-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+[data-theme="spotify"] .sp-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+[data-theme="spotify"] .sp-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[data-theme="spotify"] .sp-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 9999px;
+}
+
+[data-theme="spotify"] .sp-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.36);
+}
+
+/* Active track 3-bar green equalizer animation */
+@keyframes spEqBar1 {
+  0%, 100% { transform: scaleY(0.28); }
+  50% { transform: scaleY(0.96); }
+}
+
+@keyframes spEqBar2 {
+  0%, 100% { transform: scaleY(0.88); }
+  45% { transform: scaleY(0.32); }
+  75% { transform: scaleY(0.98); }
+}
+
+@keyframes spEqBar3 {
+  0%, 100% { transform: scaleY(0.45); }
+  35% { transform: scaleY(0.95); }
+  70% { transform: scaleY(0.25); }
+}
+
+[data-theme="spotify"] .sp-eq-bar-1 {
+  transform-origin: bottom;
+  animation: spEqBar1 0.85s ease-in-out infinite;
+}
+
+[data-theme="spotify"] .sp-eq-bar-2 {
+  transform-origin: bottom;
+  animation: spEqBar2 0.72s ease-in-out infinite;
+}
+
+[data-theme="spotify"] .sp-eq-bar-3 {
+  transform-origin: bottom;
+  animation: spEqBar3 0.94s ease-in-out infinite;
+}
+
+/* Scrubber progress hover thumb & green highlight */
+[data-theme="spotify"] .sp-scrubber-group:hover .sp-scrubber-fill {
+  background-color: #1DB954 !important;
+}
+
+[data-theme="spotify"] .sp-scrubber-group:hover .sp-scrubber-thumb {
+  opacity: 1 !important;
+}
+
+/* Track row hover Play reveal */
+[data-theme="spotify"] .sp-track-row {
+  transition: background-color 140ms ease;
+}
+
+[data-theme="spotify"] .sp-track-row:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+}
+
+[data-theme="spotify"] .sp-track-row .sp-row-index {
+  display: inline-flex;
+}
+
+[data-theme="spotify"] .sp-track-row .sp-row-play-icon {
+  display: none;
+}
+
+[data-theme="spotify"] .sp-track-row:hover .sp-row-index {
+  display: none;
+}
+
+[data-theme="spotify"] .sp-track-row:hover .sp-row-play-icon {
+  display: inline-flex;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="spotify"] .sp-eq-bar-1,
+  [data-theme="spotify"] .sp-eq-bar-2,
+  [data-theme="spotify"] .sp-eq-bar-3 {
+    animation: none !important;
+    transform: scaleY(0.72);
+  }
+}

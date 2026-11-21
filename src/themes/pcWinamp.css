@@ -1,0 +1,636 @@
+/* ==========================================================================
+   PC / WINAMP THEME (1998 Dell Beige Windows 98 Desktop, Pentium II Tower,
+   Winamp 2.x Classic Suite & Scattered 3.5" Floppy Disk Desk)
+   Strictly scoped under [data-theme="pc-winamp"]
+   ========================================================================== */
+
+[data-theme="pc-winamp"] {
+  --pcw-beige-hi: #e2ddd0;
+  --pcw-beige-mid: #d4cec0;
+  --pcw-beige-lo: #bdb6a6;
+  --pcw-beige-shadow: #989180;
+  --pcw-win98-teal: #008080;
+  --pcw-win98-gray: #c0c0c0;
+  --pcw-winamp-top: #3a3d58;
+  --pcw-winamp-mid: #2a2c40;
+  --pcw-winamp-bot: #26283b;
+  --pcw-winamp-bevel-hi: #6c708f;
+  --pcw-winamp-bevel-lo: #0d0e17;
+  --pcw-winamp-green: #00ff00;
+  --pcw-winamp-amber: #e6c245;
+  --pcw-winamp-ridge: #c8a858;
+  --pcw-winamp-blue: #0000ff;
+  --pcw-desk-oak-hi: #c9ad88;
+  --pcw-desk-oak-lo: #a88963;
+}
+
+/* Override global shell padding for zero dead top whitespace in PC / Winamp */
+[data-theme="pc-winamp"].app-viewport-shell {
+  padding-top: calc(env(safe-area-inset-top, 0px) + 6px);
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
+  padding-left: max(8px, env(safe-area-inset-left));
+  padding-right: max(8px, env(safe-area-inset-right));
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  background: radial-gradient(
+    ellipse 85% 60% at 50% 25%,
+    #352c25 0%,
+    #241d18 55%,
+    #15110e 100%
+  );
+}
+
+[data-theme="pc-winamp"] .main-deck-grid {
+  height: 100%;
+  min-height: 0;
+  gap: 0;
+}
+
+/* Grounded Full-Width Oak/Ash Computer Desk + Chamfered Front Lip */
+[data-theme="pc-winamp"] .pcw-desk-surface-wrapper {
+  perspective: 1100px;
+  perspective-origin: 50% 42%;
+  overflow: hidden;
+}
+
+[data-theme="pc-winamp"] .pcw-tilted-desk-plane {
+  transform: rotateX(14deg);
+  transform-origin: center bottom;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(68, 44, 22, 0.045) 0px,
+      rgba(68, 44, 22, 0.045) 3px,
+      rgba(255, 240, 210, 0.03) 3px,
+      rgba(255, 240, 210, 0.03) 11px
+    ),
+    linear-gradient(180deg, #cfb48f 0%, #c1a37b 42%, #a88963 86%, #8f714e 100%);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 242, 220, 0.35),
+    inset 0 -14px 28px rgba(0, 0, 0, 0.35),
+    0 18px 34px rgba(0, 0, 0, 0.55);
+  border-top: 2px solid #dfc5a1;
+  border-bottom: 3px solid #6e5438;
+}
+
+[data-theme="pc-winamp"] .pcw-bottom-computer-desk {
+  position: relative;
+  width: 100%;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.58);
+}
+
+[data-theme="pc-winamp"] .pcw-desk-top-plank {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(68, 44, 22, 0.045) 0px,
+      rgba(68, 44, 22, 0.045) 3px,
+      rgba(255, 240, 210, 0.035) 3px,
+      rgba(255, 240, 210, 0.035) 11px
+    ),
+    linear-gradient(180deg, #d3b893 0%, #c1a37b 52%, #a88963 100%);
+  border-top: 2px solid #dfc5a1;
+  box-shadow:
+    inset 0 2px 0 rgba(255, 245, 226, 0.45),
+    inset 0 -10px 20px rgba(48, 30, 12, 0.25);
+}
+
+[data-theme="pc-winamp"] .pcw-desk-front-lip {
+  width: 100%;
+  height: 14px;
+  flex-shrink: 0;
+  background: linear-gradient(180deg, #987a56 0%, #7d6140 55%, #5f472c 100%);
+  border-top: 1px solid #c6a982;
+  border-bottom: 2px solid #3c2b19;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 236, 206, 0.28),
+    0 12px 24px rgba(0, 0, 0, 0.62);
+}
+
+/* Locked Hardware Proportions & Exact Top/Base Height Parity */
+[data-theme="pc-winamp"] .pcw-rig-bay {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  container-type: size;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+[data-theme="pc-winamp"] .pcw-rig-height-match {
+  height: min(99cqh, calc((100cqw - 22px) / 1.48));
+  max-height: 100%;
+  max-width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: clamp(10px, 1.5vw, 20px);
+}
+
+[data-theme="pc-winamp"] .pcw-hardware-rig {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: clamp(10px, 1.5vw, 20px);
+  max-width: 100%;
+  min-height: 0;
+}
+
+[data-theme="pc-winamp"] .pcw-crt-monitor-housing {
+  aspect-ratio: 1.04 / 1;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  min-height: 0;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+@media (max-width: 767px) and (orientation: portrait) {
+  [data-theme="pc-winamp"] .pcw-crt-monitor-housing {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    aspect-ratio: 1.05 / 1;
+    height: 100%;
+    width: auto;
+    max-width: 68vw;
+    min-width: 150px;
+    min-height: 140px;
+    flex-shrink: 0;
+  }
+}
+
+[data-theme="pc-winamp"] .pcw-crt-glass-screen {
+  width: min(100cqw, calc(100cqh * 4 / 3));
+  height: min(100cqh, calc(100cqw * 3 / 4));
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 4 / 3;
+  container-type: size;
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+[data-theme="pc-winamp"] .pcw-cpu-tower-unit {
+  aspect-ratio: 0.42 / 1;
+  height: 100%;
+  width: auto;
+  min-height: 0;
+  flex-shrink: 0;
+}
+
+/* CRT Tube Power-Off Collapse (240ms) & Power-On Raster Expansion (180ms) */
+@keyframes pcwCrtPowerCollapse {
+  0% {
+    transform: scaleX(1) scaleY(1);
+    filter: brightness(1);
+    opacity: 1;
+  }
+  55% {
+    transform: scaleX(1) scaleY(0.015);
+    filter: brightness(2.4);
+    opacity: 0.95;
+  }
+  100% {
+    transform: scaleX(0.02) scaleY(0.008);
+    filter: brightness(2.8);
+    opacity: 0;
+  }
+}
+
+@keyframes pcwCrtPowerExpand {
+  0% {
+    transform: scaleX(0.02) scaleY(0.015);
+    filter: brightness(2.2);
+    opacity: 0.25;
+  }
+  50% {
+    transform: scaleX(1) scaleY(0.03);
+    filter: brightness(1.8);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleX(1) scaleY(1);
+    filter: brightness(1);
+    opacity: 1;
+  }
+}
+
+[data-theme="pc-winamp"] .pcw-crt-power-collapse {
+  animation: pcwCrtPowerCollapse 240ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+[data-theme="pc-winamp"] .pcw-crt-power-expand {
+  animation: pcwCrtPowerExpand 180ms cubic-bezier(0, 0, 0.2, 1) forwards;
+}
+
+/* 1998 Beige ABS Putty Casing Shader + Subtle Matte Grain */
+[data-theme="pc-winamp"] .pcw-beige-abs-shell {
+  background: linear-gradient(165deg, #e2ddd0 0%, #d4cec0 55%, #bdb6a6 100%);
+  box-shadow:
+    inset 1.5px 1.5px 0 rgba(255, 255, 255, 0.72),
+    inset -2px -2px 0 rgba(120, 113, 98, 0.78),
+    0 12px 24px rgba(0, 0, 0, 0.44);
+  border: 1px solid #9e9787;
+  position: relative;
+}
+
+[data-theme="pc-winamp"] .pcw-beige-abs-grain {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.075'/%3E%3C/svg%3E");
+  pointer-events: none;
+}
+
+/* Stepped Inward-Sloping Monitor Bezel + Dark Charcoal Tube Gasket */
+[data-theme="pc-winamp"] .pcw-crt-bezel-step {
+  background: linear-gradient(180deg, #c9c2b2 0%, #d9d3c5 100%);
+  box-shadow:
+    inset 2px 2px 3px rgba(90, 84, 72, 0.65),
+    inset -2px -2px 3px rgba(255, 255, 255, 0.65);
+}
+
+[data-theme="pc-winamp"] .pcw-crt-gasket {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  container-type: size;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1e2022;
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.9),
+    0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+/* CRT Glass Tube Scanlines, Specular Glint, and Vignette */
+[data-theme="pc-winamp"] .pcw-crt-scanlines {
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.03) 0px,
+    rgba(255, 255, 255, 0.03) 1px,
+    rgba(0, 0, 0, 0.16) 1px,
+    rgba(0, 0, 0, 0.16) 2px
+  );
+  pointer-events: none;
+}
+
+[data-theme="pc-winamp"] .pcw-crt-vignette {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.04) 22%, transparent 45%),
+    radial-gradient(ellipse 88% 84% at 50% 50%, transparent 64%, rgba(0, 0, 0, 0.42) 100%);
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.58);
+  pointer-events: none;
+}
+
+/* Windows 98 Desktop Icon Left-Rail Grid (Scaled via CRT Container Query Units) */
+[data-theme="pc-winamp"] .pcw-win98-icon-grid {
+  position: absolute;
+  top: 4%;
+  left: 3%;
+  bottom: calc(clamp(18px, 11cqh, 25px) + 4%);
+  display: flex;
+  flex-direction: column;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 3.5cqh 4cqw;
+  z-index: 10;
+}
+
+[data-theme="pc-winamp"] .pcw-win98-icon-tile {
+  width: 18cqw;
+  max-width: 68px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2cqh;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+[data-theme="pc-winamp"] .pcw-win98-icon-glyph {
+  position: relative;
+  width: 9.5cqh;
+  height: 9.5cqh;
+  min-width: 18px;
+  min-height: 18px;
+  max-width: 32px;
+  max-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+[data-theme="pc-winamp"] .pcw-win98-icon-tile[data-selected="true"] .pcw-win98-icon-glyph::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: rgba(0, 0, 128, 0.42);
+  background-image: radial-gradient(rgba(0, 0, 128, 0.65) 1px, transparent 0);
+  background-size: 2px 2px;
+  pointer-events: none;
+}
+
+[data-theme="pc-winamp"] .pcw-win98-icon-label {
+  font-family: 'Tahoma', 'MS Sans Serif', system-ui, sans-serif;
+  font-size: clamp(7.5px, 3.1cqh, 11px);
+  line-height: 1.12;
+  color: #ffffff;
+  text-align: center;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.78);
+  padding: 0 2px;
+  max-width: 100%;
+  word-break: break-word;
+}
+
+[data-theme="pc-winamp"] .pcw-win98-icon-tile[data-selected="true"] .pcw-win98-icon-label {
+  background-color: #000080;
+  outline: 1px dotted #ffff00;
+  text-shadow: none;
+}
+
+/* Windows 98 Boot Sequence Keyframes */
+@keyframes pcwCrtLineWarmup {
+  0% {
+    transform: scaleX(0.22) scaleY(0.02);
+    opacity: 0.75;
+    filter: brightness(2.2);
+  }
+  45% {
+    transform: scaleX(1) scaleY(0.03);
+    opacity: 1;
+    filter: brightness(1.9);
+  }
+  100% {
+    transform: scaleX(1) scaleY(1);
+    opacity: 1;
+    filter: brightness(1);
+  }
+}
+
+[data-theme="pc-winamp"] .pcw-crt-warmup-beam {
+  animation: pcwCrtLineWarmup 280ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes pcwWin98BootBar {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+[data-theme="pc-winamp"] .pcw-win98-boot-bar {
+  background: linear-gradient(
+    90deg,
+    #1e3a8a 0%,
+    #2563eb 25%,
+    #38bdf8 50%,
+    #2563eb 75%,
+    #1e3a8a 100%
+  );
+  background-size: 200% 100%;
+  animation: pcwWin98BootBar 1.2s linear infinite;
+}
+
+/* Windows 98 3D Raised & Sunken Bevels */
+[data-theme="pc-winamp"] .pcw-win98-out {
+  background: #c0c0c0;
+  border-top: 1.5px solid #ffffff;
+  border-left: 1.5px solid #ffffff;
+  border-right: 1.5px solid #404040;
+  border-bottom: 1.5px solid #404040;
+  box-shadow: inset -1px -1px 0 #808080;
+}
+
+[data-theme="pc-winamp"] .pcw-win98-in {
+  background: #c0c0c0;
+  border-top: 1.5px solid #808080;
+  border-left: 1.5px solid #808080;
+  border-right: 1.5px solid #ffffff;
+  border-bottom: 1.5px solid #ffffff;
+  box-shadow: inset 1px 1px 0 #404040;
+}
+
+/* Winamp 2.x Classic Indigo-Slate Chassis & Crisp 1px Bevels */
+[data-theme="pc-winamp"] .pcw-winamp-chassis {
+  background: linear-gradient(180deg, #3a3d58 0%, #2b2d42 52%, #26283b 100%);
+  border-top: 1px solid #6c708f;
+  border-left: 1px solid #6c708f;
+  border-right: 1px solid #0d0e17;
+  border-bottom: 1px solid #0d0e17;
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.09),
+    0 6px 14px rgba(0, 0, 0, 0.55);
+}
+
+[data-theme="pc-winamp"] .pcw-winamp-ridges {
+  background: repeating-linear-gradient(
+    to bottom,
+    #c8a858 0px,
+    #c8a858 1px,
+    #1b1d28 1px,
+    #1b1d28 2.5px
+  );
+  opacity: 0.9;
+}
+
+[data-theme="pc-winamp"] .pcw-winamp-btn {
+  background: linear-gradient(180deg, #4b4f62 0%, #2d303e 52%, #222430 100%);
+  border-top: 1px solid #797e96;
+  border-left: 1px solid #797e96;
+  border-right: 1px solid #101219;
+  border-bottom: 1px solid #101219;
+  color: #d6daeb;
+}
+
+[data-theme="pc-winamp"] .pcw-winamp-btn:active,
+[data-theme="pc-winamp"] .pcw-winamp-btn[data-active="true"] {
+  border-top: 1px solid #101219;
+  border-left: 1px solid #101219;
+  border-right: 1px solid #797e96;
+  border-bottom: 1px solid #797e96;
+  background: linear-gradient(180deg, #1b1d27 0%, #2b2e3d 100%);
+}
+
+@keyframes pcwPlaylistFocusPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.75);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(0, 255, 0, 0.65);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 255, 0, 0);
+  }
+}
+
+[data-theme="pc-winamp"] .pcw-playlist-focus-flash {
+  animation: pcwPlaylistFocusPulse 750ms ease-out 1;
+}
+
+/* Custom Winamp 2.x Metallic Playlist Scrollbar */
+[data-theme="pc-winamp"] .pcw-winamp-scroll::-webkit-scrollbar {
+  width: 11px;
+}
+
+[data-theme="pc-winamp"] .pcw-winamp-scroll::-webkit-scrollbar-track {
+  background: #0c0e14;
+  border-left: 1px solid #353848;
+}
+
+[data-theme="pc-winamp"] .pcw-winamp-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, #62667a 0%, #3d4050 55%, #282a36 100%);
+  border-top: 1px solid #8a8fa8;
+  border-left: 1px solid #8a8fa8;
+  border-right: 1px solid #12141c;
+  border-bottom: 1px solid #12141c;
+}
+
+/* Winamp Drawer Hover Highlight (#E6C245) */
+[data-theme="pc-winamp"] .pcw-drawer-row:hover:not([aria-selected="true"]) {
+  border-color: #e6c245 !important;
+  color: #e6c245 !important;
+}
+
+/* 3.5" Floppy Disk Chamfered Shell & Interactions */
+[data-theme="pc-winamp"] .pcw-floppy-card {
+  aspect-ratio: 1 / 0.96;
+  clip-path: polygon(0 0, 90% 0, 100% 10%, 100% 100%, 0 100%);
+  transition:
+    transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 200ms ease,
+    opacity 200ms ease;
+  will-change: transform;
+}
+
+[data-theme="pc-winamp"] .pcw-floppy-card:hover {
+  transform: translateY(-10px) rotate(0deg) scale(1.08) !important;
+  z-index: 40 !important;
+  filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.55));
+}
+
+[data-theme="pc-winamp"] .pcw-floppy-shutter {
+  background: linear-gradient(
+    90deg,
+    #aeb3ba 0%,
+    #e5e8ec 28%,
+    #9298a1 55%,
+    #d2d6dc 82%,
+    #a5aab2 100%
+  );
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.85),
+    inset -1px -1px 0 rgba(40, 44, 52, 0.55),
+    0 2px 3px rgba(0, 0, 0, 0.35);
+}
+
+[data-theme="pc-winamp"] .pcw-floppy-label-lines {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 10px,
+    rgba(158, 165, 181, 0.55) 10px,
+    rgba(158, 165, 181, 0.55) 11px
+  );
+}
+
+@keyframes pcwFloppyInsert {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+    opacity: 1;
+  }
+  55% {
+    transform: translate3d(135px, -85px, 0) scale(0.68) rotate(-4deg);
+    opacity: 0.92;
+  }
+  100% {
+    transform: translate3d(180px, -110px, 0) scale(0.45) rotate(0deg);
+    opacity: 0;
+  }
+}
+
+[data-theme="pc-winamp"] .pcw-floppy-inserting {
+  animation: pcwFloppyInsert 460ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes pcwFloppyPopEject {
+  0% {
+    transform: translate3d(150px, -90px, 0) scale(0.44) rotate(0deg);
+    opacity: 0;
+  }
+  30% {
+    transform: translate3d(95px, -62px, 0) scale(0.76) rotate(-8deg);
+    opacity: 0.96;
+  }
+  72% {
+    transform: translate3d(-6px, -14px, 0) scale(1.06) rotate(4deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+    opacity: 1;
+  }
+}
+
+[data-theme="pc-winamp"] .pcw-floppy-ejecting {
+  animation: pcwFloppyPopEject 560ms cubic-bezier(0.18, 0.89, 0.32, 1.22) forwards;
+  z-index: 45 !important;
+}
+
+/* Marquee animation for Winamp LCD Track Readout */
+@keyframes pcwMarqueeScroll {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+[data-theme="pc-winamp"] .pcw-marquee-track {
+  display: inline-flex;
+  white-space: nowrap;
+  animation: pcwMarqueeScroll 11s linear infinite;
+}
+
+[data-theme="pc-winamp"] .pcw-marquee-track[data-paused="true"] {
+  animation-play-state: paused;
+}
+
+/* Desktop Unified Lower Winamp Control Suite (Flexible Left Main+EQ | 1fr Playlist Right) */
+[data-theme="pc-winamp"] .pcw-desktop-dock-grid {
+  width: 100%;
+  max-width: 940px;
+  height: 100%;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  [data-theme="pc-winamp"] .pcw-desktop-dock-grid {
+    grid-template-columns: minmax(240px, 310px) minmax(0, 1fr);
+  }
+}
+

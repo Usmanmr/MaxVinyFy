@@ -467,7 +467,50 @@ describe('Multi-Generation iPod Hardware, Dock Collar, 2011 iMac & Parallax Card
     const mobNano = computeMobileZeroScrollStackedLayout(390, 844, false, 'nano');
     assert.ok(mobNano.imacWidthPx >= Math.floor(390 * 0.94) - 2);
     assert.equal(mobNano.slimDockHeightPx, 0);
+    assert.equal(mobNano.controlSliderHeightPx, 68);
+    assert.equal(mobNano.leftRailWidthPx, 0);
     assert.ok(Math.abs(mobNano.ipodAspectRatio - 0.43) <= 0.015);
     assert.equal(mobNano.fitsSimultaneouslyWithoutScroll, true);
   });
+
+  it('builds strictly muted YouTube embed URLs, sanitizes 11-char IDs, appends origin/widget_referrer, and orders candidate queue', async () => {
+    const { buildMutedImacYoutubeEmbedUrl } = await import('./clickWheelLogic');
+    const {
+      extractValidYouTubeVideoId,
+      buildYouTubeCandidateQueue,
+      VERIFIED_EMBED_SAFE_VISUALIZER_IDS,
+    } = await import('./youtubePlayer');
+
+    const url = buildMutedImacYoutubeEmbedUrl(
+      'https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RD123',
+      'https://example.app',
+      'https://example.app/player'
+    );
+    assert.ok(url.includes('https://www.youtube.com/embed/dQw4w9WgXcQ?'));
+    assert.ok(url.includes('mute=1'));
+    assert.ok(url.includes('enablejsapi=1'));
+    assert.ok(url.includes('autoplay=1'));
+    assert.ok(url.includes('origin=https%3A%2F%2Fexample.app'));
+    assert.ok(url.includes('widget_referrer=https%3A%2F%2Fexample.app%2Fplayer'));
+
+    const fallbackUrl = buildMutedImacYoutubeEmbedUrl('bad-id');
+    assert.ok(fallbackUrl.includes('jfKfPfyJRdk'));
+    assert.ok(fallbackUrl.includes('mute=1'));
+
+    assert.equal(extractValidYouTubeVideoId('youtu.be/abc123DEF45?si=1'), 'abc123DEF45');
+    assert.equal(extractValidYouTubeVideoId('not-a-valid-id'), null);
+
+    const queue = buildYouTubeCandidateQueue('dQw4w9WgXcQ', [
+      'invalid',
+      'dQw4w9WgXcQ',
+      'M7lc1UVf-VE',
+    ]);
+    assert.equal(queue[0], 'dQw4w9WgXcQ');
+    assert.equal(queue[1], 'M7lc1UVf-VE');
+    for (const safeId of VERIFIED_EMBED_SAFE_VISUALIZER_IDS) {
+      assert.ok(queue.includes(safeId));
+    }
+  });
 });
+
+

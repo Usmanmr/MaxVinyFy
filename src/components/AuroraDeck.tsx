@@ -18,6 +18,7 @@ import {
   shouldRunActiveAnimationLoops,
   triggerButtonHaptic,
 } from '../utils/playerLogic';
+import { useDoubleTapHideArt } from '../hooks/useDoubleTapHideArt';
 import {
   AURORA_PALETTE,
   AURORA_TRACK_CHANGE_TIMELINE_MS,
@@ -68,6 +69,7 @@ export const AuroraDeck: React.FC<AuroraDeckProps> = ({
   repeatOne,
   shuffleEnabled,
   hideBoxArt = false,
+  onToggleHideBoxArt,
   viewportLayout,
   themePalette,
   auroraAccents,
@@ -84,6 +86,10 @@ export const AuroraDeck: React.FC<AuroraDeckProps> = ({
   onScratch,
   onResolvedPerTrackArtwork,
 }) => {
+  const doubleTapHideHandlers = useDoubleTapHideArt({
+    enabled: !hideBoxArt,
+    onHide: onToggleHideBoxArt,
+  });
   const isStandby = track.id === 'standby-empty' || track.durationSec <= 0;
   const activeLoopsEnabled = shouldRunActiveAnimationLoops(
     isPlaying,
@@ -907,12 +913,12 @@ export const AuroraDeck: React.FC<AuroraDeckProps> = ({
               pointerEvents: hideBoxArt ? 'none' : 'auto',
               transform: `translate3d(${shardOffset.x}px, ${shardOffset.y}px, 0) rotate(${
                 isShardDragging ? shardMagneticTiltDeg : 0
-              }deg) scale(${hideBoxArt ? 0.9 : 1})`,
+              }deg) scale(${hideBoxArt ? 0.94 : 1})`,
               transition: isShardDragging
                 ? 'none'
                 : prefersReducedMotion
                   ? 'none'
-                  : 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease',
+                  : 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease',
             }}
             className={`hidden sm:block relative z-30 ml-1.5 lg:ml-4 shrink-0`}
           >
@@ -920,19 +926,16 @@ export const AuroraDeck: React.FC<AuroraDeckProps> = ({
               id="album-art-holder-box"
               role="region"
               aria-label="Draggable Album Art Glass Shard"
-              title="Drag glass shard · Double-click to cycle alternate artwork"
+              title="Drag glass shard · Double-click to hide album art"
               data-dragging={isShardDragging ? 'true' : 'false'}
               data-magnetic-tilt={shardMagneticTiltDeg}
               onPointerDown={handleShardPointerDown}
+              onPointerDownCapture={doubleTapHideHandlers.onPointerDownCapture}
               onPointerMove={handleShardPointerMove}
               onPointerUp={handleShardPointerUp}
+              onPointerUpCapture={doubleTapHideHandlers.onPointerUpCapture}
               onPointerCancel={handleShardPointerUp}
-              onDoubleClick={() => {
-                if (artworkState.candidates.length > 1) {
-                  setArtworkBroken(false);
-                  setArtworkAttempt((a) => (a + 1) % artworkState.candidates.length);
-                }
-              }}
+              onDoubleClick={doubleTapHideHandlers.onDoubleClick}
               className={`aurora-glass-panel aurora-chromatic-edge ${
                 activeLoopsEnabled && !isShardDragging ? 'aurora-shard-sway' : ''
               } relative w-[86px] h-[86px] lg:w-[116px] lg:h-[116px] xl:w-[136px] xl:h-[136px] rounded-[14px] p-1.5 cursor-grab active:cursor-grabbing touch-none flex flex-col justify-between overflow-hidden`}

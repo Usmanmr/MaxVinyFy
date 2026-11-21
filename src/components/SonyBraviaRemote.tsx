@@ -31,8 +31,13 @@ export interface SonyBraviaRemoteProps {
   onTriggerColorShortcut?: (color: 'YELLOW' | 'BLUE' | 'RED' | 'GREEN') => void;
 }
 
-const REMOTE_WIDTH = 186;
-const REMOTE_HEIGHT = 496;
+const REMOTE_BASE_WIDTH = 186;
+const REMOTE_BASE_HEIGHT = 496;
+const REMOTE_SCALE = 0.5;
+const REMOTE_WIDTH = Math.round(REMOTE_BASE_WIDTH * REMOTE_SCALE); // 93px (50% scale)
+const REMOTE_HEIGHT = Math.round(REMOTE_BASE_HEIGHT * REMOTE_SCALE); // 248px (50% scale)
+const REMOTE_MINI_WIDTH = 142;
+const REMOTE_MINI_HEIGHT = 32;
 
 export const SonyBraviaRemote = React.memo<SonyBraviaRemoteProps>(
   ({
@@ -67,7 +72,7 @@ export const SonyBraviaRemote = React.memo<SonyBraviaRemoteProps>(
       const vh = window.innerHeight;
       // Default to resting cleanly in the gap between Bravia TV and 3D CD Tower Rack on the left column
       const defaultX = vw >= 1024 ? 20 : Math.max(10, vw - REMOTE_WIDTH - 12);
-      const defaultY = vw >= 1024 ? Math.round(vh * 0.388) : Math.max(48, vh - REMOTE_HEIGHT - 16);
+      const defaultY = vw >= 1024 ? Math.round(vh * 0.42) : Math.max(48, vh - REMOTE_HEIGHT - 16);
       return clampRemoteDragPosition(defaultX, defaultY, vw, vh, REMOTE_WIDTH, REMOTE_HEIGHT);
     }, []);
 
@@ -87,20 +92,21 @@ export const SonyBraviaRemote = React.memo<SonyBraviaRemoteProps>(
     }, [externalOpenRequestNonce]);
 
     useEffect(() => {
-      const handleResize = () => {
+      const clampToViewport = () => {
         setPosition((prev) =>
           clampRemoteDragPosition(
             prev.x,
             prev.y,
             window.innerWidth,
             window.innerHeight,
-            REMOTE_WIDTH,
-            isMinimized ? 48 : REMOTE_HEIGHT
+            isMinimized ? REMOTE_MINI_WIDTH : REMOTE_WIDTH,
+            isMinimized ? REMOTE_MINI_HEIGHT : REMOTE_HEIGHT
           )
         );
       };
-      window.addEventListener('resize', handleResize, { passive: true });
-      return () => window.removeEventListener('resize', handleResize);
+      clampToViewport();
+      window.addEventListener('resize', clampToViewport, { passive: true });
+      return () => window.removeEventListener('resize', clampToViewport);
     }, [isMinimized]);
 
     useEffect(() => {
@@ -154,8 +160,8 @@ export const SonyBraviaRemote = React.memo<SonyBraviaRemoteProps>(
           nextY,
           window.innerWidth,
           window.innerHeight,
-          REMOTE_WIDTH,
-          isMinimized ? 48 : REMOTE_HEIGHT
+          isMinimized ? REMOTE_MINI_WIDTH : REMOTE_WIDTH,
+          isMinimized ? REMOTE_MINI_HEIGHT : REMOTE_HEIGHT
         )
       );
     };
@@ -226,18 +232,30 @@ export const SonyBraviaRemote = React.memo<SonyBraviaRemoteProps>(
         id="sony-rmt-tx102u-remote"
         aria-label="Draggable Sony RMT-TX102U TV Remote Control"
         data-remote-minimized="false"
+        data-remote-scale="0.5"
         data-remote-dragging={isDragging ? 'true' : 'false'}
         data-last-ir-key={lastPressedKey}
         data-remote-x={position.x}
         data-remote-y={position.y}
         style={{
           width: `${REMOTE_WIDTH}px`,
-          transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${isDragging ? 1.02 : 1})`,
+          height: `${REMOTE_HEIGHT}px`,
+          transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${isDragging ? 1.03 : 1})`,
           transition: isDragging ? 'none' : 'transform 140ms cubic-bezier(0.22, 1, 0.36, 1)',
         }}
         className="fixed left-0 top-0 z-[85] select-none"
       >
-        <div className="rmt-tx102u-body relative w-full rounded-[22px] border border-[#3E434F] px-2.5 pt-2 pb-2.5 flex flex-col gap-1.5 text-white">
+        <div
+          style={{
+            width: `${REMOTE_BASE_WIDTH}px`,
+            height: `${REMOTE_BASE_HEIGHT}px`,
+            transform: `scale(${REMOTE_SCALE})`,
+            transformOrigin: 'top left',
+            backgroundColor: '#101216',
+            opacity: 1,
+          }}
+          className="rmt-tx102u-body relative rounded-[22px] border border-[#454B57] px-2.5 pt-2 pb-2.5 flex flex-col gap-1.5 text-white overflow-hidden"
+        >
           {/* Top Infrared (IR) Blaster Window & Drag Grip Bar */}
           <div
             id="rmt-drag-handle"
@@ -801,10 +819,10 @@ export const SonyBraviaRemote = React.memo<SonyBraviaRemoteProps>(
 
           {/* Bottom Sony Branding & RMT-TX102U Model Silkscreen */}
           <div className="pt-0.5 flex flex-col items-center justify-center leading-none">
-            <span className="font-serif text-[10px] font-bold tracking-[0.22em] text-[#E2E8F0]">
+            <span className="font-serif text-[11px] font-bold tracking-[0.24em] text-[#FFFFFF]">
               SONY
             </span>
-            <span className="font-mono text-[6.5px] tracking-[0.16em] text-[#94A3B8] mt-0.5">
+            <span className="font-mono text-[6.5px] tracking-[0.16em] text-[#CBD5E1] mt-0.5">
               TV · RMT-TX102U
             </span>
           </div>

@@ -28,9 +28,9 @@ describe('cdHifiLogic — Sony Mini Hi-Fi, RGB Speakers, 3D Rotating CD Rack & 1
     assert.equal(CD_HIFI_SYSTEM_PROPORTIONS.centerReceiverWidthPct, 32);
     assert.equal(CD_HIFI_SYSTEM_PROPORTIONS.rightSpeakerWidthPct, 34);
     assert.equal(CD_HIFI_SYSTEM_PROPORTIONS.hornWaveguideHeightPct, 12);
-    assert.equal(CD_HIFI_SYSTEM_PROPORTIONS.mainSpeakerScaleFactor, 0.7);
+    assert.equal(CD_HIFI_SYSTEM_PROPORTIONS.mainSpeakerScaleFactor, 1);
     assert.equal(CD_HIFI_SYSTEM_PROPORTIONS.centerDiscDiameterPct, 84);
-    assert.equal(CD_HIFI_SYSTEM_PROPORTIONS.auxDriversCountPerSide, 3);
+    assert.equal(CD_HIFI_SYSTEM_PROPORTIONS.auxDriversCountPerSide, 0);
     assert.equal(CD_HIFI_SYSTEM_PROPORTIONS.wooferDiameterPct, 82);
     assert.equal(CD_HIFI_SYSTEM_PROPORTIONS.bassReflexPortDiameterPct, 22);
     assert.equal(CD_HIFI_SYSTEM_PROPORTIONS.masterVolumeKnobDiameterPct, 36);
@@ -173,5 +173,27 @@ describe('cdHifiLogic — Sony Mini Hi-Fi, RGB Speakers, 3D Rotating CD Rack & 1
     const rockGroove = getCdEqPresetBandGainsDb('ROCK', true);
     assert.ok(rockGroove[0] > 6);
     assert.equal(rockGroove.length, 7);
+  });
+
+  it('clamps 50%-size Sony remote drag coordinates and computes vibrant WCAG-contrasted CD spine palettes', async () => {
+    const {
+      clampRemoteDragPosition,
+      extractCdSpinePaletteFromPixels,
+      getFallbackCdSpinePalette,
+      computeWcagTextInkHex,
+    } = await import('./cdHifiLogic');
+
+    const clamped = clampRemoteDragPosition(999, 999, 400, 600);
+    assert.equal(clamped.x, 400 - 93 - 8);
+    assert.equal(clamped.y, 600 - 248 - 8);
+
+    const fb = getFallbackCdSpinePalette('track-abc');
+    assert.equal(fb.isFallback, true);
+    assert.ok(fb.bgHex.startsWith('#'));
+
+    const bluePalette = extractCdSpinePaletteFromPixels([20, 90, 220, 255, 25, 95, 230, 255], 'track-abc');
+    assert.equal(bluePalette.isFallback, false);
+    assert.equal(bluePalette.inkHex, '#FFFFFF');
+    assert.equal(computeWcagTextInkHex(245, 230, 60), '#111111');
   });
 });

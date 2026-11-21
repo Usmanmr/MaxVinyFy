@@ -85,6 +85,9 @@ export class RetroAudioEngine {
   private synthGain: GainNode | null = null;
   private crackleGain: GainNode | null = null;
   private crackleSource: AudioBufferSourceNode | null = null;
+  private analyser: AnalyserNode | null = null;
+  private freqBuffer: Uint8Array<ArrayBuffer> | null = null;
+  private timeBuffer: Uint8Array<ArrayBuffer> | null = null;
 
   // Dual HTML5 Audio + Web Audio GainNode decks for true linearRampToValueAtTime crossfading
   private audioEl: HTMLAudioElement | null = null;
@@ -126,7 +129,13 @@ export class RetroAudioEngine {
       this.ctx = new AudioCtx();
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.value = this.isMuted ? 0 : this.volume;
-      this.masterGain.connect(this.ctx.destination);
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 128;
+      this.analyser.smoothingTimeConstant = 0.72;
+      this.freqBuffer = new Uint8Array(this.analyser.frequencyBinCount);
+      this.timeBuffer = new Uint8Array(this.analyser.fftSize);
+      this.masterGain.connect(this.analyser);
+      this.analyser.connect(this.ctx.destination);
 
       this.synthGain = this.ctx.createGain();
       this.synthGain.gain.value = 1.0;
@@ -241,7 +250,8 @@ export class RetroAudioEngine {
       this.soundTheme === 'squircle-pmp' ||
       this.soundTheme === 'desktop-98' ||
       this.soundTheme === 'streamline' ||
-      this.soundTheme === 'aurora-deck'
+      this.soundTheme === 'aurora-deck' ||
+      this.soundTheme === 'pc-winamp'
     ) {
       this.stopCrackleNode();
     } else if (this.isPlaying && this.crackleLevel > 0) {
@@ -2107,6 +2117,126 @@ export class RetroAudioEngine {
     return { left, right };
   }
 
+  public getSpectrumBands(barCount = 19, eqGains01?: number[]): number[] {
+    const out = new Array<number>(barCount).fill(0);
+    if (!this.isPlaying || this.isDocumentHidden) {
+      return out;
+    }
+
+    let hasLiveFftEnergy = false;
+    if (this.analyser && this.freqBuffer) {
+      this.analyser.getByteFrequencyData(this.freqBuffer);
+      let energySum = 0;
+      const maxUsefulBin = Math.min(this.freqBuffer.length, Math.max(barCount * 2, 42));
+      for (let i = 0; i < maxUsefulBin; i++) {
+        energySum += this.freqBuffer[i];
+      }
+      if (energySum > 18) {
+        hasLiveFftEnergy = true;
+        for (let b = 0; b < barCount; b++) {
+          const binStart = Math.floor((b / barCount) * (maxUsefulBin * 0.88));
+          const binEnd = Math.max(binStart + 1, Math.floor(((b + 1) / barCount) * (maxUsefulBin * 0.88)));
+          let peak = 0;
+          for (let k = binStart; k < binEnd && k < this.freqBuffer.length; k++) {
+            if (this.freqBuffer[k] > peak) peak = this.freqBuffer[k];
+          }
+          let norm = peak / 255;
+          if (eqGains01 && eqGains01.length > 0) {
+            const eqIdx = Math.min(eqGains01.length - 1, Math.floor((b / barCount) * eqGains01.length));
+            const eqMult = 0.55 + eqGains01[eqIdx] * 0.9;
+            norm = Math.min(1, norm * eqMult);
+          }
+          out[b] = Math.max(0.04, Math.min(1, norm * (0.7 + this.volume * 0.45)));
+        }
+      }
+    }
+
+    if (!hasLiveFftEnergy) {
+      this.levelPhase += 0.22 * this.playbackRate;
+      const t = this.levelPhase;
+      for (let b = 0; b < barCount; b++) {
+        const freqWeight = 1 - (b / Math.max(1, barCount - 1)) * 0.38;
+        const bassPulse = b < 5 ? Math.abs(Math.sin(t * 1.15 - b * 0.22)) * 0.56 : 0;
+        const midWave =
+          Math.abs(Math.sin(t * (1.4 + b * 0.13) + b * 0.72)) * 0.45 +
+          Math.abs(Math.cos(t * 0.85 - b * 0.48)) * 0.34;
+        let norm = (0.12 + bassPulse + midWave) * freqWeight;
+        if (eqGains01 && eqGains01.length > 0) {
+          const eqIdx = Math.min(eqGains01.length - 1, Math.floor((b / barCount) * eqGains01.length));
+          norm *= 0.55 + eqGains01[eqIdx] * 0.9;
+        }
+        out[b] = Math.max(0.05, Math.min(1, norm * Math.max(0.35, this.volume)));
+      }
+    }
+
+    return out;
+  }
+
+  public getWaveformSamples(sampleCount = 38): number[] {
+    const out = new Array<number>(sampleCount).fill(0);
+    if (!this.isPlaying || this.isDocumentHidden) {
+      return out;
+    }
+
+    let hasLiveSignal = false;
+    if (this.analyser && this.timeBuffer) {
+      this.analyser.getByteTimeDomainData(this.timeBuffer);
+      let maxDev = 0;
+      for (let i = 0; i < this.timeBuffer.length; i++) {
+        const dev = Math.abs(this.timeBuffer[i] - 128);
+        if (dev > maxDev) maxDev = dev;
+      }
+      if (maxDev > 2) {
+        hasLiveSignal = true;
+        for (let i = 0; i < sampleCount; i++) {
+          const idx = Math.min(
+            this.timeBuffer.length - 1,
+            Math.floor((i / sampleCount) * this.timeBuffer.length)
+          );
+          out[i] = Math.max(-1, Math.min(1, ((this.timeBuffer[idx] - 128) / 128) * 1.65));
+        }
+      }
+    }
+
+    if (!hasLiveSignal) {
+      this.levelPhase += 0.18 * this.playbackRate;
+      for (let i = 0; i < sampleCount; i++) {
+        const x = (i / sampleCount) * Math.PI * 4 + this.levelPhase * 2.2;
+        out[i] =
+          (Math.sin(x) * 0.55 + Math.sin(x * 2.1 + 0.8) * 0.28 + Math.cos(x * 0.5) * 0.17) *
+          Math.max(0.35, this.volume);
+      }
+    }
+
+    return out;
+  }
+
+  /**
+   * Plays authentic 1998 3.5" floppy drive latch clunk + stepper seek chatter.
+   */
+  public triggerFloppySeekCue() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    [0, 0.09, 0.17, 0.26].forEach((offset, idx) => {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = idx === 0 ? 'triangle' : 'square';
+      osc.frequency.setValueAtTime(idx === 0 ? 220 : 480 + idx * 95, now + offset);
+      osc.frequency.exponentialRampToValueAtTime(idx === 0 ? 75 : 190, now + offset + 0.045);
+      gain.gain.setValueAtTime(0.001, now + offset);
+      gain.gain.linearRampToValueAtTime(idx === 0 ? 0.075 : 0.032, now + offset + 0.004);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.055);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(now + offset);
+      osc.stop(now + offset + 0.06);
+    });
+  }
+
   private async resolveFullAudioUrl(
     trackId: string,
     previewAudioUrl?: string,
@@ -2641,7 +2771,8 @@ export class RetroAudioEngine {
       this.soundTheme === 'squircle-pmp' ||
       this.soundTheme === 'desktop-98' ||
       this.soundTheme === 'streamline' ||
-      this.soundTheme === 'aurora-deck'
+      this.soundTheme === 'aurora-deck' ||
+      this.soundTheme === 'pc-winamp'
     ) {
       return;
     }
@@ -2678,6 +2809,88 @@ export class RetroAudioEngine {
     this.crackleSource = whiteNoise;
   }
 
+  /**
+   * Warm descending 4-note Windows 98 shutdown chime synthesized via Web Audio API.
+   */
+  public triggerWin98ShutdownChime() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    const notes = [
+      { freq: 587.33, offset: 0.0, dur: 0.34 }, // D5
+      { freq: 440.0, offset: 0.22, dur: 0.34 }, // A4
+      { freq: 392.0, offset: 0.44, dur: 0.36 }, // G4
+      { freq: 293.66, offset: 0.68, dur: 0.78 }, // D4
+    ];
+
+    notes.forEach((n) => {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      const subOsc = this.ctx.createOscillator();
+      const filter = this.ctx.createBiquadFilter();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(n.freq, now + n.offset);
+      subOsc.type = 'sine';
+      subOsc.frequency.setValueAtTime(n.freq * 2, now + n.offset);
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(2200, now + n.offset);
+
+      gain.gain.setValueAtTime(0.001, now + n.offset);
+      gain.gain.linearRampToValueAtTime(0.085, now + n.offset + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + n.offset + n.dur);
+
+      osc.connect(filter);
+      subOsc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterGain);
+
+      osc.start(now + n.offset);
+      subOsc.start(now + n.offset);
+      osc.stop(now + n.offset + n.dur + 0.03);
+      subOsc.stop(now + n.offset + n.dur + 0.03);
+    });
+  }
+
+  /**
+   * Classic Windows 98 critical error chord (CHORD.WAV style) synthesized cleanly via Web Audio API:
+   * rich layered electric-piano/organ minor-seventh chord burst with ~180ms decay.
+   */
+  public triggerWin98CriticalErrorChord() {
+    if (this.isMuted || this.volume <= 0.01) return;
+    this.ensureContext();
+    if (!this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+
+    // Classic minor-7th chime cluster (F4, Ab4, C5, Eb5)
+    const freqs = [349.23, 415.3, 523.25, 622.25];
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(2600, now);
+
+    const chordGain = this.ctx.createGain();
+    chordGain.gain.setValueAtTime(0.001, now);
+    chordGain.gain.linearRampToValueAtTime(0.14, now + 0.012);
+    chordGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+
+    filter.connect(chordGain);
+    chordGain.connect(this.masterGain);
+
+    freqs.forEach((f, idx) => {
+      if (!this.ctx) return;
+      const osc = this.ctx.createOscillator();
+      osc.type = idx % 2 === 0 ? 'triangle' : 'sawtooth';
+      osc.frequency.setValueAtTime(f, now);
+      osc.connect(filter);
+      osc.start(now);
+      osc.stop(now + 0.26);
+    });
+  }
+
   private stopCrackleNode() {
     if (this.crackleSource) {
       try {
@@ -2692,3 +2905,4 @@ export class RetroAudioEngine {
 }
 
 export const retroAudio = new RetroAudioEngine();
+

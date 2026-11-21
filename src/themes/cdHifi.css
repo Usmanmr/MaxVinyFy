@@ -409,3 +409,107 @@
   border-bottom: 1px solid rgba(148, 163, 184, 0.45);
   backdrop-filter: blur(6px);
 }
+
+/* ==========================================================================
+   4. Solid Matte-Black Sony Bravia RMT-TX102U Remote & Unified Receiver Touch Bar
+   ========================================================================== */
+[data-theme="cd-hifi"] .rmt-tx102u-body,
+.rmt-tx102u-body {
+  background: linear-gradient(180deg, #1E2128 0%, #121418 28%, #0B0C0F 100%) !important;
+  opacity: 1 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.92),
+    0 12px 28px rgba(0, 0, 0, 0.88);
+}
+
+[data-theme="cd-hifi"] .rmt-rubber-key,
+.rmt-rubber-key {
+  background: linear-gradient(180deg, #323742 0%, #232730 55%, #171A21 100%);
+  border: 1px solid #4A5160;
+  opacity: 1;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 1.5px 2px rgba(0, 0, 0, 0.85);
+  transition: transform 90ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+[data-theme="cd-hifi"] .rmt-rubber-key:hover,
+.rmt-rubber-key:hover {
+  border-color: #6B7280;
+  background: linear-gradient(180deg, #3C4250 0%, #2B303B 55%, #1D2129 100%);
+}
+
+[data-theme="cd-hifi"] .rmt-rubber-key:active,
+.rmt-rubber-key:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+[data-theme="cd-hifi"] .cd-touch-bar-strip {
+  background: linear-gradient(180deg, #191E28 0%, #0E121A 55%, #07090D 100%);
+  border: 1px solid #334155;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 3px rgba(0, 0, 0, 0.9),
+    0 2px 6px rgba(0, 0, 0, 0.55);
+}
+
+[data-theme="cd-hifi"] .cd-touch-bar-btn {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(15, 23, 42, 0.5) 100%);
+  transition: background 110ms ease, color 110ms ease;
+}
+
+[data-theme="cd-hifi"] .cd-touch-bar-btn:hover {
+  background: linear-gradient(180deg, rgba(0, 240, 255, 0.14) 0%, rgba(15, 23, 42, 0.72) 100%);
+}
+
+/* Mobile Vertical (max-width: 767px AND orientation: portrait):
+   Hide Left & Right Speakers so Central Receiver spans full width cleanly between Bravia TV and CD Spine Playlist */
+@media (max-width: 767px) and (orientation: portrait) {
+  [data-theme="cd-hifi"] #retro-tv-chassis {
+    width: 100% !important;
+    aspect-ratio: 16 / 9 !important;
+    height: auto !important;
+    max-height: 28dvh;
+  }
+
+  [data-theme="cd-hifi"] #cd-speaker-left,
+  [data-theme="cd-hifi"] #cd-speaker-right {
+    display: none !important;
+  }
+
+  [data-theme="cd-hifi"] #cd-hifi-shelf-system {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  [data-theme="cd-hifi"] #cd-receiver-unit {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+/* Mobile Horizontal (orientation: landscape AND max-height: 580px):
+   Strict 3-column shelf proportions without horizontal frame collision */
+@media (orientation: landscape) and (max-height: 580px) {
+  [data-theme="cd-hifi"] #retro-tv-chassis {
+    width: 100% !important;
+    aspect-ratio: 16 / 9 !important;
+    height: auto !important;
+  }
+
+  [data-theme="cd-hifi"] #cd-hifi-shelf-system {
+    grid-template-columns: minmax(0, 0.22fr) minmax(0, 0.56fr) minmax(0, 0.22fr) !important;
+    column-gap: 4px !important;
+    overflow: hidden !important;
+  }
+
+  [data-theme="cd-hifi"] #cd-speaker-left,
+  [data-theme="cd-hifi"] #cd-speaker-right {
+    min-width: 0;
+    overflow: hidden;
+  }
+}
+

@@ -8,78 +8,101 @@
    ========================================================================== */
 
 [data-theme="squircle-pmp"] {
-  --font-display: 'Space Grotesk', 'Inter', sans-serif;
-  --font-sans: 'Space Grotesk', 'Inter', sans-serif;
+  --font-display: 'Segoe UI Light', 'Segoe UI', 'Helvetica Neue', 'Space Grotesk', sans-serif;
+  --font-sans: 'Segoe UI Light', 'Segoe UI', 'Helvetica Neue', 'Space Grotesk', sans-serif;
   --font-mono: 'Space Grotesk', ui-monospace, monospace;
-  --sq-body: #4A3A2E;
-  --sq-olive: #55503C;
+  --sq-body: #563E36;
+  --sq-olive: #5C6D34;
   --sq-magenta: #E6007E;
   --sq-orange: #F26A1B;
-  --sq-screen: #0B0A0A;
+  --sq-screen: #181B1E;
   --sq-ink: #FFFFFF;
-  --sq-muted: #9B938B;
-  --sq-trim: #857F74;
+  --sq-muted: #B2C3D4;
+  --sq-trim: #3D4044;
 }
 
 [data-theme="squircle-pmp"].app-viewport-shell {
+  width: 100vw;
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  padding: 0 !important;
   background-color: #0b0c0e;
   background-image:
     radial-gradient(ellipse at 24% 20%, rgba(56, 60, 68, 0.28) 0%, transparent 52%),
     radial-gradient(ellipse at 82% 84%, rgba(230, 0, 126, 0.1) 0%, transparent 48%),
     linear-gradient(160deg, #15171b 0%, #0d0e11 58%, #07080a 100%);
   color: #FFFFFF;
-  font-family: 'Space Grotesk', 'Inter', sans-serif;
+  font-family: 'Segoe UI', 'Helvetica Neue', 'Space Grotesk', sans-serif;
+}
+
+[data-theme="squircle-pmp"] .main-deck-grid {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  gap: 0 !important;
+}
+
+[data-theme="squircle-pmp"] #turntable {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
 }
 
 [data-theme="squircle-pmp"] #app-brand-title {
   color: #FFFFFF;
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Segoe UI', 'Helvetica Neue', 'Space Grotesk', sans-serif;
   letter-spacing: -0.03em;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
 }
 
-/* Matte Dark Charcoal-Black Zune 30 Body Wrapped in Glossy Black Double-Shot Edge Rim (Zero Green/Olive) */
+/* 1. Iconic Double-Shot Translucent Olive-Green Polycarbonate Outer Shell Over Chocolate Core (Thin 2px Rim) */
 [data-theme="squircle-pmp"] .sq-player-chassis {
-  background-color: #16171A;
+  background-color: #4D5E29;
   background-image:
-    radial-gradient(ellipse at 36% 12%, rgba(255, 255, 255, 0.08) 0%, transparent 46%),
-    linear-gradient(168deg, #212328 0%, #151619 48%, #0D0E10 100%);
-  border: 2.5px solid #23252A;
+    linear-gradient(135deg, #5C6D34 0%, #4A5A27 42%, #445324 72%, #687B3B 100%);
+  border-radius: 5.5% / 3%;
   box-shadow:
-    inset 0 0 0 2px #0E0F11,
-    inset 0 1px 1px rgba(255, 255, 255, 0.22),
-    inset 1px 0 1px rgba(255, 255, 255, 0.14),
-    inset 0 -4px 10px rgba(0, 0, 0, 0.72),
-    0 0 0 1px #060708,
-    0 24px 52px rgba(0, 0, 0, 0.82),
-    0 6px 16px rgba(0, 0, 0, 0.62);
+    inset 0.5px 0.5px 1px rgba(122, 142, 73, 0.72),
+    inset -0.5px -0.5px 1px rgba(122, 142, 73, 0.65),
+    0 0 0 0.75px rgba(38, 48, 18, 0.85),
+    -14px 16px 28px rgba(0, 0, 0, 0.42),
+    -4px 6px 10px rgba(0, 0, 0, 0.28);
+  transition:
+    background-color 280ms ease,
+    box-shadow 280ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* Unified Satin Brushed Gunmetal / Dark Silver Keyhole Bezel Framing Screen + Neck + D-Pad */
-[data-theme="squircle-pmp"] .sq-keyhole-bezel {
-  background-color: #84888C;
+/* 2. Soft-Touch Matte Chocolate-Brown Inner Core With Bead-Blasted Micro-Grain */
+[data-theme="squircle-pmp"] .sq-chocolate-core {
+  background-color: #563E36;
   background-image:
-    repeating-linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.08) 0px,
-      rgba(255, 255, 255, 0.08) 1px,
-      rgba(0, 0, 0, 0.08) 1px,
-      rgba(0, 0, 0, 0.08) 2px
-    ),
-    linear-gradient(160deg, #9EA2A6 0%, #7C8085 48%, #6D7175 100%);
+    linear-gradient(115deg, #563E36 0%, #63483F 42%, #523B34 78%, #47322B 100%);
+  border-radius: 5% / 2.7%;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.42),
-    inset 0 -1px 2px rgba(0, 0, 0, 0.55),
-    0 2px 5px rgba(0, 0, 0, 0.65);
+    0 0 2px 0.5px rgba(74, 92, 36, 0.45),
+    inset 0 0 2px 0.5px rgba(74, 92, 36, 0.35),
+    inset -3px 0 6px rgba(255, 232, 218, 0.08),
+    inset 0 -4px 8px rgba(20, 12, 9, 0.35),
+    inset 0 1px 2px rgba(255, 226, 212, 0.1);
+  transition: background-color 280ms ease, box-shadow 280ms ease;
 }
 
-/* Recessed Dark Screen Well Inside Gunmetal Keyhole Bezel */
-[data-theme="squircle-pmp"] .sq-recessed-black-bezel {
-  background-color: #0B0C0E;
-  border: 1px solid #2C2E32;
-  box-shadow:
-    inset 0 2px 6px rgba(0, 0, 0, 0.92),
-    0 1px 0 rgba(255, 255, 255, 0.16);
+[data-theme="squircle-pmp"] .sq-chocolate-grain {
+  opacity: 0.08;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.88' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.9'/%3E%3C/svg%3E");
+  background-size: 96px 96px;
+  mix-blend-mode: overlay;
 }
 
 /* Monitor / Queue Hardware Cabinets */
@@ -100,41 +123,139 @@
   border-color: rgba(158, 162, 166, 0.35);
 }
 
-/* Glossy Piano-Black 4-Way D-Pad Ring Inset Inside Metallic Gunmetal Bezel (100% Unbranded) */
+/* 4. Unbranded Pitch-Black Dished Circular Control Ring */
 [data-theme="squircle-pmp"] .sq-dpad-ring {
-  background-color: #0E0F11;
-  background-image:
-    radial-gradient(circle at 42% 24%, rgba(255, 255, 255, 0.16) 0%, #1B1C20 34%, #0E0F11 72%, #070809 100%);
-  border: 1px solid #3C3F44;
-  box-shadow:
-    inset 0 1.5px 2px rgba(255, 255, 255, 0.24),
-    inset 0 -3px 7px rgba(0, 0, 0, 0.9),
-    0 3px 8px rgba(0, 0, 0, 0.65);
-}
-
-/* Flush Subtly Domed Matte-Black Center Select Disc Separated by Dark Hairline Groove (100% Blank) */
-[data-theme="squircle-pmp"] .sq-dpad-inner-well {
   background-color: #121316;
-  background-image: radial-gradient(circle at 46% 32%, #24262B 0%, #151619 65%, #0D0E10 100%);
-  border: 1px solid #050506;
+  background-image:
+    radial-gradient(circle at 66% 24%, rgba(255, 255, 255, 0.14) 0%, transparent 42%),
+    radial-gradient(circle at 26% 76%, rgba(255, 255, 255, 0.1) 0%, transparent 40%),
+    linear-gradient(135deg, #1E2023 0%, #101113 55%, #1A1C1F 100%);
+  border: 1px solid #090A0C;
   box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.85),
+    inset 0 2px 5px rgba(0, 0, 0, 0.78),
+    inset 0 -2px 4px rgba(255, 255, 255, 0.08);
+  transition: transform 90ms cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 90ms ease;
+}
+
+/* Crisp 1.5px Dark Parting Trench + Matte-Black Center Select Button With Lower-Left Specular Glint */
+[data-theme="squircle-pmp"] .sq-dpad-inner-well {
+  background-color: #141518;
+  background-image:
+    radial-gradient(circle at 46% 32%, #1D1F23 0%, #131417 68%, #0E0F12 100%);
+  border: 1.5px solid #050507;
+  box-shadow:
+    -1px 1px 0 0.5px rgba(255, 255, 255, 0.25),
     0 0 0 1px rgba(0, 0, 0, 0.92),
-    inset 0 1px 1px rgba(255, 255, 255, 0.12),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.08),
     inset 0 -1.5px 3px rgba(0, 0, 0, 0.72);
+  transition: transform 85ms linear, box-shadow 85ms linear;
 }
 
-/* Recessed Dark-Charcoal Flanking Back (<-) & Play/Pause (>||) Circles — ZERO White Outline/Ring/Halo */
-[data-theme="squircle-pmp"] .sq-circle-btn {
-  background-color: #18191C;
-  background-image: radial-gradient(circle at 45% 32%, #222429 0%, #17181B 70%, #111214 100%);
-  border: 1px solid #090A0B;
-  outline: none;
+[data-theme="squircle-pmp"] .sq-dpad-inner-well[data-pressed="true"],
+[data-theme="squircle-pmp"] .sq-dpad-inner-well:active {
   box-shadow:
-    inset 0 1.5px 3px rgba(0, 0, 0, 0.78),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+    0 0 0 1.5px rgba(0, 0, 0, 0.96),
+    inset 0 2px 5px rgba(0, 0, 0, 0.92);
 }
 
-/* External Rounded-Corner Synchronized Video Display Housing Directly Below Zune Unit */
+/* 5. Color-Matched Matte Chocolate-Brown Flanking Back (<-) & Play/Pause (>||) Circles — ZERO White Rings */
+[data-theme="squircle-pmp"] .sq-circle-btn {
+  background-color: #563F37;
+  background-image: linear-gradient(145deg, #5C433B 0%, #543D36 55%, #4F3831 100%);
+  border: none;
+  outline: none;
+  color: rgba(156, 134, 126, 0.78);
+  box-shadow:
+    0 0 0 1px rgba(25, 14, 10, 0.72),
+    inset 1px 1px 2px rgba(255, 225, 210, 0.14),
+    inset -1px -1px 2px rgba(20, 10, 8, 0.45);
+  transition:
+    transform 85ms linear,
+    box-shadow 280ms ease,
+    background-color 280ms ease,
+    color 280ms ease;
+}
+
+[data-theme="squircle-pmp"] .sq-circle-btn:hover {
+  color: rgba(206, 188, 180, 0.92);
+}
+
+[data-theme="squircle-pmp"] .sq-circle-btn:active,
+[data-theme="squircle-pmp"] .sq-circle-btn[data-pressed="true"] {
+  transform: translateY(1px) scale(0.96);
+  box-shadow:
+    0 0 0 1.5px rgba(15, 8, 5, 0.9),
+    inset 0 2px 4px rgba(18, 9, 7, 0.72);
+}
+
+/* 6. Matte Anti-Glare Charcoal-Black Zune LCD Surface */
+[data-theme="squircle-pmp"] .sq-zune-lcd {
+  background-color: #16191C;
+  font-family: 'Segoe UI Light', 'Segoe UI', 'Helvetica Neue', sans-serif;
+}
+
+/* External Rounded-Corner Top-Left Synchronized Video Display Housing + Top Backdrop Occlusion Shield */
+[data-theme="squircle-pmp"] .sq-external-video-wrap {
+  position: relative;
+  z-index: 30;
+  flex-shrink: 0;
+}
+
+[data-theme="squircle-pmp"] .sq-external-video-wrap::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(180deg, #131519 0%, #0d0e11 72%, rgba(13, 14, 17, 0.94) 100%);
+  pointer-events: none;
+}
+
+/* Zune Mode Desktop & Mobile Landscape Two-Column Grid Stage */
+[data-theme="squircle-pmp"] .zune-landscape-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  width: 100vw;
+  height: 100dvh;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+@media (orientation: landscape) and (max-height: 550px) {
+  [data-theme="squircle-pmp"] .zune-landscape-stage {
+    column-gap: 20px;
+    padding: 12px 42px 12px 16px;
+  }
+
+  [data-theme="squircle-pmp"] #sq-left-stage-column {
+    z-index: 10;
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  [data-theme="squircle-pmp"] #sq-right-chassis-column {
+    z-index: 30;
+    max-width: 36vw;
+    height: calc(100dvh - 24px);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  [data-theme="squircle-pmp"] #sq-player-chassis:not(.sq-device-only-chassis) {
+    height: min(calc(100dvh - 82px), calc(36vw / 0.545)) !important;
+    max-height: 100% !important;
+    max-width: 36vw !important;
+    width: auto !important;
+    aspect-ratio: 0.545 / 1;
+  }
+}
+
 [data-theme="squircle-pmp"] .sq-external-video-frame {
   border-radius: 20px;
   background-color: #101114;
@@ -143,7 +264,7 @@
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.22),
     inset 0 -2px 6px rgba(0, 0, 0, 0.85),
-    0 16px 36px rgba(0, 0, 0, 0.78),
+    0 14px 28px rgba(0, 0, 0, 0.55),
     0 4px 12px rgba(0, 0, 0, 0.56);
 }
 
@@ -210,10 +331,106 @@
   will-change: transform;
 }
 
+/* Smooth 12s Ken Burns Zoom (1.0 -> 1.16) for Full-Bleed Zune LCD Now Playing Slideshow */
+@keyframes sqSlideKenBurns {
+  0% {
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+  100% {
+    transform: scale(1.16) translate3d(-1.2%, -1%, 0);
+  }
+}
+
+[data-theme="squircle-pmp"] .sq-lcd-slide-ken-burns {
+  animation: sqSlideKenBurns 12s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+/* Continuous Slow 22s Album Art Zoom on Zune Built-In LCD (1.0 -> 1.16 -> 1.0) */
+@keyframes zuneArtZoom {
+  0% {
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+  50% {
+    transform: scale(1.16) translate3d(-1%, -0.8%, 0);
+  }
+  100% {
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+}
+
+[data-theme="squircle-pmp"] .zune-art-zoom {
+  animation: zuneArtZoom 22s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* 9s Ken Burns (1.02 -> 1.12) for Main External Screen YouTube Screen-Grab Slideshow */
+@keyframes sqExtGrabZoom {
+  0% {
+    transform: scale(1.02) translate3d(-0.6%, 0, 0);
+  }
+  100% {
+    transform: scale(1.12) translate3d(0.8%, -0.8%, 0);
+  }
+}
+
+[data-theme="squircle-pmp"] .sq-ext-grab-zoom {
+  animation: sqExtGrabZoom 9s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+@keyframes sqSwipeHintBreath {
+  0%, 100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+@keyframes sqChevronLeftGlide {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(-4px);
+  }
+}
+
+@keyframes sqChevronRightGlide {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(4px);
+  }
+}
+
+[data-theme="squircle-pmp"] .sq-swipe-hint-strip {
+  animation: sqSwipeHintBreath 2.4s ease-in-out infinite;
+  will-change: opacity;
+}
+
+[data-theme="squircle-pmp"] .sq-swipe-chevron-left {
+  animation: sqChevronLeftGlide 2.4s ease-in-out infinite;
+  will-change: transform;
+}
+
+[data-theme="squircle-pmp"] .sq-swipe-chevron-right {
+  animation: sqChevronRightGlide 2.4s ease-in-out infinite;
+  will-change: transform;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  [data-theme="squircle-pmp"] .sq-ken-burns {
+  [data-theme="squircle-pmp"] .sq-ken-burns,
+  [data-theme="squircle-pmp"] .sq-lcd-slide-ken-burns,
+  [data-theme="squircle-pmp"] .zune-art-zoom,
+  [data-theme="squircle-pmp"] .sq-ext-grab-zoom,
+  [data-theme="squircle-pmp"] .sq-swipe-hint-strip,
+  [data-theme="squircle-pmp"] .sq-swipe-chevron-left,
+  [data-theme="squircle-pmp"] .sq-swipe-chevron-right {
     animation: none !important;
-    transform: scale(1.05) !important;
+    transform: scale(1) !important;
   }
   [data-theme="squircle-pmp"] .sq-pane-slider,
   [data-theme="squircle-pmp"] .sq-pressable {
@@ -221,29 +438,112 @@
   }
 }
 
-/* Full-Stage Editorial Text-Mode Playlist Backdrop with Horizontal Left-Fade CSS Mask */
+/* Under-Video Scrollable Editorial Text-Mode Playlist with Top-Edge Fade Mask */
 [data-theme="squircle-pmp"] .sq-editorial-backdrop {
   scrollbar-width: none;
   -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
 }
 
 [data-theme="squircle-pmp"] .sq-editorial-backdrop::-webkit-scrollbar {
   display: none;
 }
 
-[data-theme="squircle-pmp"] .sq-editorial-mask-desktop {
+[data-theme="squircle-pmp"] .sq-under-video-mask {
   mask-image: linear-gradient(
-    to right,
-    transparent 0%,
-    rgba(0, 0, 0, 0.1) 18%,
-    rgba(0, 0, 0, 0.88) 36%,
-    #000000 46%
+    to bottom,
+    transparent 0px,
+    rgba(0, 0, 0, 0.4) 18px,
+    #000000 44px,
+    #000000 100%
   );
   -webkit-mask-image: linear-gradient(
-    to right,
-    transparent 0%,
-    rgba(0, 0, 0, 0.1) 18%,
-    rgba(0, 0, 0, 0.88) 36%,
-    #000000 46%
+    to bottom,
+    transparent 0px,
+    rgba(0, 0, 0, 0.4) 18px,
+    #000000 44px,
+    #000000 100%
   );
 }
+
+[data-theme="squircle-pmp"] .sq-lcd-scroll-list {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+[data-theme="squircle-pmp"] .sq-lcd-scroll-list::-webkit-scrollbar {
+  display: none;
+}
+
+[data-theme="squircle-pmp"] .sq-device-only-stage {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100vw;
+  height: 100dvh;
+  padding: 16px !important;
+  overflow: hidden;
+  transition: opacity 320ms cubic-bezier(0.22, 1, 0.36, 1), transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Mobile Vertical Deterministic Two-Row Grid & Zero-Collapse Zune Hardware Sizing */
+[data-theme="squircle-pmp"] .zune-mobile-portrait-stage {
+  width: 100vw;
+  height: 100dvh;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  row-gap: 12px;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 12px calc(env(safe-area-inset-bottom, 0px) + 10px);
+  box-sizing: border-box;
+}
+
+[data-theme="squircle-pmp"] .zune-mobile-video-screen {
+  position: relative;
+  width: 100%;
+  height: clamp(165px, 26dvh, 230px);
+  flex-shrink: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #0B0C0E;
+  z-index: 30;
+  transform: translateZ(0);
+  isolation: isolate;
+}
+
+[data-theme="squircle-pmp"] .zune-mobile-portrait-device {
+  position: relative;
+  z-index: 25;
+  flex-shrink: 0;
+  height: auto;
+  max-height: 100%;
+  width: min(54vw, calc(48dvh * 0.545), 235px);
+  max-width: 54vw;
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  visibility: visible !important;
+  opacity: 1 !important;
+  overflow: visible !important;
+  margin-left: auto;
+  align-self: center;
+  right: 2px;
+}
+
+[data-theme="squircle-pmp"] .sq-device-only-chassis {
+  height: min(84dvh, 700px, calc((100vw - 32px) / 0.545)) !important;
+  max-width: calc(100vw - 32px) !important;
+  width: auto !important;
+  aspect-ratio: 0.545 / 1 !important;
+  margin-left: 0 !important;
+  align-self: center !important;
+  transition:
+    background-color 280ms ease,
+    box-shadow 280ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+

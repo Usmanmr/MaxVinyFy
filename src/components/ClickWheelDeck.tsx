@@ -32,6 +32,8 @@ import {
   CLICK_WHEEL_GENERATION_ORDER,
   IPOD_NANO_7_COLORS,
   APPLE_AQUA_ACTIVE_BLUE_HEX,
+  IPOD_REAL_LIFE_ASPECT_RATIO,
+  IPOD_NANO_ASPECT_RATIO,
   normalizeClickWheelAngleDeltaDeg,
   accumulateClickWheelTickSteps,
   computeClickWheelListIndexStep,
@@ -73,7 +75,7 @@ import {
   type ClickWheelNowPlayingMode,
   type IpodScaleMode,
 } from '../utils/clickWheelLogic';
-import { Minus, Plus, FileText } from 'lucide-react';
+import { Smartphone } from 'lucide-react';
 import { retroAudio } from '../utils/retroAudioEngine';
 import { playbackClockStore, usePlaybackSecond } from '../utils/playbackStore';
 import { SyncedLyricsPanel } from './SyncedLyricsPanel';
@@ -83,6 +85,7 @@ import {
 } from './clickwheel/ClickWheelImacBackdrop';
 import { ClickWheelHifiDock } from './clickwheel/ClickWheelHifiDock';
 import { ClickWheelEarbuds } from './clickwheel/ClickWheelEarbuds';
+import { useDoubleTapHideArt } from '../hooks/useDoubleTapHideArt';
 import type { TurntableDeckProps } from './TurntableDeck';
 
 export interface ClickWheelDeckProps extends TurntableDeckProps {
@@ -238,6 +241,7 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
   repeatOne,
   shuffleEnabled,
   hideBoxArt = false,
+  onToggleHideBoxArt,
   viewportLayout,
   themePalette,
   onTogglePlay,
@@ -259,7 +263,10 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
   onSelectTrack,
   renderImacLibraryWindow,
   renderImacVideoWindow,
+  isDeviceOnlyMode = false,
+  onToggleDeviceOnlyMode,
 }) => {
+  const { doubleTapHideArtBind } = useDoubleTapHideArt(onToggleHideBoxArt);
   const isStandby = track.id === 'standby-empty' || track.durationSec <= 0;
   const activeLoopsEnabled = shouldRunActiveAnimationLoops(
     isPlaying,
@@ -287,6 +294,59 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
   const [nanoColor, setNanoColor] = useState<NanoColorwayId>(() => loadSavedNanoColor());
   const [openImacApp, setOpenImacApp] = useState<ImacOpenAppId>('none');
   const [ipodScaleMode, setIpodScaleMode] = useState<IpodScaleMode>('actual');
+  const [imacYoutubeCandidates, setImacYoutubeCandidates] = useState<string[]>([]);
+  const imacVideoCacheRef = useRef<Map<string, string[]>>(new Map());
+
+  useEffect(() => {
+    if (openImacApp !== 'video' || isStandby || !track.title) {
+      return;
+    }
+    const cached = imacVideoCacheRef.current.get(track.id);
+    if (cached) {
+      setImacYoutubeCandidates(cached);
+      return;
+    }
+
+    let cancelled = false;
+    const targetTrackId = track.id;
+    const debounceId = window.setTimeout(() => {
+      const params = new URLSearchParams({
+        title: track.title,
+        artist: track.artist || '',
+        trackId: targetTrackId,
+        videoId: track.youtubeVideoId || '',
+      });
+      fetch(`/api/youtube/search-grabs?${params.toString()}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then(
+          (
+            data: {
+              videoId?: string;
+              channels?: Array<{ videoId?: string }>;
+            } | null
+          ) => {
+            if (cancelled) return;
+            const collected: string[] = [];
+            if (data?.videoId) collected.push(data.videoId);
+            if (Array.isArray(data?.channels)) {
+              for (const ch of data.channels) {
+                if (ch?.videoId) collected.push(ch.videoId);
+              }
+            }
+            imacVideoCacheRef.current.set(targetTrackId, collected);
+            setImacYoutubeCandidates(collected);
+          }
+        )
+        .catch(() => {
+          // Safe fallback handled inside ClickWheelImacBackdrop candidate queue
+        });
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(debounceId);
+    };
+  }, [openImacApp, isStandby, track.id, track.title, track.artist, track.youtubeVideoId]);
 
   const generationSpec = useMemo(() => getClickWheelGenerationSpec(generation), [generation]);
   const nanoColorSpec = useMemo(() => getNanoColorSpec(nanoColor), [nanoColor]);
@@ -440,6 +500,76 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
     });
     triggerDockAnimation(true, true);
   }, [lowPowerMode, triggerDockAnimation]);
+
+  // Mobile Vertical horizontal swipe across iPod stage cycles generation cleanly (220ms directional slide)
+  const mobileSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [genSwipeShiftPx, setGenSwipeShiftPx] = useState<number>(0);
+  const genSwipeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (genSwipeTimerRef.current !== null) {
+        window.clearTimeout(genSwipeTimerRef.current);
+      }
+    };
+  }, []);
+
+  const stepGenerationBySwipe = useCallback(
+    (direction: 'next' | 'prev') => {
+      const curIdx = CLICK_WHEEL_GENERATION_ORDER.indexOf(generation);
+      const nextIdx =
+        direction === 'next'
+          ? (curIdx + 1) % CLICK_WHEEL_GENERATION_ORDER.length
+          : (curIdx - 1 + CLICK_WHEEL_GENERATION_ORDER.length) %
+            CLICK_WHEEL_GENERATION_ORDER.length;
+      const nextGen = CLICK_WHEEL_GENERATION_ORDER[nextIdx];
+      if (!nextGen || nextGen === generation) return;
+
+      if (!prefersReducedMotion && !lowPowerMode) {
+        setGenSwipeShiftPx(direction === 'next' ? 28 : -28);
+        if (genSwipeTimerRef.current !== null) {
+          window.clearTimeout(genSwipeTimerRef.current);
+        }
+        window.requestAnimationFrame(() => {
+          setGenSwipeShiftPx(0);
+        });
+        genSwipeTimerRef.current = window.setTimeout(() => {
+          setGenSwipeShiftPx(0);
+          genSwipeTimerRef.current = null;
+        }, 230);
+      }
+      handleSelectGeneration(nextGen);
+    },
+    [generation, prefersReducedMotion, lowPowerMode, handleSelectGeneration]
+  );
+
+  const handleMobileStagePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const target = e.target as Element | null;
+    if (target && (target.closest('#cw-wheel-ring') || target.closest('button'))) {
+      mobileSwipeStartRef.current = null;
+      return;
+    }
+    mobileSwipeStartRef.current = { x: e.clientX, y: e.clientY };
+  }, []);
+
+  const handleMobileStagePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const start = mobileSwipeStartRef.current;
+      mobileSwipeStartRef.current = null;
+      if (!start) return;
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+      if (Math.abs(dx) >= 42 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        e.stopPropagation();
+        stepGenerationBySwipe(dx < 0 ? 'next' : 'prev');
+      }
+    },
+    [stepGenerationBySwipe]
+  );
+
+  const handleMobileStagePointerCancel = useCallback(() => {
+    mobileSwipeStartRef.current = null;
+  }, []);
 
   const handleSelectFinish = useCallback(
     (nextFinish: ClickWheelGen3Finish) => {
@@ -696,9 +826,19 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
     [ipodScaleMode, stageDims.width, stageDims.height, isMobilePortrait, generation, hideBoxArt]
   );
 
-  const activeChassisW = scaledIpodDims.widthPx;
-  const activeChassisH = scaledIpodDims.heightPx;
-  const activeScreenW = scaledIpodDims.screenWidthPx;
+  const deviceOnlyDims = useMemo(() => {
+    const ratio = isNano ? IPOD_NANO_ASPECT_RATIO : IPOD_REAL_LIFE_ASPECT_RATIO;
+    const maxH = Math.min(Math.round(stageDims.height * 0.86), 720);
+    const maxW = Math.max(240, stageDims.width - 32);
+    const heightPx = Math.max(260, Math.min(maxH, Math.floor(maxW / ratio)));
+    const widthPx = Math.round(heightPx * ratio);
+    const screenWidthPx = Math.floor((widthPx * (isNano ? 0.90 : 0.875)) / 2) * 2;
+    return { widthPx, heightPx, screenWidthPx };
+  }, [isNano, stageDims.height, stageDims.width]);
+
+  const activeChassisW = isDeviceOnlyMode ? deviceOnlyDims.widthPx : scaledIpodDims.widthPx;
+  const activeChassisH = isDeviceOnlyMode ? deviceOnlyDims.heightPx : scaledIpodDims.heightPx;
+  const activeScreenW = isDeviceOnlyMode ? deviceOnlyDims.screenWidthPx : scaledIpodDims.screenWidthPx;
 
   const ambientCardSlots = useMemo(
     () => buildAmbientFloatingCardSlots(tracks, track.id),
@@ -762,6 +902,7 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
       !lowPowerMode &&
       !isDocumentHidden &&
       !hideBoxArt &&
+      !isDeviceOnlyMode &&
       !isMobilePortrait;
 
     if (!stageEl || !physicsActive) {
@@ -801,7 +942,7 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
       stageEl.removeEventListener('mouseleave', handleMouseLeave);
       window.cancelAnimationFrame(rafId);
     };
-  }, [prefersReducedMotion, lowPowerMode, isDocumentHidden, hideBoxArt, isMobilePortrait]);
+  }, [prefersReducedMotion, lowPowerMode, isDocumentHidden, hideBoxArt, isDeviceOnlyMode, isMobilePortrait]);
 
   // Draggable active track card (Slot 0)
   const [holderOffset, setHolderOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -1520,13 +1661,23 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
     <div
       key={`cw-dock-drop-${dockAnimKey}`}
       data-unit-swap-phase={unitSwapPhase}
+      onClick={(e) => {
+        if (isDeviceOnlyMode) {
+          e.stopPropagation();
+        }
+      }}
       style={{
         zIndex: 25,
         transform:
           unitSwapPhase !== 'docked'
-            ? `translate3d(0, ${unitSwapPose.translateYPx}px, 0) scale(${unitSwapPose.scale})`
-            : undefined,
+            ? `translate3d(${genSwipeShiftPx}px, ${unitSwapPose.translateYPx}px, 0) scale(${unitSwapPose.scale})`
+            : genSwipeShiftPx !== 0
+              ? `translate3d(${genSwipeShiftPx}px, 0, 0)`
+              : undefined,
         opacity: unitSwapPose.opacity,
+        transition: prefersReducedMotion
+          ? 'none'
+          : 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
       }}
       className={`relative flex items-center justify-center shrink-0 ${
         dockDropping ? 'cw-docked-dropping' : 'cw-docked-lean'
@@ -1553,7 +1704,7 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
           borderColor: isNano ? nanoColorSpec.borderHex : undefined,
           transition: prefersReducedMotion
             ? 'none'
-            : 'width 380ms cubic-bezier(0.22, 1, 0.36, 1), height 380ms cubic-bezier(0.22, 1, 0.36, 1)',
+            : 'width 320ms cubic-bezier(0.22, 1, 0.36, 1), height 320ms cubic-bezier(0.22, 1, 0.36, 1)',
           boxShadow: isNano
             ? `0 20px 40px rgba(0, 0, 0, 0.22), 0 0 0 1.5px ${nanoColorSpec.borderHex}, inset 0 1.5px 0 rgba(255,255,255,0.55)`
             : '0 20px 40px rgba(0, 0, 0, 0.18), 0 0 0 2px #D5DAE2, 0 0 0 3px #8B929D, inset 0 1.5px 0 #FFFFFF',
@@ -1607,7 +1758,7 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
             borderRadius: isColorSplit ? 'clamp(4px, 1.5cqw, 7px)' : '3px',
             transition: prefersReducedMotion
               ? 'none'
-              : 'width 380ms cubic-bezier(0.22, 1, 0.36, 1)',
+              : 'width 320ms cubic-bezier(0.22, 1, 0.36, 1)',
           }}
           className={`relative z-20 flex flex-col overflow-hidden ${
             isColorSplit
@@ -3005,288 +3156,231 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
       <div
         id="cw-player-stage"
         ref={stageRef}
+        data-device-only={isDeviceOnlyMode ? 'true' : 'false'}
+        onClick={() => {
+          if (isDeviceOnlyMode && onToggleDeviceOnlyMode) {
+            onToggleDeviceOnlyMode();
+          }
+        }}
         className="relative z-10 w-full h-full flex-1 min-h-0 overflow-hidden"
       >
-        {isMobilePortrait ? (
+        {isDeviceOnlyMode ? (
           /* =================================================================
-             MOBILE VERTICAL PORTRAIT (`max-width: 767px`) — PART 2.3 OVERHAUL:
-             1. Enlarged 2011 Apple iMac (~94% width) cleanly cleared below Global Header
-             2. Centered iPod locked strictly to authentic proportions (`0.608 / 1` or Nano `0.43 / 1`)
-             3. Horizontal swipeable bottom control slider (`#cw-mobile-control-slider`) — ZERO speaker dock box
+             UNIVERSAL DEVICE-ONLY PURE FOCUS MODE (Desktop, Landscape & Mobile)
+             ================================================================= */
+          <div
+            id="cw-device-only-stage"
+            data-testid="cw-device-only-stage"
+            className="cw-device-only-stage"
+          >
+            {renderIpodHardwareUnit()}
+          </div>
+        ) : isMobilePortrait ? (
+          /* =================================================================
+             MOBILE VERTICAL PORTRAIT (`max-width: 767px AND orientation: portrait`)
+             1. Top: Enlarged 94%-Width 2011 Apple iMac Display
+             2. Middle: Horizontally Centered Aspect-Locked iPod (`0.608:1` / `0.43:1`) + Horizontal Swipe Switching
+             3. Bottom: Flush Single-Row Generation Pills + Finish/Nano Color Swatches
              ================================================================= */
           <div
             id="cw-mobile-stacked-stage"
-            className="relative w-full h-full flex flex-col items-center justify-between pt-[58px] pb-2 px-2.5 gap-1.5 overflow-hidden"
+            className="relative w-full h-full flex flex-col items-center justify-between pt-[calc(env(safe-area-inset-top,0px)+8px)] px-2.5 gap-1.5 overflow-hidden"
           >
             {/* 1. Top Section: Enlarged 94%-Width 2011 Apple iMac Display */}
             <ClickWheelImacBackdrop
               metrics={mobileLayout}
               isMobilePortrait={true}
               isPlaying={isPlaying}
+              isDocumentHidden={isDocumentHidden}
               trackTitle={isStandby ? 'Standby' : track.title}
               trackArtist={isStandby ? 'Spotify' : track.artist}
+              trackArtworkUrl={track.artworkUrl}
               youtubeVideoId={track.youtubeVideoId}
+              youtubeCandidateIds={imacYoutubeCandidates}
+              tracks={tracks}
+              activeTrackId={track.id}
+              playlistName={playlistName}
+              onSelectTrack={onSelectTrack}
               openApp={openImacApp}
               onToggleApp={setOpenImacApp}
-              onOpenSettingsPane={() => navigateToPane('settings')}
+              onOpenSettingsPane={() => setOpenImacApp((cur) => (cur === 'prefs' ? 'none' : 'prefs'))}
               onCycleGeneration={handleCycleGeneration}
               renderLibraryWindowContent={renderImacLibraryWindow}
               renderVideoWindowContent={renderImacVideoWindow}
+              volume={volume}
+              onChangeVolume={onChangeVolume}
+              shuffleEnabled={shuffleEnabled}
+              onToggleShuffle={onToggleShuffle}
+              repeatOne={repeatOne}
+              onToggleRepeatOne={onToggleRepeatOne}
+              lowPowerMode={lowPowerMode}
+              onToggleLowPowerMode={onToggleLowPowerMode}
+              nightMode={nightMode}
+              onToggleNightMode={onToggleNightMode}
+              hideBoxArt={hideBoxArt}
+              onToggleHideBoxArt={onToggleHideBoxArt}
+              onToggleDeviceOnlyMode={onToggleDeviceOnlyMode}
             />
 
-            {/* 2. Middle Section: True-to-Life Proportioned iPod Centered Horizontally */}
-            <div className="w-full flex-1 min-h-0 flex items-center justify-center">
-              {renderIpodHardwareUnit()}
+            {/* 2. Centered Aspect-Locked iPod Hardware Unit (Swipe Left/Right to Cycle Generations) */}
+            <div
+              id="cw-mobile-lower-stage"
+              data-no-drawer-swipe="true"
+              onPointerDown={handleMobileStagePointerDown}
+              onPointerUp={handleMobileStagePointerUp}
+              onPointerCancel={handleMobileStagePointerCancel}
+              style={{ touchAction: 'pan-y' }}
+              className="relative w-full flex-1 min-h-0 flex items-center justify-center overflow-hidden"
+            >
+              {onToggleDeviceOnlyMode && (
+                <button
+                  id="cw-device-only-btn"
+                  type="button"
+                  aria-label="Enter Device-Only Pure Focus Mode"
+                  title="Device-Only Mode"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleDeviceOnlyMode();
+                  }}
+                  className="cw-dock-recessed-btn absolute top-1 right-1 z-30 h-[24px] px-2 rounded-full inline-flex items-center gap-1 text-[9px] font-semibold text-[#6E6E73] hover:text-[#1D1D1F] cursor-pointer"
+                >
+                  <Smartphone className="w-2.5 h-2.5 shrink-0" />
+                  <span>Focus</span>
+                </button>
+              )}
+              <div className="mx-auto flex items-center justify-center">
+                {renderIpodHardwareUnit()}
+              </div>
             </div>
 
-            {/* 3. Bottom Section: Horizontal Swipeable Control Slider (Zero Speaker Dock Box) */}
+            {/* 3. Flush Single-Row Bottom Switcher (Generation Pills Left + Color Swatches Right) */}
             <div
-              id="cw-mobile-control-slider"
-              data-testid="cw-mobile-control-slider"
+              id="cw-mobile-bottom-controls"
+              data-testid="cw-mobile-bottom-controls"
               data-no-drawer-swipe="true"
-              aria-label="iPod Mobile Swipeable Controls"
+              aria-label="iPod Mobile Switcher & Colorway Controls"
               style={{
-                height: `${mobileLayout.controlSliderHeightPx}px`,
-                WebkitOverflowScrolling: 'touch',
-                touchAction: 'pan-x',
+                padding: '8px 12px calc(env(safe-area-inset-bottom, 0px) + 6px)',
               }}
-              className="w-full flex items-center gap-[10px] overflow-x-auto snap-x snap-mandatory px-2 py-1 shrink-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              className="cw-mobile-bottom-controls w-full max-w-[430px] shrink-0 bg-white/88 border border-[#C8CDD5] rounded-[14px] shadow-[0_3px_10px_rgba(15,23,42,0.08)] flex items-center justify-between gap-1.5 flex-nowrap whitespace-nowrap overflow-x-auto"
             >
-              {/* Tactile Model Pills (1st Gen, 4th Gen, Classic, Nano) */}
-              {CLICK_WHEEL_GENERATION_ORDER.map((genId) => {
-                const spec = CLICK_WHEEL_GENERATIONS[genId];
-                const active = generation === genId;
-                return (
-                  <button
-                    key={genId}
-                    id={`btn-cw-gen-${genId}`}
-                    type="button"
-                    data-cw-gen-btn={genId}
-                    data-active={active ? 'true' : 'false'}
-                    aria-pressed={active}
-                    onClick={() => handleSelectGeneration(genId)}
-                    className="cw-dock-recessed-btn snap-center shrink-0 h-[44px] px-3 rounded-[14px] inline-flex items-center gap-1.5 text-[10.5px] font-semibold text-[#1D1D1F] bg-white/95 border border-[#C8CDD5] shadow-[0_3px_10px_rgba(15,23,42,0.08)] cursor-pointer whitespace-nowrap"
-                  >
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        backgroundColor: active ? APPLE_AQUA_ACTIVE_BLUE_HEX : '#CBD5E1',
-                      }}
-                      className="w-[6px] h-[6px] rounded-full shrink-0"
-                    />
-                    <span>{spec.dockButtonLabel}</span>
-                  </button>
-                );
-              })}
-
-              {/* Snap Card: Ordered Finishes [White, Silver, Grey] OR Exclusive 7-Color Nano Palette */}
-              <div
-                id="cw-mobile-slider-finishes"
-                className="snap-center shrink-0 h-[48px] px-2.5 rounded-[14px] bg-white/95 border border-[#C8CDD5] shadow-[0_3px_10px_rgba(15,23,42,0.08)] flex items-center gap-1.5"
-              >
-                {isNano ? (
-                  <div
-                    id="cw-nano-color-selector"
-                    data-testid="cw-nano-color-selector"
-                    role="group"
-                    aria-label="iPod Nano 7-Color Palette"
-                    className="flex items-center gap-2"
-                  >
-                    <span className="text-[8.5px] font-bold uppercase tracking-wider text-[#6E6E73] mr-0.5">
-                      Nano
-                    </span>
-                    {IPOD_NANO_7_COLORS.map((swatch) => {
-                      const active = nanoColor === swatch.id;
-                      return (
-                        <button
-                          key={swatch.id}
-                          id={`btn-cw-nano-color-${swatch.id}`}
-                          data-nano-color={swatch.id}
-                          data-active={active ? 'true' : 'false'}
-                          type="button"
-                          aria-label={`Nano ${swatch.label}`}
-                          title={swatch.label}
-                          aria-pressed={active}
-                          onClick={() => handleSelectNanoColor(swatch.id)}
-                          style={{
-                            backgroundColor: swatch.swatchHex,
-                            boxShadow: active
-                              ? `0 0 0 2px #FFFFFF, 0 0 0 3.5px ${APPLE_AQUA_ACTIVE_BLUE_HEX}`
-                              : 'inset 0 1px 1px rgba(255,255,255,0.45), 0 1px 2px rgba(0,0,0,0.2)',
-                          }}
-                          className="w-[24px] h-[24px] rounded-full border border-black/25 cursor-pointer shrink-0"
-                        />
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div
-                    id="cw-dock-finish-ordered-row"
-                    className="flex items-center gap-1.5"
-                  >
-                    <span className="text-[8.5px] font-bold uppercase tracking-wider text-[#6E6E73] mr-0.5">
-                      Finish
-                    </span>
+              {/* Left Side: 4 Generation Pills */}
+              <div className="flex items-center gap-1 flex-nowrap shrink-0">
+                {CLICK_WHEEL_GENERATION_ORDER.map((genId) => {
+                  const spec = CLICK_WHEEL_GENERATIONS[genId];
+                  const active = generation === genId;
+                  return (
                     <button
-                      id="btn-cw-finish-official-white"
+                      key={genId}
+                      id={`btn-cw-gen-${genId}`}
                       type="button"
-                      data-active={
-                        generationSpec.supportsFinishToggle && gen3Finish === 'official-white'
-                          ? 'true'
-                          : 'false'
-                      }
-                      onClick={() => handleSelectFinish('official-white')}
-                      className="cw-dock-recessed-btn h-[34px] px-2.5 rounded-full inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#1D1D1F] cursor-pointer whitespace-nowrap"
+                      data-cw-gen-btn={genId}
+                      data-active={active ? 'true' : 'false'}
+                      aria-pressed={active}
+                      onClick={() => handleSelectGeneration(genId)}
+                      className="cw-dock-recessed-btn h-[23px] px-1.5 rounded-full flex items-center gap-1 text-[8px] font-semibold text-[#1D1D1F] shrink-0 cursor-pointer whitespace-nowrap"
                     >
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#FFFFFF] border border-[#CBD5E1] shrink-0" />
-                      <span>White</span>
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          backgroundColor: active ? APPLE_AQUA_ACTIVE_BLUE_HEX : '#CBD5E1',
+                        }}
+                        className="w-[4.5px] h-[4.5px] rounded-full shrink-0"
+                      />
+                      <span>{spec.dockButtonLabel}</span>
                     </button>
-                    <button
-                      id="btn-cw-finish-white"
-                      type="button"
-                      data-active={
-                        generationSpec.supportsFinishToggle && gen3Finish === 'white'
-                          ? 'true'
-                          : 'false'
-                      }
-                      onClick={() => handleSelectFinish('white')}
-                      className="cw-dock-recessed-btn h-[34px] px-2.5 rounded-full inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#1D1D1F] cursor-pointer whitespace-nowrap"
-                    >
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#E5E7EB] border border-[#9CA3AF] shrink-0" />
-                      <span>Silver</span>
-                    </button>
-                    <button
-                      id="btn-cw-finish-black"
-                      type="button"
-                      data-active={
-                        generationSpec.supportsFinishToggle && gen3Finish === 'black'
-                          ? 'true'
-                          : 'false'
-                      }
-                      onClick={() => handleSelectFinish('black')}
-                      className="cw-dock-recessed-btn h-[34px] px-2.5 rounded-full inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#1D1D1F] cursor-pointer whitespace-nowrap"
-                    >
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#33363E] border border-black/50 shrink-0" />
-                      <span>Grey</span>
-                    </button>
-                  </div>
-                )}
+                  );
+                })}
               </div>
 
-              {/* Snap Card: Volume Rocker & Screen Panes */}
-              <div
-                id="cw-mobile-slider-utilities"
-                className="snap-center shrink-0 h-[48px] px-2.5 rounded-[14px] bg-white/95 border border-[#C8CDD5] shadow-[0_3px_10px_rgba(15,23,42,0.08)] flex items-center gap-1.5"
-              >
-                <div className="cw-vol-rocker-bar h-[32px] px-1 rounded-full flex items-center gap-1">
-                  <button
-                    id="btn-cw-vol-down"
-                    type="button"
-                    aria-label="Decrease Volume"
-                    onClick={() => stepDockVolume(-0.08)}
-                    className="w-[24px] h-[24px] rounded-full flex items-center justify-center text-[#1D1D1F] hover:bg-black/[0.06] cursor-pointer"
-                  >
-                    <Minus className="w-3 h-3" />
-                  </button>
-                  <span
-                    id="cw-dock-volume-readout"
-                    className="font-mono text-[9.5px] font-bold text-[#1D1D1F] tabular-nums px-0.5"
-                  >
-                    {Math.round(volume * 100)}%
-                  </span>
-                  <button
-                    id="btn-cw-vol-up"
-                    type="button"
-                    aria-label="Increase Volume"
-                    onClick={() => stepDockVolume(0.08)}
-                    className="w-[24px] h-[24px] rounded-full flex items-center justify-center text-[#1D1D1F] hover:bg-black/[0.06] cursor-pointer"
-                  >
-                    <Plus className="w-3 h-3" />
-                  </button>
-                </div>
-                <button
-                  id="btn-cw-tab-lyrics"
-                  type="button"
-                  data-active={activePane === 'lyrics' ? 'true' : 'false'}
-                  onClick={() => handleDockUtilitySelect('lyrics')}
-                  className="cw-dock-recessed-btn h-[34px] px-2.5 rounded-full inline-flex items-center gap-1 text-[10px] font-semibold text-[#1D1D1F] cursor-pointer whitespace-nowrap"
-                >
-                  <FileText className="w-3 h-3" />
-                  <span>Lyrics</span>
-                </button>
-                <button
-                  id="btn-cw-tab-settings"
-                  type="button"
-                  data-active={activePane === 'settings' ? 'true' : 'false'}
-                  onClick={() => handleDockUtilitySelect('settings')}
-                  className="cw-dock-recessed-btn h-[34px] px-2.5 rounded-full inline-flex items-center gap-1 text-[10px] font-semibold text-[#1D1D1F] cursor-pointer whitespace-nowrap"
-                >
-                  <SlidersHorizontal className="w-3 h-3" />
-                  <span>Settings</span>
-                </button>
-              </div>
-
-              {/* Snap Card: Quick Half-Size iPod-Shaped Song Cards */}
-              {!hideBoxArt && (
+              {/* Right Side (Same Row): Finish / 7 Nano Colorway Swatches */}
+              {isNano ? (
                 <div
-                  id="cw-mobile-playlist-strip"
-                  aria-label="Mobile Quick Track iPod Cards"
-                  className="snap-center shrink-0 h-[48px] px-2 rounded-[14px] bg-white/95 border border-[#C8CDD5] shadow-[0_3px_10px_rgba(15,23,42,0.08)] flex items-center gap-2"
+                  id="cw-nano-color-selector"
+                  data-testid="cw-nano-color-selector"
+                  role="group"
+                  aria-label="iPod Nano 7-Color Palette"
+                  className="flex items-center gap-1 flex-nowrap shrink-0"
                 >
-                  {ambientCardSlots.slice(0, 5).map((slot) => {
-                    const slotTrack = slot.track;
-                    const isHolderSlot = slot.slotIndex === 0;
-                    const slotArt = slotTrack
-                      ? resolveActiveArtworkState(slotTrack, 0).activeUrl
-                      : '';
-                    const slotTitle = slotTrack
-                      ? slotTrack.title
-                      : isStandby
-                        ? 'No Playlist'
-                        : track.title;
-
+                  {IPOD_NANO_7_COLORS.map((swatch) => {
+                    const active = nanoColor === swatch.id;
                     return (
                       <button
-                        key={`mob-card-${slot.slotIndex}`}
-                        id={isHolderSlot ? 'album-art-holder-box' : `cw-ambient-card-${slot.slotIndex}`}
-                        data-card-orientation="vertical-portrait"
-                        data-card-shape="ipod-silhouette"
-                        data-card-scale="0.5"
+                        key={swatch.id}
+                        id={`btn-cw-nano-color-${swatch.id}`}
+                        data-nano-color={swatch.id}
+                        data-active={active ? 'true' : 'false'}
                         type="button"
-                        onClick={() => {
-                          if (slotTrack && onSelectTrack) {
-                            triggerButtonHaptic(lowPowerMode);
-                            retroAudio.triggerClickWheelTick(true, generationSpec.soundProfile);
-                            onSelectTrack(slotTrack.id);
-                          } else if (isStandby) {
-                            onOpenSpotifyModal();
-                          }
-                        }}
+                        aria-label={`Nano ${swatch.label}`}
+                        title={swatch.label}
+                        aria-pressed={active}
+                        onClick={() => handleSelectNanoColor(swatch.id)}
                         style={{
-                          aspectRatio: VERTICAL_PLAYLIST_CARD_SPEC.aspectRatioCss,
-                          borderRadius: '6px',
+                          backgroundColor: swatch.swatchHex,
+                          boxShadow: active
+                            ? `0 0 0 1px #FFFFFF, 0 0 0 2px ${APPLE_AQUA_ACTIVE_BLUE_HEX}`
+                            : 'inset 0 1px 1px rgba(255,255,255,0.45), 0 1px 2px rgba(0,0,0,0.2)',
                         }}
-                        className="cw-solid-mini-ipod-card h-[40px] w-[25px] p-[2px] flex flex-col justify-between cursor-pointer shrink-0 overflow-hidden bg-white"
-                      >
-                        <div className="w-full h-[22px] rounded-[4px] overflow-hidden bg-[#ECEEF2] border border-[#D4D9E2]/80 shrink-0 flex items-center justify-center">
-                          {slotArt ? (
-                            <img
-                              src={slotArt}
-                              alt={slotTitle}
-                              draggable={false}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <Disc3 className="w-2.5 h-2.5 text-[#8A8F98]" />
-                          )}
-                        </div>
-                        <span className="w-full font-sans text-[5px] font-bold text-[#1D1D1F] truncate leading-none text-left px-[1px] pb-[1px]">
-                          {slotTitle}
-                        </span>
-                      </button>
+                        className="w-[13px] h-[13px] rounded-full border border-black/25 cursor-pointer shrink-0"
+                      />
                     );
                   })}
                 </div>
+              ) : generationSpec.supportsFinishToggle ? (
+                <div
+                  id="cw-dock-finish-ordered-row"
+                  className="flex items-center gap-1 flex-nowrap shrink-0"
+                >
+                  <button
+                    id="btn-cw-finish-official-white"
+                    type="button"
+                    aria-label="Classic White finish"
+                    title="White"
+                    data-active={gen3Finish === 'official-white' ? 'true' : 'false'}
+                    onClick={() => handleSelectFinish('official-white')}
+                    style={{
+                      boxShadow:
+                        gen3Finish === 'official-white'
+                          ? `0 0 0 1px #FFFFFF, 0 0 0 2px ${APPLE_AQUA_ACTIVE_BLUE_HEX}`
+                          : undefined,
+                    }}
+                    className="w-[15px] h-[15px] rounded-full bg-[#FFFFFF] border border-[#CBD5E1] cursor-pointer shrink-0"
+                  />
+                  <button
+                    id="btn-cw-finish-white"
+                    type="button"
+                    aria-label="Classic Silver finish"
+                    title="Silver"
+                    data-active={gen3Finish === 'white' ? 'true' : 'false'}
+                    onClick={() => handleSelectFinish('white')}
+                    style={{
+                      boxShadow:
+                        gen3Finish === 'white'
+                          ? `0 0 0 1px #FFFFFF, 0 0 0 2px ${APPLE_AQUA_ACTIVE_BLUE_HEX}`
+                          : undefined,
+                    }}
+                    className="w-[15px] h-[15px] rounded-full bg-[#E5E7EB] border border-[#9CA3AF] cursor-pointer shrink-0"
+                  />
+                  <button
+                    id="btn-cw-finish-black"
+                    type="button"
+                    aria-label="Classic Dark Grey finish"
+                    title="Dark Grey"
+                    data-active={gen3Finish === 'black' ? 'true' : 'false'}
+                    onClick={() => handleSelectFinish('black')}
+                    style={{
+                      boxShadow:
+                        gen3Finish === 'black'
+                          ? `0 0 0 1px #FFFFFF, 0 0 0 2px ${APPLE_AQUA_ACTIVE_BLUE_HEX}`
+                          : undefined,
+                    }}
+                    className="w-[15px] h-[15px] rounded-full bg-[#33363E] border border-black/50 cursor-pointer shrink-0"
+                  />
+                </div>
+              ) : (
+                <span className="text-[8px] font-semibold text-[#6E6E73] px-1 shrink-0 whitespace-nowrap">
+                  {generationSpec.dockButtonLabel}
+                </span>
               )}
             </div>
           </div>
@@ -3300,6 +3394,21 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
             id="cw-desktop-asymmetric-stage"
             className="relative w-full h-full flex items-stretch justify-between overflow-hidden"
           >
+            {/* Optional Minimal Monochrome Focus Toggle Button (Hidden when Device-Only is Active) */}
+            {onToggleDeviceOnlyMode && (
+              <button
+                id="cw-device-only-btn"
+                type="button"
+                aria-label="Enter Device-Only Pure Focus Mode"
+                title="Device-Only Mode"
+                onClick={onToggleDeviceOnlyMode}
+                className="cw-dock-recessed-btn absolute top-3 right-3 z-40 px-2.5 py-1 rounded-full inline-flex items-center gap-1 text-[10px] font-semibold text-[#6E6E73] hover:text-[#1D1D1F] cursor-pointer"
+              >
+                <Smartphone className="w-3 h-3" />
+                <span>Device Only</span>
+              </button>
+            )}
+
             {/* LEFT STAGE (`width: ~65%` of viewport) */}
             <div
               id="cw-left-stage-column"
@@ -3314,15 +3423,35 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
                 metrics={desktopLayout}
                 isMobilePortrait={false}
                 isPlaying={isPlaying}
+                isDocumentHidden={isDocumentHidden}
                 trackTitle={isStandby ? 'Standby' : track.title}
                 trackArtist={isStandby ? 'Spotify' : track.artist}
+                trackArtworkUrl={track.artworkUrl}
                 youtubeVideoId={track.youtubeVideoId}
+                youtubeCandidateIds={imacYoutubeCandidates}
+                tracks={tracks}
+                activeTrackId={track.id}
+                playlistName={playlistName}
+                onSelectTrack={onSelectTrack}
                 openApp={openImacApp}
                 onToggleApp={setOpenImacApp}
-                onOpenSettingsPane={() => navigateToPane('settings')}
+                onOpenSettingsPane={() => setOpenImacApp((cur) => (cur === 'prefs' ? 'none' : 'prefs'))}
                 onCycleGeneration={handleCycleGeneration}
                 renderLibraryWindowContent={renderImacLibraryWindow}
                 renderVideoWindowContent={renderImacVideoWindow}
+                volume={volume}
+                onChangeVolume={onChangeVolume}
+                shuffleEnabled={shuffleEnabled}
+                onToggleShuffle={onToggleShuffle}
+                repeatOne={repeatOne}
+                onToggleRepeatOne={onToggleRepeatOne}
+                lowPowerMode={lowPowerMode}
+                onToggleLowPowerMode={onToggleLowPowerMode}
+                nightMode={nightMode}
+                onToggleNightMode={onToggleNightMode}
+                hideBoxArt={hideBoxArt}
+                onToggleHideBoxArt={onToggleHideBoxArt}
+                onToggleDeviceOnlyMode={onToggleDeviceOnlyMode}
               />
 
               {/* Apple iPod Hi-Fi Speaker Dock Directly Below iMac + Wired EarPods */}
@@ -3373,7 +3502,7 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
                 perspective: '1200px',
                 transformStyle: 'preserve-3d',
               }}
-              className="relative z-20 h-full pt-[46px] pb-3 pr-4 pl-1 flex items-center justify-center shrink-0 overflow-visible"
+              className="relative z-20 h-full pt-[20px] pb-3 pr-4 pl-1 flex items-center justify-center shrink-0 overflow-visible"
             >
               {/* Active iPod Hardware Unit Centered Vertically & Horizontally (Strictly Uncovered at z-30) */}
               <div
@@ -3391,9 +3520,12 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
                 aria-hidden={hideBoxArt ? 'true' : undefined}
                 style={{
                   opacity: hideBoxArt ? 0 : 1,
+                  transform: `scale(${hideBoxArt ? 0.94 : 1})`,
                   perspective: '1200px',
                   transformStyle: 'preserve-3d',
-                  transition: prefersReducedMotion ? 'none' : 'opacity 240ms ease',
+                  transition: prefersReducedMotion
+                    ? 'none'
+                    : 'opacity 220ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
                 }}
                 className="pointer-events-none absolute inset-0 flex items-center justify-center"
               >
@@ -3455,15 +3587,15 @@ export const ClickWheelDeck: React.FC<ClickWheelDeckProps> = ({
                       }
                       title={
                         isHolderSlot
-                          ? 'Drag playlist card (double-click to reset)'
-                          : `Play ${slotTitle} — ${slotArtist}`
+                          ? 'Drag playlist card (double-click to hide artwork)'
+                          : `Play ${slotTitle} — ${slotArtist} (double-click to hide artwork)`
                       }
                       onPointerDown={isHolderSlot ? handleHolderPointerDown : undefined}
                       onPointerMove={isHolderSlot ? handleHolderPointerMove : undefined}
                       onPointerUp={isHolderSlot ? handleHolderPointerUp : undefined}
-                      onDoubleClick={
-                        isHolderSlot ? () => setHolderOffset({ x: 0, y: 0 }) : undefined
-                      }
+                      onPointerDownCapture={doubleTapHideArtBind.onPointerDownCapture}
+                      onPointerUpCapture={doubleTapHideArtBind.onPointerUpCapture}
+                      onDoubleClick={doubleTapHideArtBind.onDoubleClick}
                       onClick={
                         !isHolderSlot && slotTrack && onSelectTrack
                           ? () => {

@@ -46,6 +46,7 @@ import { useCassetteSpinePalette } from '../utils/cassetteSpineColor';
 import { retroAudio } from '../utils/retroAudioEngine';
 import { usePlaybackSecond } from '../utils/playbackStore';
 import { SyncedLyricsPanel } from './SyncedLyricsPanel';
+import { useDoubleTapHideArt } from '../hooks/useDoubleTapHideArt';
 import type { TurntableDeckProps } from './TurntableDeck';
 
 /**
@@ -304,6 +305,51 @@ const MirroredDualRoundUpperSpeakers = React.memo<{
           </div>
         );
       })}
+    </div>
+  );
+});
+
+/**
+ * Symmetrical Single Round Upper Auxiliary Speaker for Mobile Portrait Band 2
+ * Flanks the left and right of the Central Cassette Loader horizontally without overlapping the +10px cassette frame.
+ */
+const MobilePortraitSingleAuxSpeaker = React.memo<{
+  side: 'left' | 'right';
+  sizePx?: number;
+  isAnimating: boolean;
+  dustCapScale: number;
+}>(({ side, sizePx = 38, isAnimating, dustCapScale }) => {
+  const domePx = Math.max(8, Math.round(sizePx * 0.36));
+  return (
+    <div
+      id={`cas-mobile-band2-aux-${side}`}
+      data-testid={`cas-mobile-band2-aux-${side}`}
+      aria-label={`${side === 'left' ? 'Left' : 'Right'} Upper Auxiliary Tweeter`}
+      style={{
+        width: `${sizePx}px`,
+        height: `${sizePx}px`,
+        borderRadius: '50%',
+      }}
+      className="cas-aux-round-bezel relative rounded-full p-[3px] flex items-center justify-center shrink-0"
+    >
+      <div className="cas-speaker-gasket relative w-full h-full rounded-full p-[1.5px] flex items-center justify-center overflow-hidden">
+        <div className="cas-speaker-grille relative w-full h-full rounded-full flex items-center justify-center overflow-hidden">
+          <div className="w-[82%] h-[82%] rounded-full border border-white/15 bg-[radial-gradient(circle_at_center,#26292D_0%,#16181B_68%,#0B0C0E_100%)] flex items-center justify-center">
+            <div
+              data-tweeter-dome="conical-sunburst"
+              style={{
+                width: `${domePx}px`,
+                height: `${domePx}px`,
+                transform: `scale(${isAnimating ? dustCapScale.toFixed(3) : '1'})`,
+                transition: isAnimating ? 'transform 65ms ease-out' : 'transform 150ms ease-out',
+              }}
+              className="cas-tweeter-phase-dome rounded-full flex items-center justify-center shrink-0"
+            >
+              <span className="w-[32%] h-[32%] rounded-full bg-white/85 blur-[0.2px]" />
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 });
@@ -1134,9 +1180,9 @@ const BoomboxSpeakerGrille = React.memo<{
       data-speaker-mounting-panel={side}
       data-corner-anchor={side === 'left' ? 'bottom-left' : 'bottom-right'}
       style={{ paddingBottom: `${bottomPaddingPx}px` }}
-      className={`relative w-full h-full flex flex-col justify-end ${
-        side === 'left' ? 'items-start' : 'items-end'
-      } gap-1.5 shrink-0`}
+      className={`relative w-full ${
+        isMobilePortrait ? 'h-auto justify-center' : 'h-full justify-end'
+      } flex flex-col ${side === 'left' ? 'items-start' : 'items-end'} gap-1.5 shrink-0`}
     >
       {/* Mirrored Dual Round Upper Auxiliary Speakers Mounted Directly ABOVE Lowered Main Woofer */}
       {showUpperAuxSpeakers && (
@@ -1272,6 +1318,7 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
     onToggleRepeatOne,
     onToggleShuffle,
     onScratch,
+    onToggleHideBoxArt,
     parentPlaylistCoverUrl,
     onResolvedPerTrackArtwork,
   }) => {
@@ -1279,6 +1326,7 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
     const isMobilePortrait = viewportLayout === 'mobile-portrait';
     const isCompactLandscape = viewportLayout === 'mobile-landscape';
     const currentSecond = usePlaybackSecond();
+    const doubleTapHideArtBind = useDoubleTapHideArt(onToggleHideBoxArt);
 
     // Artwork resolution
     const [artworkFailedCount, setArtworkFailedCount] = useState<number>(0);
@@ -2114,7 +2162,9 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
     const renderCentralCassetteBayAssembly = () => (
       <div
         id="cas-central-cassette-assembly"
-        className="relative z-20 w-full flex flex-col items-center justify-center shrink-0"
+        className={`relative z-20 ${
+          isMobilePortrait ? 'w-auto' : 'w-full'
+        } flex flex-col items-center justify-center shrink-0`}
       >
         {/* Protruding Horizontal Brushed-Silver Finger-Pull Overhang Bar with Center Grip Indentation */}
         <div
@@ -2126,7 +2176,7 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
         </div>
 
         {/* Horizontal Row: [Left Aux Sub-Panel] + [Full-Width Stepped 8px Cassette Door Frame] + [Right Aux Sub-Panel] */}
-        <div className="relative w-full flex items-stretch justify-center gap-1 max-w-full">
+        <div className="relative w-auto flex items-stretch justify-center gap-1 max-w-full">
           {/* LEFT AUXILIARY SUB-PANEL (Badge w/ 3 Silver + 1 Red Stripe | 3 Stamped Vent Slots | 4px Mic Pinhole) */}
           <div
             id="cas-aux-subpanel-left"
@@ -2773,7 +2823,7 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
         <div
           id="cas-top-reserve-zone"
           className={`relative z-30 w-full shrink-0 flex flex-col justify-end ${
-            isCompactLandscape ? 'h-[24px]' : isMobilePortrait ? 'h-[30px]' : 'h-[48px]'
+            isCompactLandscape ? 'h-[24px]' : isMobilePortrait ? 'h-[22px]' : 'h-[48px]'
           }`}
         >
           {/* Collapsible Carrying Handle Spanning 72% of Top Chassis Width */}
@@ -2934,7 +2984,7 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
           <div
             id="cas-upper-fascia-tier"
             className={`relative z-20 w-full ${
-              isCompactLandscape ? 'px-2 py-0.5' : isMobilePortrait ? 'px-1.5 py-1' : 'px-2 sm:px-3 pt-1.5 pb-1.5'
+              isCompactLandscape ? 'px-2 py-0.5' : isMobilePortrait ? 'px-1.5 pt-1 pb-0.5' : 'px-2 sm:px-3 pt-1.5 pb-1.5'
             } flex flex-col justify-between shrink-0`}
           >
             {/* Row 1: Full-Width Wide AM/FM Radio Tuner Window */}
@@ -2953,7 +3003,7 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
             <div
               id="turntable-control-row"
               className={`cas-panel-break w-full ${
-                isCompactLandscape ? 'mt-0.5 px-2 py-0.5' : 'mt-1 px-2 sm:px-3 py-1'
+                isCompactLandscape || isMobilePortrait ? 'mt-0.5 px-1.5 py-0.5' : 'mt-1 px-2 sm:px-3 py-1'
               } rounded-[2px] flex items-center justify-between gap-3 sm:gap-5`}
             >
               <BoomboxHorizontalSlider
@@ -2997,8 +3047,29 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
               />
             </div>
 
-            {/* Mobile Portrait Only: Render Equalizer Flanked by Square Piezo Tweeters in Upper Fascia */}
-            {isMobilePortrait && renderGraphicEqualizerModule(false)}
+            {/* Mobile Portrait Only: Hide Equalizer and Place Lyrics Screen in Upper Fascia Slot */}
+            {isMobilePortrait && (
+              <div
+                id="lyrics-strip-slot"
+                data-lyrics-alignment="mobile-upper-equalizer-slot"
+                className="relative z-20 mx-auto w-full rounded-[3px] h-[44px] max-h-[44px] border border-[#565A62] bg-[#101215] shadow-[inset_0_1px_4px_rgba(0,0,0,0.8)] flex items-center justify-center overflow-hidden shrink-0"
+              >
+                <SyncedLyricsPanel
+                  track={track}
+                  isStandby={isStandby}
+                  isPlaying={isPlaying}
+                  isDocumentHidden={isDocumentHidden}
+                  lowPowerMode={lowPowerMode}
+                  nightMode={nightMode}
+                  playbackRate={rpm === 45 ? 1.35 * (1 + pitchPercent / 100) : 1 + pitchPercent / 100}
+                  prefersReducedMotion={prefersReducedMotion}
+                  themePalette={themePalette}
+                  themeId="cassette-deck"
+                  onSeek={onSeek}
+                  className="mx-auto w-full h-full max-h-[44px] !rounded-none rounded-none"
+                />
+              </div>
+            )}
           </div>
 
           {/* ===================================================================
@@ -3036,53 +3107,71 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
 
               {isMobilePortrait ? (
                 /* ===============================================================
-                   MOBILE VERTICAL (PORTRAIT) STACKED ARCHITECTURE
-                   - Full-Width Centered Cassette Compartment Bay
-                   - Dual Enlarged Speakers Anchored Flush Top-Left & Top-Right of Speaker Row
-                   - 6-Key Piano Transport Array anchored at bottom
+                   MOBILE VERTICAL (PORTRAIT) 4-BAND NON-OVERLAPPING STACK
+                   Band 1: Upper fascia (tuner + faders + lyrics) above seam
+                   Band 2: Central HUD + Symmetrical [Small Aux Speaker | Central Cassette Loader | Small Aux Speaker]
+                   Band 3: Symmetrical Left & Right Big Circular 1:1 Woofers
+                   Band 4: Dedicated Full-Width 6-Key Mechanical Piano Transport Footer Bar
                    =============================================================== */
-                <div className="relative z-20 flex-1 min-h-0 w-full px-0 py-0.5 flex flex-col items-center justify-between gap-0.5">
-                  {/* Row 2: Central HUD + Full-Width Horizontally Centered Cassette Compartment Door */}
-                  <div className="w-full px-1.5 flex flex-col items-center gap-0.5 shrink-0">
+                <div className="relative z-20 flex-1 min-h-0 w-full px-0 pt-0.5 pb-0 flex flex-col items-center justify-between">
+                  {/* Band 2: Central HUD + [Small Aux Speaker | Central Cassette Loader | Small Aux Speaker] */}
+                  <div className="relative z-10 w-full px-1.5 mb-[4px] flex flex-col items-center gap-0.5 shrink-0">
                     {renderCentralPlaybackHudBar()}
-                    <div className="w-full flex items-center justify-center">
-                      {renderCentralCassetteBayAssembly()}
+                    <div
+                      id="cas-mobile-upper-bay-row"
+                      className="w-full flex items-center justify-between gap-1 px-0.5"
+                    >
+                      <MobilePortraitSingleAuxSpeaker
+                        side="left"
+                        sizePx={28}
+                        isAnimating={speakerCanPulse}
+                        dustCapScale={bassPulseMetrics.dustCapScale}
+                      />
+                      <div className="flex-1 min-w-0 flex items-center justify-center">
+                        {renderCentralCassetteBayAssembly()}
+                      </div>
+                      <MobilePortraitSingleAuxSpeaker
+                        side="right"
+                        sizePx={28}
+                        isAnimating={speakerCanPulse}
+                        dustCapScale={bassPulseMetrics.dustCapScale}
+                      />
                     </div>
                   </div>
 
-                  {/* Row 3: Lowered Dual Circular Woofer Speakers + Mirrored Upper Auxiliary Speakers Directly Above */}
+                  {/* Band 3: Symmetrical Left & Right Big Circular 1:1 Woofers */}
                   <div
                     id="cas-mobile-dual-speaker-row"
-                    className="w-full flex-1 min-h-0 px-0.5 pt-0.5 flex items-end justify-between gap-2"
+                    className="relative z-10 w-full flex-1 min-h-0 px-2.5 py-0.5 flex items-center justify-between gap-3"
                   >
-                    <div className="w-1/2 h-full flex items-end justify-start">
+                    <div className="w-1/2 h-full flex items-center justify-start">
                       <BoomboxSpeakerGrille
                         side="left"
                         sizePx={geo.speakerDiameterPx}
-                        bottomPaddingPx={geo.speakerBottomPaddingPx}
+                        bottomPaddingPx={0}
                         isAnimating={speakerCanPulse}
                         pulseScale={bassPulseMetrics.coneScale}
                         dustCapScale={bassPulseMetrics.dustCapScale}
                         isMobilePortrait={true}
-                        showUpperAuxSpeakers={true}
+                        showUpperAuxSpeakers={false}
                       />
                     </div>
-                    <div className="w-1/2 h-full flex items-end justify-end">
+                    <div className="w-1/2 h-full flex items-center justify-end">
                       <BoomboxSpeakerGrille
                         side="right"
                         sizePx={geo.speakerDiameterPx}
-                        bottomPaddingPx={geo.speakerBottomPaddingPx}
+                        bottomPaddingPx={0}
                         isAnimating={speakerCanPulse}
                         pulseScale={bassPulseMetrics.coneScale}
                         dustCapScale={bassPulseMetrics.dustCapScale}
                         isMobilePortrait={true}
-                        showUpperAuxSpeakers={true}
+                        showUpperAuxSpeakers={false}
                       />
                     </div>
                   </div>
 
-                  {/* Row 4: 6-Key Piano Transport Array Anchored Across Absolute Bottom */}
-                  <div className="w-full px-1 shrink-0">{renderBottomPianoKeyTransportArray()}</div>
+                  {/* Band 4: Dedicated Full-Width Non-Overlapping 6-Key Piano Transport Footer */}
+                  {renderBottomPianoKeyTransportArray()}
                 </div>
               ) : (
                 /* ===============================================================
@@ -3090,7 +3179,7 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
                    Left Lowered Woofer + Upper Aux Pair | 2px Seam | Center Cassette Bay | 2px Seam | Right Lowered Woofer + Upper Aux Pair
                    =============================================================== */
                 <div className="relative z-20 flex-1 min-h-0 w-full flex items-stretch justify-between">
-                  {/* LEFT COLUMN (28% width): Lowered Left Woofer (50px bottom pad) + Upper Aux Pair + Base Skirt Indents */}
+                  {/* LEFT COLUMN (28% width): Lowered Left Woofer + Upper Aux Pair + Base Skirt Indents */}
                   <div
                     style={{ width: `${geo.leftColumnPct}%` }}
                     className="h-full flex flex-col items-start justify-end pl-0.5 pr-1 pt-0.5 pb-1 shrink-0"
@@ -3103,7 +3192,7 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
                         isAnimating={speakerCanPulse}
                         pulseScale={bassPulseMetrics.coneScale}
                         dustCapScale={bassPulseMetrics.dustCapScale}
-                        showUpperAuxSpeakers={!isCompactLandscape}
+                        showUpperAuxSpeakers={true}
                       />
                     </div>
                     {/* Molded Rectangular Base Trim Indents Matching Reference Photo */}
@@ -3145,7 +3234,7 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
                   {/* RIGHT VERTICAL PANEL SEAM (width: 2px, #707478 / #F0F2F4) */}
                   <div aria-hidden="true" className="cas-vertical-parting-seam h-full shrink-0" />
 
-                  {/* RIGHT COLUMN (28% width): Lowered Right Woofer (50px bottom pad) + Upper Aux Pair + Base Skirt Indents */}
+                  {/* RIGHT COLUMN (28% width): Lowered Right Woofer + Upper Aux Pair + Base Skirt Indents */}
                   <div
                     style={{ width: `${geo.rightColumnPct}%` }}
                     className="h-full flex flex-col items-end justify-end pr-0.5 pl-1 pt-0.5 pb-1 shrink-0"
@@ -3158,7 +3247,7 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
                         isAnimating={speakerCanPulse}
                         pulseScale={bassPulseMetrics.coneScale}
                         dustCapScale={bassPulseMetrics.dustCapScale}
-                        showUpperAuxSpeakers={!isCompactLandscape}
+                        showUpperAuxSpeakers={true}
                       />
                     </div>
                     <div aria-hidden="true" className="w-full flex items-center justify-around px-2 pt-1 shrink-0">
@@ -3175,127 +3264,137 @@ export const CassetteDeck = React.memo<TurntableDeckProps>(
 
               {/* ===================================================================
                   SEPARATE PLASTIC CASSETTE STORAGE CASE / SLEEVE (#album-art-holder-box)
-                  Strictly +50px larger in all dimensions than #oversized-cassette-shell;
-                  collapses and hides cleanly when Global "Hide Box Art / Case" is active.
+                  Double-clicking / double-tapping smoothly animates out (220ms, scale 0.94) and syncs with Global Hide Box Art.
                   =================================================================== */}
-              {!hideBoxArt && (
+              <div
+                ref={holderHomeSlotRef}
+                id="album-art-holder-home-slot"
+                aria-hidden={hideBoxArt ? 'true' : undefined}
+                style={{
+                  right: isMobilePortrait ? '6px' : '10px',
+                  bottom: isMobilePortrait ? '54px' : '8px',
+                  width: `${cassetteBoxDims.width}px`,
+                  height: `${cassetteBoxDims.height}px`,
+                  transform: `${isMobilePortrait ? 'scale(0.56) ' : ''}scale(${hideBoxArt ? 0.94 : 1})`,
+                  transformOrigin: isMobilePortrait ? 'bottom right' : 'center center',
+                  opacity: hideBoxArt ? 0 : 1,
+                  pointerEvents: hideBoxArt ? 'none' : 'none',
+                  transition: prefersReducedMotion
+                    ? 'none'
+                    : 'opacity 220ms ease, transform 220ms ease',
+                }}
+                className="pointer-events-none absolute z-45 flex items-center justify-center select-none"
+              >
                 <div
-                  ref={holderHomeSlotRef}
-                  id="album-art-holder-home-slot"
+                  id="album-art-holder-box"
+                  data-testid="album-art-holder-box"
+                  data-dragging={isDraggingHolder ? 'true' : 'false'}
+                  data-holder-tilt={holderTiltDeg.toFixed(2)}
+                  data-spine-base-hex={activeSpinePalette.baseHex}
+                  data-box-clearance-px={cassetteBoxDims.paddingPx}
+                  data-box-depth-px={cassetteBoxDims.depthPx}
+                  onPointerDown={(e) => {
+                    if (hideBoxArt) return;
+                    doubleTapHideArtBind.onPointerDownCapture(e);
+                    handleHolderPointerDown(e);
+                  }}
+                  onPointerMove={handleHolderPointerMove}
+                  onPointerUp={(e) => {
+                    handleHolderPointerUp(e);
+                    doubleTapHideArtBind.onPointerUpCapture(e);
+                  }}
+                  onPointerCancel={handleHolderPointerUp}
+                  onDoubleClick={doubleTapHideArtBind.onDoubleClick}
+                  title="Drag plastic cassette storage case across boombox (double-click to hide case)"
                   style={{
-                    right: isMobilePortrait ? '6px' : '10px',
-                    bottom: isMobilePortrait ? '54px' : '8px',
                     width: `${cassetteBoxDims.width}px`,
                     height: `${cassetteBoxDims.height}px`,
-                    transform: isMobilePortrait ? 'scale(0.68)' : undefined,
-                    transformOrigin: isMobilePortrait ? 'bottom right' : undefined,
+                    padding: `${Math.round(cassetteBoxDims.paddingPx / 5)}px`,
+                    transformOrigin: '50% 15%',
+                    transform: `translate3d(${holderOffset.x}px, ${holderOffset.y}px, 0) rotate(${holderTiltDeg}deg)`,
+                    pointerEvents: hideBoxArt ? 'none' : 'auto',
+                    transition:
+                      isDraggingHolder || isDocumentHidden || lowPowerMode || prefersReducedMotion
+                        ? 'none'
+                        : 'transform 340ms cubic-bezier(0.22, 1, 0.36, 1)',
                   }}
-                  className="pointer-events-none absolute z-45 flex items-center justify-center select-none"
+                  className={`cas-norelco-case relative rounded-[4px] ${
+                    isDraggingHolder ? 'cursor-grabbing' : 'cursor-grab'
+                  } touch-none select-none z-45 flex overflow-hidden`}
                 >
+                  {/* Left Molded J-Card Spine Colored From Album Art */}
                   <div
-                    id="album-art-holder-box"
-                    data-testid="album-art-holder-box"
-                    data-dragging={isDraggingHolder ? 'true' : 'false'}
-                    data-holder-tilt={holderTiltDeg.toFixed(2)}
-                    data-spine-base-hex={activeSpinePalette.baseHex}
-                    data-box-clearance-px={cassetteBoxDims.paddingPx}
-                    data-box-depth-px={cassetteBoxDims.depthPx}
-                    onPointerDown={handleHolderPointerDown}
-                    onPointerMove={handleHolderPointerMove}
-                    onPointerUp={handleHolderPointerUp}
-                    onPointerCancel={handleHolderPointerUp}
-                    onDoubleClick={() => {
-                      setHolderOffset({ x: 0, y: 0 });
-                      setHolderTiltDeg(-1.8);
-                    }}
-                    title="Drag plastic cassette storage case across boombox (double-click to re-dock)"
+                    id="cas-norelco-spine"
                     style={{
-                      width: `${cassetteBoxDims.width}px`,
-                      height: `${cassetteBoxDims.height}px`,
-                      padding: `${Math.round(cassetteBoxDims.paddingPx / 5)}px`,
-                      transformOrigin: '50% 15%',
-                      transform: `translate3d(${holderOffset.x}px, ${holderOffset.y}px, 0) rotate(${holderTiltDeg}deg)`,
-                      transition:
-                        isDraggingHolder || isDocumentHidden || lowPowerMode || prefersReducedMotion
-                          ? 'none'
-                          : 'transform 340ms cubic-bezier(0.22, 1, 0.36, 1)',
+                      backgroundColor: activeSpinePalette.baseHex,
+                      color: activeSpinePalette.inkHex,
+                      borderColor: activeSpinePalette.borderHex,
                     }}
-                    className={`cas-norelco-case pointer-events-auto relative rounded-[4px] ${
-                      isDraggingHolder ? 'cursor-grabbing' : 'cursor-grab'
-                    } touch-none select-none z-45 flex overflow-hidden`}
+                    className="relative z-10 w-[16px] h-full border-r flex flex-col items-center justify-center px-[1px] overflow-hidden shrink-0"
                   >
-                    {/* Left Molded J-Card Spine Colored From Album Art */}
-                    <div
-                      id="cas-norelco-spine"
-                      style={{
-                        backgroundColor: activeSpinePalette.baseHex,
-                        color: activeSpinePalette.inkHex,
-                        borderColor: activeSpinePalette.borderHex,
-                      }}
-                      className="relative z-10 w-[16px] h-full border-r flex flex-col items-center justify-center px-[1px] overflow-hidden shrink-0"
+                    <span
+                      style={{ writingMode: 'vertical-rl' }}
+                      className="rotate-180 cas-condensed-label font-extrabold text-[6.5px] leading-none truncate max-h-[88%]"
                     >
-                      <span
-                        style={{ writingMode: 'vertical-rl' }}
-                        className="rotate-180 cas-condensed-label font-extrabold text-[6.5px] leading-none truncate max-h-[88%]"
-                      >
-                        C-90 CrO₂
+                      C-90 CrO₂
+                    </span>
+                  </div>
+
+                  {/* Inner Flap & Full-Bleed Front Cover Art */}
+                  <div className="relative z-10 flex-1 min-w-0 h-full flex flex-col overflow-hidden bg-[#18191B] border border-white/60">
+                    <div className="w-full bg-[#E6E8EA] border-b border-[#9EA3A8] px-1.5 py-[1px] flex items-center justify-between gap-0.5 shrink-0">
+                      <span className="cas-condensed-label text-[6px] font-extrabold text-[#141516] truncate">
+                        STEREO CASSETTE
+                      </span>
+                      <span className="cas-condensed-label text-[5.5px] font-bold text-[#141516] shrink-0">
+                        C-90 · CrO₂
                       </span>
                     </div>
 
-                    {/* Inner Flap & Full-Bleed Front Cover Art */}
-                    <div className="relative z-10 flex-1 min-w-0 h-full flex flex-col overflow-hidden bg-[#18191B] border border-white/60">
-                      <div className="w-full bg-[#E6E8EA] border-b border-[#9EA3A8] px-1.5 py-[1px] flex items-center justify-between gap-0.5 shrink-0">
-                        <span className="cas-condensed-label text-[6px] font-extrabold text-[#141516] truncate">
-                          STEREO CASSETTE
-                        </span>
-                        <span className="cas-condensed-label text-[5.5px] font-bold text-[#141516] shrink-0">
-                          C-90 · CrO₂
-                        </span>
-                      </div>
-
-                      <div className="relative flex-1 min-h-0 w-full overflow-hidden">
-                        {!artworkLoaded && !artworkState.isPlaceholder && (
-                          <div
-                            data-testid="album-art-skeleton"
-                            className="absolute inset-0 bg-[#2A2C30] flex items-center justify-center z-10"
-                          >
-                            <Disc3 className="w-4 h-4 text-[#C6C8CB]/60" />
-                          </div>
-                        )}
-                        {renderTrackArtwork('album-art-cover', true)}
-                      </div>
+                    <div className="relative flex-1 min-h-0 w-full overflow-hidden">
+                      {!artworkLoaded && !artworkState.isPlaceholder && (
+                        <div
+                          data-testid="album-art-skeleton"
+                          className="absolute inset-0 bg-[#2A2C30] flex items-center justify-center z-10"
+                        >
+                          <Disc3 className="w-4 h-4 text-[#C6C8CB]/60" />
+                        </div>
+                      )}
+                      {renderTrackArtwork('album-art-cover', true)}
                     </div>
                   </div>
                 </div>
-              )}
+              </div>
             </div>
           </div>
 
-          {/* Section 2.5: Centered 80s Aesthetic Lyrics Bar (Directly Below Cassette Player) */}
-          <div
-            id="lyrics-strip-slot"
-            data-lyrics-alignment="center-below-cassette"
-            className={`relative z-20 mx-auto w-full rounded-none ${
-              isCompactLandscape ? 'h-[26px] max-h-[26px]' : 'h-[40px] sm:h-[44px] max-h-[44px]'
-            } border-t-2 border-[#565A62] bg-[#101215] flex items-center justify-center overflow-hidden shrink-0`}
-          >
-            <SyncedLyricsPanel
-              track={track}
-              isStandby={isStandby}
-              isPlaying={isPlaying}
-              isDocumentHidden={isDocumentHidden}
-              lowPowerMode={lowPowerMode}
-              nightMode={nightMode}
-              playbackRate={rpm === 45 ? 1.35 * (1 + pitchPercent / 100) : 1 + pitchPercent / 100}
-              prefersReducedMotion={prefersReducedMotion}
-              themePalette={themePalette}
-              themeId="cassette-deck"
-              onSeek={onSeek}
-              className={`mx-auto w-full h-full ${
-                isCompactLandscape ? 'max-h-[26px]' : 'max-h-[44px]'
-              } !rounded-none rounded-none`}
-            />
-          </div>
+          {/* Section 2.5: Centered 80s Aesthetic Lyrics Bar (Directly Below Cassette Player on Desktop & Landscape) */}
+          {!isMobilePortrait && (
+            <div
+              id="lyrics-strip-slot"
+              data-lyrics-alignment="center-below-cassette"
+              className={`relative z-20 mx-auto w-full rounded-none ${
+                isCompactLandscape ? 'h-[26px] max-h-[26px]' : 'h-[40px] sm:h-[44px] max-h-[44px]'
+              } border-t-2 border-[#565A62] bg-[#101215] flex items-center justify-center overflow-hidden shrink-0`}
+            >
+              <SyncedLyricsPanel
+                track={track}
+                isStandby={isStandby}
+                isPlaying={isPlaying}
+                isDocumentHidden={isDocumentHidden}
+                lowPowerMode={lowPowerMode}
+                nightMode={nightMode}
+                playbackRate={rpm === 45 ? 1.35 * (1 + pitchPercent / 100) : 1 + pitchPercent / 100}
+                prefersReducedMotion={prefersReducedMotion}
+                themePalette={themePalette}
+                themeId="cassette-deck"
+                onSeek={onSeek}
+                className={`mx-auto w-full h-full ${
+                  isCompactLandscape ? 'max-h-[26px]' : 'max-h-[44px]'
+                } !rounded-none rounded-none`}
+              />
+            </div>
+          )}
         </div>
 
         {/* ===================================================================

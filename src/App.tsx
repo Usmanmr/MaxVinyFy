@@ -46,6 +46,8 @@ import { CassetteDeck } from './components/CassetteDeck';
 import { ClickWheelDeck } from './components/ClickWheelDeck';
 import { SquirclePmpDeck } from './components/SquirclePmpDeck';
 import { Desktop98Deck } from './components/Desktop98Deck';
+import { PcWinampDeck } from './components/PcWinampDeck';
+import { SpotifyDeck } from './components/SpotifyDeck';
 import { StreamlineDeck } from './components/StreamlineDeck';
 import { StreamlinePlayerBar } from './components/StreamlinePlayerBar';
 import { AuroraDeck } from './components/AuroraDeck';
@@ -57,11 +59,43 @@ import {
   extractTwoAuroraAccentsFromRgbSamples,
   type AuroraDualAccents,
 } from './utils/auroraLogic';
-import { SpotifyConnectModal } from './components/SpotifyConnectModal';
+import {
+  SpotifyConnectModal,
+  type SpotifySearchResultsPayload,
+  type SpotifySearchTrackResult,
+  type SpotifySearchAlbumResult,
+} from './components/SpotifyConnectModal';
 import { AndroidAppModal } from './components/AndroidAppModal';
 import { GlobalThemeSelector } from './components/GlobalThemeSelector';
+import { extractSpotifyPlaylistId } from './utils/playlistRoast';
 
 const HIDE_BOX_ART_STORAGE_KEY = 'maxyoutify_hide_box_art_v1';
+const DEVICE_ONLY_MODE_STORAGE_KEY = 'maxyoutify_device_only_mode_v1';
+
+async function fetchWithClientTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = 20000
+): Promise<Response> {
+  if (typeof AbortController === 'undefined') {
+    return fetch(url, init);
+  }
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('Request timed out while loading playlist from Spotify.');
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 
 const SYNTH_PRESETS: TrackItem['synthPreset'][] = [
   'midnight-synth',
@@ -148,6 +182,29 @@ export default function App() {
       if (typeof window !== 'undefined') {
         try {
           window.localStorage.setItem(HIDE_BOX_ART_STORAGE_KEY, next ? 'true' : 'false');
+        } catch {
+          // ignore storage quota errors
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  const [isDeviceOnlyMode, setIsDeviceOnlyMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return window.localStorage.getItem(DEVICE_ONLY_MODE_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleToggleDeviceOnlyMode = useCallback(() => {
+    setIsDeviceOnlyMode((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(DEVICE_ONLY_MODE_STORAGE_KEY, next ? 'true' : 'false');
         } catch {
           // ignore storage quota errors
         }
@@ -259,6 +316,8 @@ export default function App() {
 
   const spotifySessionRef = useRef<SpotifySession | null>(spotifySession);
   spotifySessionRef.current = spotifySession;
+  const playlistsRef = useRef<PlaylistPack[]>(playlists);
+  playlistsRef.current = playlists;
   const pendingOAuthStateRef = useRef<string>('');
   const oauthPopupWatchRef = useRef<number | null>(null);
 
@@ -806,9 +865,13 @@ export default function App() {
     ): Promise<{ name: string; tracks: TrackItem[] } | null> => {
       const activeSession = await ensureValidSpotifySession(sessionOverride || undefined);
       const runFetch = async (token?: string) =>
-        fetch(`/api/spotify/user-playlist-tracks?id=${encodeURIComponent(spotifyPlaylistId)}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        });
+        fetchWithClientTimeout(
+          `/api/spotify/user-playlist-tracks?id=${encodeURIComponent(spotifyPlaylistId)}`,
+          {
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          },
+          20000
+        );
 
       let res = await runFetch(activeSession?.accessToken);
       if (res.status === 401 && activeSession?.refreshToken) {
@@ -848,16 +911,24 @@ export default function App() {
           throw new Error(mapSpotifyOAuthError('session_expired'));
         }
 
-        let res = await fetch('/api/spotify/user-playlists', {
-          headers: { Authorization: `Bearer ${activeSession.accessToken}` },
-        });
+        let res = await fetchWithClientTimeout(
+          '/api/spotify/user-playlists',
+          {
+            headers: { Authorization: `Bearer ${activeSession.accessToken}` },
+          },
+          20000
+        );
         if (res.status === 401 && activeSession.refreshToken) {
           const refreshed = await refreshSpotifyAccessToken(activeSession);
           if (refreshed) {
             activeSession = refreshed;
-            res = await fetch('/api/spotify/user-playlists', {
-              headers: { Authorization: `Bearer ${activeSession.accessToken}` },
-            });
+            res = await fetchWithClientTimeout(
+              '/api/spotify/user-playlists',
+              {
+                headers: { Authorization: `Bearer ${activeSession.accessToken}` },
+              },
+              20000
+            );
           }
         }
 
@@ -1092,17 +1163,24 @@ export default function App() {
   const handleLoadPlaylistByIdOrUrl = useCallback(
     async (idOrUrl: string) => {
       setGuidanceActive(false);
-      const matchUrl = idOrUrl.match(/playlist\/([a-zA-Z0-9]+)/);
-      const cleanId = matchUrl ? matchUrl[1] : idOrUrl.replace(/[^a-zA-Z0-9]/g, '');
+      setSpotifyAuthError(null);
+      const cleanId = extractSpotifyPlaylistId(idOrUrl);
       if (!cleanId) {
         throw new Error('Invalid Spotify Playlist URL or ID.');
       }
 
       setIsLoadingPlaylist(true);
       try {
-        let loaded = await fetchTracksForSpotifyPlaylistId(cleanId);
+        let loaded: { name: string; tracks: TrackItem[] } | null = null;
+        if (spotifySessionRef.current?.accessToken) {
+          loaded = await fetchTracksForSpotifyPlaylistId(cleanId).catch(() => null);
+        }
         if (!loaded || loaded.tracks.length === 0) {
-          const publicRes = await fetch(`/api/spotify/playlist?id=${encodeURIComponent(cleanId)}`);
+          const publicRes = await fetchWithClientTimeout(
+            `/api/spotify/playlist?id=${encodeURIComponent(cleanId)}`,
+            {},
+            20000
+          );
           if (publicRes.ok) {
             const pubData = await publicRes.json();
             if (Array.isArray(pubData.tracks) && pubData.tracks.length > 0) {
@@ -1136,11 +1214,120 @@ export default function App() {
         if (stateRef.current.isPlaying && firstTrack && !stateRef.current.isTvFullscreen) {
           retroAudio.startPlayback(firstTrack, stateRef.current.effectiveRate, 0);
         }
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to load Spotify playlist.';
+        setSpotifyAuthError(message);
+        throw err;
       } finally {
         setIsLoadingPlaylist(false);
       }
     },
     [fetchTracksForSpotifyPlaylistId, mapRawTracksToTrackItems]
+  );
+
+  const handleSearchSpotify = useCallback(
+    async (
+      query: string,
+      type: 'all' | 'track' | 'album' = 'all'
+    ): Promise<SpotifySearchResultsPayload> => {
+      const headers: Record<string, string> = {};
+      if (spotifySessionRef.current?.accessToken) {
+        headers.Authorization = `Bearer ${spotifySessionRef.current.accessToken}`;
+      }
+      const res = await fetchWithClientTimeout(
+        `/api/spotify/search?q=${encodeURIComponent(query)}&type=${encodeURIComponent(type)}`,
+        { headers },
+        12000
+      );
+      if (!res.ok) {
+        const errJson = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(errJson.error || 'Spotify search failed.');
+      }
+      return (await res.json()) as SpotifySearchResultsPayload;
+    },
+    []
+  );
+
+  const appendTracksToActiveQueue = useCallback(
+    (incomingRawTracks: SpotifySearchTrackResult[], fallbackLabel = 'Custom Queue · Spotify') => {
+      const incoming = mapRawTracksToTrackItems(incomingRawTracks, '');
+      if (incoming.length === 0) return;
+
+      const currentPlaylists = playlistsRef.current;
+      const curActiveId = stateRef.current.activePlaylist.id;
+      const existingTarget =
+        currentPlaylists.find((p) => p.id === curActiveId) || currentPlaylists[0];
+
+      if (!existingTarget) {
+        const customPackId = 'spotify-queue-custom';
+        const dedupedTracks = ensureUniqueTrackIds(incoming);
+        const newPack: PlaylistPack = {
+          id: customPackId,
+          name: fallbackLabel,
+          subtitle: `${dedupedTracks.length} track${dedupedTracks.length === 1 ? '' : 's'} · Spotify`,
+          source: 'spotify-live',
+          tracks: dedupedTracks,
+        };
+        setPlaylists([newPack]);
+        setActivePlaylistId(customPackId);
+        setCurrentTrackId(dedupedTracks[0]?.id || '');
+        playbackClockStore.setTrackDuration(dedupedTracks[0]?.durationSec || 0);
+        playbackClockStore.setTime(0, true);
+        return;
+      }
+
+      const mergedTracks = ensureUniqueTrackIds([...existingTarget.tracks, ...incoming]);
+      const updatedPack: PlaylistPack = {
+        ...existingTarget,
+        tracks: mergedTracks,
+        subtitle: `${mergedTracks.length} track${mergedTracks.length === 1 ? '' : 's'} · Spotify`,
+      };
+      setPlaylists((prev) => prev.map((pl) => (pl.id === existingTarget.id ? updatedPack : pl)));
+
+      if (!stateRef.current.currentTrackId || stateRef.current.activeTrack.id === 'standby-empty') {
+        const firstNew = mergedTracks[existingTarget.tracks.length] || mergedTracks[0];
+        if (firstNew) {
+          setCurrentTrackId(firstNew.id);
+          playbackClockStore.setTrackDuration(firstNew.durationSec || 180);
+          playbackClockStore.setTime(0, true);
+        }
+      }
+    },
+    [mapRawTracksToTrackItems]
+  );
+
+  const handleAddSearchTrackToQueue = useCallback(
+    (track: SpotifySearchTrackResult) => {
+      appendTracksToActiveQueue([track], 'Spotify Search Queue');
+    },
+    [appendTracksToActiveQueue]
+  );
+
+  const handleAddSearchAlbumToQueue = useCallback(
+    async (album: SpotifySearchAlbumResult): Promise<number> => {
+      const headers: Record<string, string> = {};
+      if (spotifySessionRef.current?.accessToken) {
+        headers.Authorization = `Bearer ${spotifySessionRef.current.accessToken}`;
+      }
+      const res = await fetchWithClientTimeout(
+        `/api/spotify/album-tracks?id=${encodeURIComponent(album.id)}`,
+        { headers },
+        15000
+      );
+      if (!res.ok) {
+        const errJson = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(errJson.error || 'Could not load album tracks.');
+      }
+      const data = (await res.json()) as { tracks?: SpotifySearchTrackResult[] };
+      const rawTracks = Array.isArray(data.tracks) ? data.tracks : [];
+      if (rawTracks.length === 0) {
+        throw new Error('No playable tracks found in that album.');
+      }
+      appendTracksToActiveQueue(rawTracks, `Spotify · ${album.title}`);
+      return rawTracks.length;
+    },
+    [appendTracksToActiveQueue]
   );
 
   const handleTogglePlay = useCallback(() => {
@@ -1165,10 +1352,31 @@ export default function App() {
     });
   }, []);
 
+  const wasPrimaryAudioPlayingRef = useRef<boolean>(false);
+
+  const handlePausePlayback = useCallback(() => {
+    setIsPlaying(false);
+    retroAudio.pausePlayback();
+  }, []);
+
+  const handleResumePlaybackAt = useCallback((timeSec: number) => {
+    const { activeTrack: curTrack, effectiveRate: rate, isTvFullscreen: tvFs } = stateRef.current;
+    if (curTrack.id === 'standby-empty' || curTrack.durationSec <= 0) return;
+    const clamped = clampSeekTime(timeSec, curTrack.durationSec);
+    playbackClockStore.setTime(clamped, true);
+    setSeekEvent((prev) => ({ timeSec: clamped, nonce: prev.nonce + 1 }));
+    setIsPlaying(true);
+    if (!tvFs) {
+      retroAudio.setMuted(false);
+      retroAudio.startPlayback(curTrack, rate, clamped);
+    }
+  }, []);
+
   const handleTvFullscreenChange = useCallback((enteringFullscreen: boolean) => {
     setIsTvFullscreen(enteringFullscreen);
-    const { activeTrack: curTrack, effectiveRate: rate } = stateRef.current;
+    const { activeTrack: curTrack, effectiveRate: rate, isPlaying: currentlyPlaying } = stateRef.current;
     if (enteringFullscreen) {
+      wasPrimaryAudioPlayingRef.current = currentlyPlaying;
       retroAudio.pausePlayback();
       retroAudio.setMuted(true);
       if (curTrack.id !== 'standby-empty' && curTrack.durationSec > 0) {
@@ -1176,10 +1384,15 @@ export default function App() {
       }
     } else {
       retroAudio.setMuted(false);
-      if (curTrack.id !== 'standby-empty' && curTrack.durationSec > 0) {
+      const shouldResumeAudio = wasPrimaryAudioPlayingRef.current;
+      wasPrimaryAudioPlayingRef.current = false;
+      if (shouldResumeAudio && curTrack.id !== 'standby-empty' && curTrack.durationSec > 0) {
         const syncedSec = clampSeekTime(playbackClockStore.getCurrentTimeSec(), curTrack.durationSec);
         retroAudio.startPlayback(curTrack, rate, syncedSec);
         setIsPlaying(true);
+      } else {
+        retroAudio.pausePlayback();
+        setIsPlaying(false);
       }
     }
   }, []);
@@ -1194,15 +1407,16 @@ export default function App() {
 
   const handleSelectPlaylist = useCallback(
     async (playlistId: string) => {
-      const targetPl = playlists.find((p) => p.id === playlistId);
+      const targetPl = playlistsRef.current.find((p) => p.id === playlistId);
       if (!targetPl) return;
+      setSpotifyAuthError(null);
       const initialTrack = targetPl.tracks[0];
       setActivePlaylistId(playlistId);
       setCurrentTrackId(initialTrack?.id || '');
       playbackClockStore.setTrackDuration(initialTrack?.durationSec || 0);
       playbackClockStore.setTime(0, true);
 
-      if (targetPl.spotifyPlaylistId && targetPl.tracks.length <= 1) {
+      if (targetPl.spotifyPlaylistId && targetPl.tracks.length === 0) {
         setIsLoadingPlaylist(true);
         try {
           const loaded = await fetchTracksForSpotifyPlaylistId(targetPl.spotifyPlaylistId);
@@ -1221,6 +1435,11 @@ export default function App() {
             }
             return;
           }
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : 'Failed to load Spotify playlist.';
+          setSpotifyAuthError(message);
+          throw err;
         } finally {
           setIsLoadingPlaylist(false);
         }
@@ -1230,8 +1449,20 @@ export default function App() {
         retroAudio.startPlayback(initialTrack, stateRef.current.effectiveRate, 0);
       }
     },
-    [playlists, fetchTracksForSpotifyPlaylistId]
+    [fetchTracksForSpotifyPlaylistId]
   );
+
+  const handleCloseSpotifyModal = useCallback(() => {
+    setIsSpotifyModalOpen(false);
+  }, []);
+
+  const handleRefreshSpotifyLibrary = useCallback(async () => {
+    await syncAuthenticatedSpotifyLibrary();
+  }, [syncAuthenticatedSpotifyLibrary]);
+
+  const handleLogoutSpotifyModal = useCallback(() => {
+    handleSpotifyLogout();
+  }, [handleSpotifyLogout]);
 
   // Persist playlists to localStorage whenever modified
   useEffect(() => {
@@ -1454,6 +1685,9 @@ export default function App() {
     shuffleEnabled,
     isFullScreen,
     hideBoxArt,
+    onToggleHideBoxArt: handleToggleHideBoxArt,
+    isDeviceOnlyMode,
+    onToggleDeviceOnlyMode: handleToggleDeviceOnlyMode,
     spotifyConnected,
     viewportLayout,
     themePalette,
@@ -1486,12 +1720,17 @@ export default function App() {
     onSelectPlaylist: handleSelectPlaylist,
     onSelectTrack: handleSelectTrack,
     seekEvent,
+    onPausePlayback: handlePausePlayback,
+    onResumePlaybackAt: handleResumePlaybackAt,
+    onTvFullscreenChange: handleTvFullscreenChange,
   };
 
   const isStreamlineTheme = activeTheme.id === 'streamline';
   const isAuroraTheme = activeTheme.id === 'aurora-deck';
   const isClickWheelTheme = activeTheme.id === 'click-wheel';
   const isSquircleTheme = activeTheme.id === 'squircle-pmp';
+  const isPcWinampTheme = activeTheme.id === 'pc-winamp';
+  const isSpotifyTheme = activeTheme.id === 'spotify';
   const auroraAnimationsActive =
     isPlaying && !isDocumentHidden && !prefersReducedMotion && !lowPowerMode;
 
@@ -1572,6 +1811,10 @@ export default function App() {
       <SquirclePmpDeck key="squircle-pmp" {...deckSharedProps} />
     ) : activeTheme.id === 'desktop-98' ? (
       <Desktop98Deck key="desktop-98" {...deckSharedProps} />
+    ) : activeTheme.id === 'pc-winamp' ? (
+      <PcWinampDeck key="pc-winamp" {...deckSharedProps} />
+    ) : activeTheme.id === 'spotify' ? (
+      <SpotifyDeck key="spotify" {...deckSharedProps} />
     ) : (
       <TurntableDeck key="retro-turntable" {...deckSharedProps} />
     );
@@ -1600,12 +1843,14 @@ export default function App() {
         availableThemes={THEME_REGISTRY}
         themePalette={themePalette}
         hideBoxArt={hideBoxArt}
+        isDeviceOnlyMode={isDeviceOnlyMode}
         isPlaying={isPlaying}
         isStandby={activeTrack.id === 'standby-empty' || activeTrack.durationSec <= 0}
         isDocumentHidden={isDocumentHidden}
         prefersReducedMotion={prefersReducedMotion}
         onSelectTheme={handleSelectTheme}
         onToggleHideBoxArt={handleToggleHideBoxArt}
+        onToggleDeviceOnlyMode={handleToggleDeviceOnlyMode}
       />
       {/* Ambient Backdrop: 30s Aurora Wash on Aurora Deck, 600ms Crossfade on Streamline, Static Radial on Hardware */}
       {isAuroraTheme ? (
@@ -1671,7 +1916,7 @@ export default function App() {
       <main className="relative z-10 flex-1 min-h-0 w-full flex flex-col">
         <div className={isStreamlineTheme ? 'sl-main-wrapper' : 'flex-1 min-h-0 w-full flex flex-col'}>
           <div className="main-deck-grid">
-            {isClickWheelTheme || isSquircleTheme ? (
+            {isClickWheelTheme || isSquircleTheme || isPcWinampTheme || isSpotifyTheme ? (
               <div
                 id="turntable"
                 className="deck-slot-turntable w-full h-full flex-1 flex flex-col justify-stretch min-h-0"
@@ -1837,6 +2082,7 @@ export default function App() {
                         themePalette={themePalette}
                         auroraAccents={auroraAccents}
                         activeThemeId={activeTheme.id}
+                        viewportLayout={viewportLayout}
                         availableThemes={THEME_REGISTRY}
                         onSelectTheme={handleSelectTheme}
                         onSelectPlaylist={handleSelectPlaylist}
@@ -1890,56 +2136,61 @@ export default function App() {
                     </div>
 
                     {/* Mobile Portrait: Console / Hero Stage Directly Below TV */}
-                    <div
-                      id="turntable"
-                      className={`w-full ${
-                        isStreamlineTheme
-                          ? 'h-auto min-h-[410px]'
-                          : isAuroraTheme
-                          ? 'h-auto min-h-[435px]'
-                          : activeTheme.id === 'cd-hifi'
-                          ? 'h-auto min-h-[465px]'
-                          : activeTheme.id === 'cassette-deck'
-                          ? 'h-auto min-h-[540px]'
-                          : 'h-[435px]'
-                      } flex flex-col justify-stretch shrink-0`}
-                    >
-                      {unifiedConsoleElement}
-                    </div>
+                      <div
+                        id="turntable"
+                        className={`w-full ${
+                          isStreamlineTheme
+                            ? 'h-auto min-h-[410px] shrink-0'
+                            : isAuroraTheme
+                            ? 'h-auto min-h-[435px] shrink-0'
+                            : activeTheme.id === 'cd-hifi'
+                            ? 'h-auto min-h-[465px] shrink-0'
+                            : activeTheme.id === 'cassette-deck'
+                            ? 'h-auto shrink-0'
+                            : 'h-[435px] shrink-0'
+                        } flex flex-col justify-stretch`}
+                      >
+                        {unifiedConsoleElement}
+                      </div>
 
-                    {/* Mobile Portrait: Playlist Queue Directly Below Console */}
-                    <div
-                      id="playlist-queue"
-                      className={`w-full flex flex-col justify-stretch rounded-[3px] ${
-                        isStreamlineTheme ? 'h-[360px] min-h-[300px]' : 'h-[420px] min-h-[340px]'
-                      } shrink-0`}
-                    >
-                      <PlaylistQueueBox
-                        playlists={playlists}
-                        activePlaylist={activePlaylist}
-                        activeTrackId={activeTrack.id}
-                        isPlaying={isPlaying}
-                        lowPowerMode={lowPowerMode}
-                        isLoadingPlaylist={isLoadingPlaylist}
-                        spotifyConnected={spotifyConnected}
-                        spotifyUserLabel={spotifyUserLabel}
-                        needsInitialSpotifyConnect={needsInitialSpotifyConnect}
-                        guidanceActive={guidanceActive}
-                        isDocumentHidden={isDocumentHidden}
-                        prefersReducedMotion={prefersReducedMotion}
-                        showCompactBrandHeader={false}
-                        themePalette={themePalette}
-                        auroraAccents={auroraAccents}
-                        activeThemeId={activeTheme.id}
-                        availableThemes={THEME_REGISTRY}
-                        onSelectTheme={handleSelectTheme}
-                        onSelectPlaylist={handleSelectPlaylist}
-                        onDeletePlaylist={handleDeletePlaylist}
-                        onSelectTrack={handleSelectTrack}
-                        onOpenSpotifyModal={handleOpenSpotifyModal}
-                        onResolvedPerTrackArtwork={handleResolvedPerTrackArtwork}
-                      />
-                    </div>
+                      {/* Mobile Portrait: Playlist Queue Directly Below Console */}
+                      <div
+                        id="playlist-queue"
+                        className={`w-full flex flex-col justify-stretch rounded-[3px] ${
+                          activeTheme.id === 'cassette-deck'
+                            ? 'flex-1 min-h-[118px]'
+                            : isStreamlineTheme
+                            ? 'h-[360px] min-h-[300px] shrink-0'
+                            : 'h-[420px] min-h-[340px] shrink-0'
+                        }`}
+                      >
+                        <PlaylistQueueBox
+                          playlists={playlists}
+                          activePlaylist={activePlaylist}
+                          activeTrackId={activeTrack.id}
+                          isPlaying={isPlaying}
+                          lowPowerMode={lowPowerMode}
+                          isLoadingPlaylist={isLoadingPlaylist}
+                          spotifyConnected={spotifyConnected}
+                          spotifyUserLabel={spotifyUserLabel}
+                          needsInitialSpotifyConnect={needsInitialSpotifyConnect}
+                          guidanceActive={guidanceActive}
+                          isDocumentHidden={isDocumentHidden}
+                          prefersReducedMotion={prefersReducedMotion}
+                          showCompactBrandHeader={false}
+                          themePalette={themePalette}
+                          auroraAccents={auroraAccents}
+                          activeThemeId={activeTheme.id}
+                          viewportLayout={viewportLayout}
+                          availableThemes={THEME_REGISTRY}
+                          onSelectTheme={handleSelectTheme}
+                          onSelectPlaylist={handleSelectPlaylist}
+                          onDeletePlaylist={handleDeletePlaylist}
+                          onSelectTrack={handleSelectTrack}
+                          onOpenSpotifyModal={handleOpenSpotifyModal}
+                          onResolvedPerTrackArtwork={handleResolvedPerTrackArtwork}
+                        />
+                      </div>
                   </>
                 )}
               </>
@@ -1988,12 +2239,15 @@ export default function App() {
         activePlaylistId={activePlaylist.id}
         themePalette={themePalette}
         authErrorMessage={spotifyAuthError}
-        onClose={() => setIsSpotifyModalOpen(false)}
+        onClose={handleCloseSpotifyModal}
         onStartSpotifyLogin={handleStartSpotifyLogin}
-        onRefreshLibrary={() => syncAuthenticatedSpotifyLibrary()}
-        onLogout={() => handleSpotifyLogout()}
+        onRefreshLibrary={handleRefreshSpotifyLibrary}
+        onLogout={handleLogoutSpotifyModal}
         onSelectPlaylist={handleSelectPlaylist}
         onLoadPlaylistByIdOrUrl={handleLoadPlaylistByIdOrUrl}
+        onSearchSpotify={handleSearchSpotify}
+        onAddSearchTrackToQueue={handleAddSearchTrackToQueue}
+        onAddSearchAlbumToQueue={handleAddSearchAlbumToQueue}
       />
 
       <AndroidAppModal

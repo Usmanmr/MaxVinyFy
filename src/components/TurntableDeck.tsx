@@ -45,6 +45,7 @@ import {
 } from '../utils/playerLogic';
 import { playbackClockStore, usePlaybackSecond } from '../utils/playbackStore';
 import { SyncedLyricsPanel } from './SyncedLyricsPanel';
+import { useDoubleTapHideArt } from '../hooks/useDoubleTapHideArt';
 
 export interface TurntableDeckProps {
   track: TrackItem;
@@ -63,6 +64,9 @@ export interface TurntableDeckProps {
   shuffleEnabled: boolean;
   isFullScreen: boolean;
   hideBoxArt?: boolean;
+  onToggleHideBoxArt?: () => void;
+  isDeviceOnlyMode?: boolean;
+  onToggleDeviceOnlyMode?: () => void;
   isTvFullscreen?: boolean;
   spotifyConnected: boolean;
   viewportLayout: ViewportLayoutMode;
@@ -106,6 +110,9 @@ export interface TurntableDeckProps {
   onSelectPlaylist?: (playlistId: string) => void;
   onSelectTrack?: (trackId: string) => void;
   seekEvent?: { timeSec: number; nonce: number };
+  onPausePlayback?: () => void;
+  onResumePlaybackAt?: (timeSec: number) => void;
+  onTvFullscreenChange?: (entering: boolean) => void;
 }
 
 const PRE_RENDERED_GROOVE_RINGS = Array.from({ length: 14 }, (_, idx) => {
@@ -1217,6 +1224,7 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
     repeatOne,
     shuffleEnabled,
     hideBoxArt = false,
+    onToggleHideBoxArt,
     viewportLayout,
     themePalette,
     onTogglePlay,
@@ -1233,6 +1241,10 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
     parentPlaylistCoverUrl,
     onResolvedPerTrackArtwork,
   }) => {
+    const doubleTapHideHandlers = useDoubleTapHideArt({
+      enabled: !hideBoxArt,
+      onHide: onToggleHideBoxArt,
+    });
     const isStandby = track.id === 'standby-empty' || track.durationSec <= 0;
     const isCompactLandscape = viewportLayout === 'mobile-landscape';
 
@@ -1835,9 +1847,9 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
               style={{
                 left: '6px',
                 top: '50%',
-                transform: hideBoxArt ? 'translateY(-50%) scale(0.92)' : 'translateY(-50%) scale(1)',
+                transform: hideBoxArt ? 'translateY(-50%) scale(0.94)' : 'translateY(-50%) scale(1)',
                 opacity: hideBoxArt ? 0 : 1,
-                transition: prefersReducedMotion ? 'none' : 'opacity 240ms ease, transform 240ms ease',
+                transition: prefersReducedMotion ? 'none' : 'opacity 220ms ease, transform 220ms ease',
                 width: `${holderBoxSizePx}px`,
                 height: `${holderBoxSizePx}px`,
               }}
@@ -1856,14 +1868,13 @@ export const TurntableDeck = React.memo<TurntableDeckProps>(
                 data-holder-tilt={holderTiltDeg.toFixed(2)}
                 data-slot-open={stagePose.holderSlotOpen ? 'true' : 'false'}
                 onPointerDown={handleHolderPointerDown}
+                onPointerDownCapture={doubleTapHideHandlers.onPointerDownCapture}
                 onPointerMove={handleHolderPointerMove}
                 onPointerUp={handleHolderPointerUp}
+                onPointerUpCapture={doubleTapHideHandlers.onPointerUpCapture}
                 onPointerCancel={handleHolderPointerUp}
-                onDoubleClick={() => {
-                  setHolderOffset({ x: 0, y: 0 });
-                  setHolderTiltDeg(calculateHolderBoxRestTiltDeg(0, -1, true));
-                }}
-                title="Drag album sleeve holder box anywhere on the wooden board (double-click to re-dock left)"
+                onDoubleClick={doubleTapHideHandlers.onDoubleClick}
+                title="Drag album sleeve holder box anywhere on the wooden board (double-click to hide album art)"
                 style={{
                   width: `${holderBoxSizePx}px`,
                   height: `${holderBoxSizePx}px`,

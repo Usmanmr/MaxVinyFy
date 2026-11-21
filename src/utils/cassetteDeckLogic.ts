@@ -518,20 +518,23 @@ export function computeExpandedBoomboxStageLayout(
 
   if (isMobilePortrait) {
     const speakerColW = Math.floor((safeW - 14) / 2);
-    // Reserve ~42% vertical height for upper aux speakers + 50px bottom padding below lowered main woofer
-    const availWooferH = Math.max(82, Math.floor(safeH * 0.44) - speakerBottomPaddingPx);
-    const speakerDiameterPx = Math.max(
-      76,
-      Math.min(speakerColW - 6, availWooferH, Math.round(baseline.speakerDiameterPx * 1.65))
+    // Reserve horizontal clearance for Left & Right Band 2 flanking Small Aux Speakers (~28px each)
+    const band2SideAuxReservePx = 68;
+    const availWooferH = Math.max(60, Math.floor(safeH * 0.30) - 6);
+    const basePortraitWoofer = Math.min(
+      speakerColW - 12,
+      availWooferH,
+      Math.round(baseline.speakerDiameterPx * 1.48)
     );
+    const speakerDiameterPx = Math.max(60, Math.min(98, Math.round(basePortraitWoofer * 0.78)));
 
-    const auxPanelWidthPx = 20;
-    const maxDoorByWidth = Math.max(120, safeW - auxPanelWidthPx * 2 - 26);
-    const maxDoorHeight = Math.max(82, Math.floor(safeH * 0.32));
+    const auxPanelWidthPx = 16;
+    const maxDoorByWidth = Math.max(185, safeW - auxPanelWidthPx * 2 - band2SideAuxReservePx - 12);
+    const maxDoorHeight = Math.max(105, Math.floor(safeH * 0.42));
     const maxDoorByHeight = Math.round(maxDoorHeight * targetAspect);
-    const maxTapeW = Math.max(96, Math.min(maxDoorByWidth, maxDoorByHeight) - marginAllSidesPx * 2);
-    const cassetteTapeWidthPx = Math.max(baseline.cassetteTapeWidthPx, maxTapeW);
-    const cassetteTapeHeightPx = Math.max(58, Math.round(cassetteTapeWidthPx / targetAspect));
+    const rawTapeW = Math.min(maxDoorByWidth, maxDoorByHeight) - marginAllSidesPx * 2;
+    const cassetteTapeWidthPx = Math.min(250, Math.max(155, rawTapeW));
+    const cassetteTapeHeightPx = Math.max(96, Math.round(cassetteTapeWidthPx / targetAspect));
     const cassetteDoorWidthPx = cassetteTapeWidthPx + marginAllSidesPx * 2;
     const cassetteDoorHeightPx = cassetteTapeHeightPx + marginAllSidesPx * 2;
 
@@ -558,10 +561,11 @@ export function computeExpandedBoomboxStageLayout(
   const auxPanelWidthPx = isCompactLandscape ? 18 : 22;
 
   const speakerBayW = Math.floor(safeW * (leftColumnPct / 100)) - 14;
-  const speakerBayH = Math.max(76, safeH - speakerBottomPaddingPx - (isCompactLandscape ? 32 : 68));
-  const targetSpeakerPx = Math.round(baseline.speakerDiameterPx * 1.55);
+  // Reserve enough headroom above the lowered woofer for the stacked MirroredDualRoundUpperSpeakers in compact landscape too
+  const speakerBayH = Math.max(66, safeH - speakerBottomPaddingPx - (isCompactLandscape ? 50 : 68));
+  const targetSpeakerPx = Math.round(baseline.speakerDiameterPx * (isCompactLandscape ? 1.32 : 1.55));
   const speakerDiameterPx = Math.max(
-    72,
+    66,
     Math.min(speakerBayW, speakerBayH, targetSpeakerPx)
   );
 
@@ -1062,7 +1066,7 @@ export function computeUpperDualRoundSpeakerPairMetrics(
 ): UpperDualRoundSpeakerPairMetrics {
   const safeWoofer = Number.isFinite(mainWooferSizePx) && mainWooferSizePx > 50 ? mainWooferSizePx : 120;
   const rawOuter = isMobilePortrait
-    ? Math.max(28, Math.min(46, Math.round(safeWoofer * 0.36)))
+    ? Math.max(22, Math.min(34, Math.round(safeWoofer * 0.34)))
     : Math.max(32, Math.min(56, Math.round(safeWoofer * 0.38)));
   // Ensure even pixel width so innerDiameterPx === outerDiameterPx * 0.5 exactly
   const outerDiameterPx = rawOuter % 2 === 0 ? rawOuter : rawOuter + 1;

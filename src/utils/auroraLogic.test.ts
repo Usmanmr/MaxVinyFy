@@ -31,7 +31,9 @@ describe('Aurora Deck Theme & Pure Logic Suite', () => {
   it('registers Aurora Deck in THEME_REGISTRY with exact holographic palette tokens and persistence', () => {
     const ids = THEME_REGISTRY.map((t) => t.id);
     assert.ok(ids.includes('aurora-deck'));
-    assert.equal(THEME_REGISTRY.length, 9);
+    assert.ok(ids.includes('pc-winamp'));
+    assert.ok(ids.includes('spotify'));
+    assert.equal(THEME_REGISTRY.length, 11);
 
     const theme = getThemeById('aurora-deck');
     assert.equal(theme.name, 'Aurora Deck');

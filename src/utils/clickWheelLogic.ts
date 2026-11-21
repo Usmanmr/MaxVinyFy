@@ -1,3 +1,5 @@
+import { extractValidYouTubeVideoId } from './youtubePlayer';
+
 export type ClickWheelPaneId = 'music' | 'now-playing' | 'lyrics' | 'settings';
 
 export const CLICK_WHEEL_PANE_ORDER: readonly ClickWheelPaneId[] = [
@@ -700,7 +702,7 @@ export function computeImacChinOverlapLayout(
   const maxImacW = isMobilePortrait
     ? Math.min(safeW - 18, 372)
     : Math.min(safeW * 0.64, 780);
-  const imacTopPx = isMobilePortrait ? 48 : 34;
+  const imacTopPx = isMobilePortrait ? 8 : 18;
 
   // Target bottom edge of the 16:9 glass display near the top edge of the docked iPod so the iPod overlaps the aluminum chin cleanly without hiding the OS X Dock icons
   const targetDisplayBottomPx = Math.max(imacTopPx + 145, playerTopPx + (isMobilePortrait ? 6 : 10));
@@ -1058,8 +1060,8 @@ export function computeAsymmetricDesktopWorkspaceLayout(
   const safeW = Math.max(768, stageWidthPx || 1440);
   const safeH = Math.max(540, stageHeightPx || 900);
 
-  const brandHeaderTopPx = 14;
-  const brandHeaderHeightPx = 42;
+  const brandHeaderTopPx = 8;
+  const brandHeaderHeightPx = 0;
 
   // Left stage occupies 65% of viewport width (strictly within 62%–68%)
   const leftStageWidthRatio = 0.65;
@@ -1085,7 +1087,7 @@ export function computeAsymmetricDesktopWorkspaceLayout(
   const dockScale = Number(Math.max(0.56, Math.min(1, maxLeftDockW / dockW)).toFixed(4));
   const adapterCollarWidthPx = computeDockAdapterCollarWidthPx(chassisW, 1);
 
-  const imacTopPx = 54;
+  const imacTopPx = 20;
   const imacStandHeightPx = 44;
   const availImacTotalH = Math.max(230, safeH - imacTopPx - dockH - imacStandHeightPx - 22);
   const availImacScreenH = Math.round(availImacTotalH * (1 - IMAC_2011_CHIN_HEIGHT_RATIO));
@@ -1129,6 +1131,7 @@ export interface MobileZeroScrollStackedMetrics {
   imacChinHeightPx: number;
   imacTotalHeightPx: number;
   imacStandHeightPx: number;
+  leftRailWidthPx: number;
   ipodWidthPx: number;
   ipodHeightPx: number;
   ipodAspectRatio: number;
@@ -1144,9 +1147,10 @@ export interface MobileZeroScrollStackedMetrics {
 
 /**
  * Computes Mobile Vertical Portrait (`max-width: 767px`) Overhauled Layout:
- * 1. Top: Enlarged 2011 Apple iMac (~94% of viewport width) directly below global header
- * 2. Middle: Centered iPod locked to real-life proportions (`0.608 / 1` standard, `0.43 / 1` Nano)
- * 3. Bottom: Horizontal swipeable control slider (`#cw-mobile-control-slider`) — zero heavy speaker dock box
+ * 1. Top: Enlarged 2011 Apple iMac (~94% of viewport width)
+ * 2. Lower Stage Row (`flex-row`):
+ *    - Left (`66px` rail): Compact stacked Gen buttons, Finish/Nano swatches, Lyrics/Settings & Vol
+ *    - Right (`flex-1`): Centered iPod locked to real-life proportions (`0.608 / 1` standard, `0.43 / 1` Nano)
  */
 export function computeMobileZeroScrollStackedLayout(
   stageWidthPx: number,
@@ -1157,11 +1161,12 @@ export function computeMobileZeroScrollStackedLayout(
   const safeW = Math.max(320, Math.min(767, stageWidthPx || 390));
   const safeH = Math.max(640, stageHeightPx || 844);
 
-  const topBarReservePx = 48;
+  const topBarReservePx = 8;
   const slimDockHeightPx = 0;
-  const controlSliderHeightPx = 68;
-  const playlistStripHeightPx = hideBoxArt ? 0 : 48;
-  const verticalGapsTotalPx = 16;
+  const controlSliderHeightPx = 68; // Compact switcher/control array + 24px bottom clearance below iPod
+  const leftRailWidthPx = 0;
+  const playlistStripHeightPx = hideBoxArt ? 0 : 0;
+  const verticalGapsTotalPx = 20;
 
   // Enlarge 2011 iMac to fill ~94% of mobile viewport width cleanly
   const imacWidthPx = Math.round(safeW * 0.94);
@@ -1173,7 +1178,7 @@ export function computeMobileZeroScrollStackedLayout(
   const imacStandHeightPx = 12;
 
   const remainingForIpod = Math.max(
-    260,
+    236,
     safeH -
       topBarReservePx -
       imacTotalHeightPx -
@@ -1184,12 +1189,13 @@ export function computeMobileZeroScrollStackedLayout(
 
   const effectiveRatio =
     generation === 'nano' ? IPOD_NANO_ASPECT_RATIO : IPOD_REAL_LIFE_ASPECT_RATIO;
+  const rightAvailW = Math.max(220, safeW - 24);
   const maxAllowedIpodW =
     generation === 'nano'
-      ? Math.max(150, Math.min(safeW - 110, 210))
-      : Math.max(210, Math.min(safeW - 88, 292));
+      ? Math.max(140, Math.min(rightAvailW - 12, 206))
+      : Math.max(180, Math.min(rightAvailW - 12, 276));
   const heightConstrainedByWidth = Math.floor(maxAllowedIpodW / effectiveRatio);
-  const ipodHeightPx = Math.max(256, Math.min(remainingForIpod, heightConstrainedByWidth, 456));
+  const ipodHeightPx = Math.max(236, Math.min(remainingForIpod, heightConstrainedByWidth, 450));
   const ipodWidthPx = Math.round(ipodHeightPx * effectiveRatio);
   const dockOuterWidthPx = ipodWidthPx;
   const ipodAspectRatio = Number((ipodWidthPx / ipodHeightPx).toFixed(3));
@@ -1198,7 +1204,7 @@ export function computeMobileZeroScrollStackedLayout(
   const ipodScreenWidthPx = Math.floor((ipodWidthPx * screenWidthFactor) / 2) * 2;
 
   const imacAndIpodCombinedHeightPx =
-    topBarReservePx + imacTotalHeightPx + imacStandHeightPx + ipodHeightPx + 10;
+    topBarReservePx + imacTotalHeightPx + imacStandHeightPx + ipodHeightPx + controlSliderHeightPx + 10;
 
   return {
     topBarReservePx,
@@ -1207,6 +1213,7 @@ export function computeMobileZeroScrollStackedLayout(
     imacChinHeightPx,
     imacTotalHeightPx,
     imacStandHeightPx,
+    leftRailWidthPx,
     ipodWidthPx,
     ipodHeightPx,
     ipodAspectRatio,
@@ -1558,8 +1565,31 @@ export function computeEarPodHangingCablePaths(
   };
 }
 
+export const DEFAULT_IMAC_YOUTUBE_VIDEO_ID = 'jfKfPfyJRdk';
 
-
-
-
+export function buildMutedImacYoutubeEmbedUrl(
+  videoId: string,
+  origin?: string,
+  widgetReferrer?: string
+): string {
+  const cleanId = extractValidYouTubeVideoId(videoId) ?? DEFAULT_IMAC_YOUTUBE_VIDEO_ID;
+  const encodedId = encodeURIComponent(cleanId);
+  const resolvedOrigin =
+    origin !== undefined
+      ? origin
+      : typeof window !== 'undefined'
+        ? window.location.origin
+        : '';
+  const resolvedReferrer =
+    widgetReferrer !== undefined
+      ? widgetReferrer
+      : typeof window !== 'undefined'
+        ? window.location.href
+        : '';
+  const originParam = resolvedOrigin ? `&origin=${encodeURIComponent(resolvedOrigin)}` : '';
+  const referrerParam = resolvedReferrer
+    ? `&widget_referrer=${encodeURIComponent(resolvedReferrer)}`
+    : '';
+  return `https://www.youtube.com/embed/${encodedId}?autoplay=1&mute=1&enablejsapi=1&controls=0&modestbranding=1&rel=0&iv_load_policy=3&disablekb=1&fs=0&playsinline=1&loop=1&playlist=${encodedId}${originParam}${referrerParam}`;
+}
 

@@ -8,11 +8,10 @@ import {
   Repeat,
   Shuffle,
   Disc3,
-  Volume2,
   Power,
-  Sliders,
   Sparkles,
 } from 'lucide-react';
+import { useDoubleTapHideArt } from '../hooks/useDoubleTapHideArt';
 import {
   formatDuration,
   triggerButtonHaptic,
@@ -75,6 +74,7 @@ export interface CdHifiDeckProps {
   onToggleShuffle: () => void;
   onToggleLowPowerMode?: () => void;
   onToggleNightMode?: () => void;
+  onToggleHideBoxArt?: () => void;
   onScratch: (intensity: 'light' | 'classic' | 'backspin') => void;
   onResolvedAlbumArt?: (url: string, samples: [number, number, number][]) => void;
   onAlbumArtUnavailable?: () => void;
@@ -114,114 +114,6 @@ const BookshelfKevlarSpeaker = React.memo<{
     const effectiveScale = prefersReducedMotion ? 1 : coneScale;
     const effectiveOffset = prefersReducedMotion ? 0 : dustCapOffsetPx;
 
-    // Auxiliary Multi-Driver Speaker Tower (fills the 30% flanking space created by scaling the main speaker by 30%)
-    const auxTowerElement = (
-      <div
-        id={`cd-aux-speaker-tower-${side}`}
-        data-aux-speaker-tower={side}
-        data-aux-drivers-count={CD_HIFI_SYSTEM_PROPORTIONS.auxDriversCountPerSide}
-        className={`cd-aux-speaker-panel relative w-[30%] h-full min-h-0 ${
-          side === 'left' ? 'rounded-l-[10px] rounded-r-[2px]' : 'rounded-r-[10px] rounded-l-[2px]'
-        } px-1 py-1.5 sm:px-1.5 sm:py-2 flex flex-col items-center justify-between overflow-hidden`}
-      >
-        {/* Top Industrial Hex Corner Screws & Stamped Ventilation Slots */}
-        <div className="w-full flex items-center justify-between px-0.5 shrink-0">
-          <span className="w-2 h-2 rounded-full bg-[#334155] border border-[#0F172A] shadow-inner flex items-center justify-center">
-            <span className="w-0.5 h-0.5 rounded-full bg-[#94A3B8]" />
-          </span>
-          <div className="flex items-center gap-[2px]">
-            <span className="w-2 h-[2px] rounded-full bg-[#1E293B]" />
-            <span className="w-2 h-[2px] rounded-full bg-[#1E293B]" />
-            <span className="w-2 h-[2px] rounded-full bg-[#1E293B]" />
-          </div>
-          <span className="w-2 h-2 rounded-full bg-[#334155] border border-[#0F172A] shadow-inner flex items-center justify-center">
-            <span className="w-0.5 h-0.5 rounded-full bg-[#94A3B8]" />
-          </span>
-        </div>
-
-        {/* Laser-Etched Acoustic Telemetry Marking + Status LED Pip */}
-        <div className="w-full flex items-center justify-between px-1 py-0.5 rounded-[2px] bg-[#0F172A]/85 border border-[#475569]/75 shrink-0">
-          <span className="font-mono text-[4.5px] sm:text-[5.5px] font-bold tracking-wider text-[#CBD5E1] truncate">
-            98dB·6Ω
-          </span>
-          <span
-            style={{
-              backgroundColor: ringRgbHex,
-              boxShadow: `0 0 6px ${ringRgbHex}`,
-            }}
-            className="w-1.5 h-1.5 rounded-full shrink-0"
-          />
-        </div>
-
-        {/* Auxiliary Driver 1: Upper Mid-Range Cone with Concentric Lathed Metallic Groove Ring & RGB Halo */}
-        <div className="cd-concentric-lathed-ring relative w-[86%] max-w-[68px] aspect-square rounded-full p-[3px] sm:p-[4px] border border-[#334155] flex items-center justify-center shrink-0">
-          <div
-            aria-hidden="true"
-            style={{
-              opacity: ringGlowOpacity,
-              borderColor: portRgbHex,
-              boxShadow: `0 0 10px ${portRgbHex}, inset 0 0 8px ${portRgbHex}`,
-            }}
-            className="pointer-events-none absolute inset-[2px] rounded-full border-[1.5px] z-20"
-          />
-          <div
-            style={{
-              transform: `scale(${effectiveScale})`,
-              transition: prefersReducedMotion ? 'none' : 'transform 75ms ease-out',
-            }}
-            className="cd-kevlar-cone w-full h-full rounded-full border border-white/25 flex items-center justify-center"
-          >
-            <div className="w-[38%] h-[38%] rounded-full bg-gradient-to-br from-[#E2E8F0] via-[#475569] to-[#0F172A] border border-white/50" />
-          </div>
-        </div>
-
-        {/* Auxiliary Driver 2: Lower Mid-Woofer Cone with Concentric Lathed Metallic Groove Ring & RGB Halo */}
-        <div className="cd-concentric-lathed-ring relative w-[90%] max-w-[74px] aspect-square rounded-full p-[3px] sm:p-[4px] border border-[#334155] flex items-center justify-center shrink-0">
-          <div
-            aria-hidden="true"
-            style={{
-              opacity: ringGlowOpacity,
-              borderColor: ringRgbHex,
-              boxShadow: `0 0 12px ${ringRgbHex}, inset 0 0 10px ${ringRgbHex}`,
-            }}
-            className="pointer-events-none absolute inset-[2px] rounded-full border-[1.5px] z-20"
-          />
-          <div
-            style={{
-              transform: `scale(${effectiveScale})`,
-              transition: prefersReducedMotion ? 'none' : 'transform 75ms ease-out',
-            }}
-            className="cd-kevlar-cone w-full h-full rounded-full border border-white/25 flex items-center justify-center"
-          >
-            <div className="w-[40%] h-[40%] rounded-full bg-gradient-to-br from-[#94A3B8] via-[#1E293B] to-[#090D16] border border-white/45" />
-          </div>
-        </div>
-
-        {/* Auxiliary Driver 3: Deep Recessed Circular Sub-Bass Reflex Port with Flared Metallic Collar */}
-        <div className="cd-concentric-lathed-ring relative w-[64%] max-w-[46px] aspect-square rounded-full p-[2.5px] border border-[#334155] flex items-center justify-center shrink-0">
-          <div className="w-full h-full rounded-full bg-[#04060A] shadow-[inset_0_4px_8px_rgba(0,0,0,0.98)] flex items-center justify-center overflow-hidden">
-            <span
-              aria-hidden="true"
-              style={{
-                opacity: portGlowOpacity,
-                background: `radial-gradient(circle, ${ringRgbHex} 0%, transparent 72%)`,
-              }}
-              className="w-[82%] h-[82%] rounded-full"
-            />
-          </div>
-        </div>
-
-        {/* Bottom Hex Corner Screws & Laser-Etched Sub-Array Label */}
-        <div className="w-full flex items-center justify-between px-0.5 shrink-0">
-          <span className="w-2 h-2 rounded-full bg-[#334155] border border-[#0F172A] shadow-inner" />
-          <span className="font-mono text-[4.5px] sm:text-[5px] font-extrabold tracking-widest text-[#1E293B] uppercase">
-            SUB-ARRAY
-          </span>
-          <span className="w-2 h-2 rounded-full bg-[#334155] border border-[#0F172A] shadow-inner" />
-        </div>
-      </div>
-    );
-
     return (
       <div
         id={`cd-speaker-${side}`}
@@ -230,17 +122,16 @@ const BookshelfKevlarSpeaker = React.memo<{
         data-main-speaker-scale={CD_HIFI_SYSTEM_PROPORTIONS.mainSpeakerScaleFactor}
         data-rgb-ring-hex={ringRgbHex}
         data-rgb-port-hex={portRgbHex}
-        aria-label={`Sony Hi-Fi ${side === 'left' ? 'Left' : 'Right'} Multi-Driver RGB Bass-Reflex Speaker Array`}
+        aria-label={`Sony Hi-Fi ${side === 'left' ? 'Left' : 'Right'} Full-Width Kevlar RGB Bass-Reflex Speaker`}
         className="relative h-full min-h-0 flex flex-col justify-between select-none"
       >
-        {/* Full-Area Multi-Driver Speaker Stage: 70% Scaled Main Speaker + 30% Flanking Multi-Driver Tower */}
-        <div className="relative flex-1 min-h-0 w-full flex items-stretch gap-[2px]">
-          {side === 'left' && auxTowerElement}
-
-          {/* 30% Smaller Main Speaker Unit (70% Width of Speaker Column) */}
+        {/* Full-Width Bookshelf Speaker Cabinet */}
+        <div className="relative flex-1 min-h-0 w-full flex items-stretch">
           <div
             data-testid={`cd-main-speaker-cabinet-${side}`}
-            className="cd-speaker-silver-baffle relative w-[70%] h-full min-h-0 rounded-[4px] flex flex-col items-center justify-between px-1.5 py-1.5 sm:px-2.5 sm:py-2 overflow-hidden"
+            className={`cd-speaker-silver-baffle relative w-full h-full min-h-0 rounded-[4px] flex flex-col items-center justify-between ${
+              compact ? 'px-1 py-1' : 'px-1.5 py-1.5 sm:px-2.5 sm:py-2'
+            } overflow-hidden`}
           >
             {/* Top Hex Corner Screws & Stamped Acoustic Vent Slots */}
             <div className="relative z-20 w-full flex items-center justify-between px-0.5 pb-0.5 shrink-0">
@@ -269,7 +160,9 @@ const BookshelfKevlarSpeaker = React.memo<{
             <div
               data-horn-waveguide-pct={CD_HIFI_SYSTEM_PROPORTIONS.hornWaveguideHeightPct}
               style={{ height: `${CD_HIFI_SYSTEM_PROPORTIONS.hornWaveguideHeightPct}%` }}
-              className="cd-horn-waveguide relative z-20 w-[90%] min-h-[22px] sm:min-h-[28px] rounded-[4px] flex items-center justify-between px-2 overflow-hidden shrink-0"
+              className={`cd-horn-waveguide relative z-20 w-[90%] ${
+                compact ? 'min-h-[16px] px-1' : 'min-h-[22px] sm:min-h-[28px] px-2'
+              } rounded-[4px] flex items-center justify-between overflow-hidden shrink-0`}
             >
               {/* Sharp Chamfered Silver Inner Bezel */}
               <div
@@ -300,9 +193,9 @@ const BookshelfKevlarSpeaker = React.memo<{
                 data-woofer-diameter-pct={CD_HIFI_SYSTEM_PROPORTIONS.wooferDiameterPct}
                 style={{
                   width: `${CD_HIFI_SYSTEM_PROPORTIONS.wooferDiameterPct}%`,
-                  maxWidth: compact ? '114px' : '172px',
+                  maxWidth: compact ? '86px' : '172px',
                 }}
-                className="cd-woofer-chrome-bezel cd-concentric-lathed-ring relative aspect-square rounded-full p-[5px] sm:p-[7px] flex items-center justify-center z-20"
+                className="cd-woofer-chrome-bezel cd-concentric-lathed-ring relative aspect-square rounded-full p-[4px] sm:p-[7px] flex items-center justify-center z-20"
               >
                 {/* Stepped Precision-Lathed Concentric Chrome Inner Groove Rings */}
                 <div
@@ -412,8 +305,6 @@ const BookshelfKevlarSpeaker = React.memo<{
               </span>
             </div>
           </div>
-
-          {side === 'right' && auxTowerElement}
         </div>
 
         {/* Short Stepped Silver/Charcoal Isolation Feet Along Level Bottom Baseline */}
@@ -449,15 +340,23 @@ export const CdHifiDeck: React.FC<CdHifiDeckProps> = React.memo(
     onPrevious,
     onNext,
     onSeek,
-    onChangePitch,
     onChangeVolume,
     onToggleRepeatOne,
     onToggleShuffle,
     onToggleNightMode,
+    onToggleHideBoxArt,
     onScratch,
   }) => {
     const isStandby = track.id === 'standby-empty';
     const currentSecond = usePlaybackSecond();
+    const {
+      onDoubleClick: handleHideArtDoubleClick,
+      onPointerDownCapture: handleHideArtPointerDown,
+      onPointerUpCapture: handleHideArtPointerUp,
+    } = useDoubleTapHideArt({
+      enabled: !hideBoxArt,
+      onHide: onToggleHideBoxArt,
+    });
 
     // Receiver hardware states
     const [receiverPowered, setReceiverPowered] = useState<boolean>(true);
@@ -707,13 +606,29 @@ export const CdHifiDeck: React.FC<CdHifiDeckProps> = React.memo(
     // Draggable CD Jewel Case Holder Box (#album-art-holder-box)
     const [holderOffset, setHolderOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
     const [isDraggingHolder, setIsDraggingHolder] = useState<boolean>(false);
-    const holderDragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+    const holderDragStartRef = useRef<{ x: number; y: number; clientX: number; clientY: number }>({
+      x: 0,
+      y: 0,
+      clientX: 0,
+      clientY: 0,
+    });
+    const holderWasDraggedRef = useRef<boolean>(false);
 
-    // Interactive Master Volume Dial Dragging
-    const volumeDialDragRef = useRef<{ active: boolean; startY: number; startVol: number }>({
+    // Interactive Master Volume Dial Dragging (circular pointer angle + vertical drag)
+    const volumeDialDragRef = useRef<{
+      active: boolean;
+      startX: number;
+      startY: number;
+      startVol: number;
+      centerX: number;
+      centerY: number;
+    }>({
       active: false,
+      startX: 0,
       startY: 0,
       startVol: volume,
+      centerX: 0,
+      centerY: 0,
     });
 
     const handleToggleTrayEject = () => {
@@ -789,12 +704,39 @@ export const CdHifiDeck: React.FC<CdHifiDeckProps> = React.memo(
             <div className="cd-silver-fascia relative flex-1 min-h-0 w-full rounded-[4px] px-1.5 py-1.5 sm:px-2 sm:py-2 flex flex-col justify-between gap-1 overflow-hidden">
               {/* TOP SECTION: SONY Chrome Badge + Smoked-Acrylic VFD + 2 Rows of 3 Silver Rocker Buttons */}
               <div className="w-full flex flex-col gap-1 shrink-0">
-                {/* Top Header Strip with SONY Chrome Emblem & Model Engraving */}
-                <div className="flex items-center justify-between px-1">
-                  <span className="font-mono text-[6px] sm:text-[6.5px] font-bold tracking-[0.14em] text-[#334155] uppercase truncate">
-                    MHC-RG440S
-                  </span>
-                  <div className="px-2 py-[1px] rounded-[2px] bg-gradient-to-b from-[#F8FAFC] to-[#CBD5E1] border border-[#64748B] shadow-xs">
+                {/* Top Header Strip with Power Standby Button, SONY Chrome Emblem & 3CD Badge */}
+                <div className="flex items-center justify-between px-1 gap-1">
+                  <div className="flex items-center gap-1 min-w-0">
+                    <button
+                      id="cd-power-standby-btn"
+                      type="button"
+                      aria-pressed={receiverPowered}
+                      onClick={() => {
+                        triggerButtonHaptic(lowPowerMode);
+                        setReceiverPowered((prev) => !prev);
+                        onToggleNightMode?.();
+                      }}
+                      title="1/0 Power Standby"
+                      aria-label="1/0 Power Standby"
+                      className="h-[15px] px-1.5 rounded-[2px] bg-[#161B24] border border-[#475569] flex items-center gap-1 cursor-pointer active:translate-y-[1px] shrink-0"
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          receiverPowered
+                            ? 'bg-[#22C55E] shadow-[0_0_5px_#22C55E]'
+                            : 'bg-[#FF3B30] shadow-[0_0_5px_#FF3B30]'
+                        }`}
+                      />
+                      <Power className="w-2 h-2 text-[#E2E8F0]" />
+                      <span className="font-mono text-[5px] font-bold text-[#CBD5E1] leading-none">
+                        1/0
+                      </span>
+                    </button>
+                    <span className="font-mono text-[6px] sm:text-[6.5px] font-bold tracking-[0.14em] text-[#334155] uppercase truncate hidden sm:inline">
+                      MHC-RG440S
+                    </span>
+                  </div>
+                  <div className="px-2 py-[1px] rounded-[2px] bg-gradient-to-b from-[#F8FAFC] to-[#CBD5E1] border border-[#64748B] shadow-xs shrink-0">
                     <span className="font-display text-[8px] sm:text-[9.5px] font-black tracking-[0.25em] text-[#0F172A]">
                       SONY
                     </span>
@@ -1148,109 +1090,54 @@ export const CdHifiDeck: React.FC<CdHifiDeckProps> = React.memo(
               </div>
 
               {/* =================================================================
-                  MIDDLE SECTION: DEAD-CENTER MASTER VOLUME ROTARY KNOB (36% in 56% Well)
-                  Strictly Locked to Horizontal Dead-Center Axis via Symmetrical 21% Left/Right Strips
+                  MIDDLE SECTION: DEAD-CENTER MASTER VOLUME ROTARY KNOB + SINGLE UNIFIED HORIZONTAL FLUSH TOUCH BAR
                   ================================================================= */}
               <div
                 id="cd-center-volume-stage"
                 data-volume-axis="dead-center"
-                className="relative h-[28%] min-h-[104px] sm:min-h-[126px] w-full flex items-center justify-between gap-1 my-0.5 shrink-0"
+                className="relative w-full flex flex-col items-center justify-between gap-1 my-0.5 shrink-0"
               >
-                {/* LEFT VERTICAL UTILITY STRIP (21% Width): 1/0 STANDBY, ILLUMINATION/RGB, Dual 3.5mm PHONES/MIC Jacks */}
-                <div
-                  id="cd-left-utility-strip"
-                  className="w-[21%] h-full rounded-[4px] bg-gradient-to-b from-[#141821] to-[#0A0D12] border border-[#334155] p-1 flex flex-col items-center justify-between shrink-0 z-20"
-                >
-                  {/* 1/0 STANDBY Button with Glowing Red/Green LED */}
-                  <button
-                    id="cd-power-standby-btn"
-                    type="button"
-                    aria-pressed={receiverPowered}
-                    onClick={() => {
-                      triggerButtonHaptic(lowPowerMode);
-                      setReceiverPowered((prev) => !prev);
-                      onToggleNightMode?.();
-                    }}
-                    title="1/0 Power Standby"
-                    className="w-full py-1 rounded-[3px] bg-[#1E2430] border border-[#475569] flex flex-col items-center justify-center gap-0.5 cursor-pointer active:translate-y-[1px]"
-                  >
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        receiverPowered
-                          ? 'bg-[#22C55E] shadow-[0_0_5px_#22C55E]'
-                          : 'bg-[#FF3B30] shadow-[0_0_5px_#FF3B30]'
-                      }`}
-                    />
-                    <Power className="w-2.5 h-2.5 text-[#E2E8F0]" />
-                    <span className="font-mono text-[5px] font-bold text-[#CBD5E1] leading-none">
-                      1/0
-                    </span>
-                  </button>
-
-                  {/* ILLUMINATION / RGB Speaker Lighting Preset Toggle */}
-                  <button
-                    id="cd-rgb-preset-btn"
-                    type="button"
-                    onClick={handleCycleRgbPreset}
-                    title={`RGB Speaker Mode: ${rgbSpeakerState.presetLabel}`}
-                    aria-label={`Cycle RGB Speaker Illumination (${rgbSpeakerState.presetLabel})`}
-                    style={{
-                      borderColor: rgbSpeakerState.leftRingHex,
-                      boxShadow: `0 0 8px ${rgbSpeakerState.leftRingHex}44`,
-                    }}
-                    className="w-full py-1 rounded-[3px] bg-[#0F172A] border flex flex-col items-center justify-center gap-0.5 cursor-pointer active:translate-y-[1px]"
-                  >
-                    <Sparkles
-                      style={{ color: rgbSpeakerState.leftRingHex }}
-                      className="w-2.5 h-2.5"
-                    />
-                    <span className="font-mono text-[5px] font-extrabold text-[#F8FAFC] leading-none tracking-tighter">
-                      RGB
-                    </span>
-                  </button>
-
-                  {/* Dual 3.5mm PHONES & MIC Jacks */}
-                  <div className="w-full flex flex-col items-center gap-1 pt-0.5 border-t border-[#1E293B]">
-                    <div className="flex items-center justify-around w-full">
-                      <span
-                        title="3.5mm Stereo PHONES Jack"
-                        className="w-2.5 h-2.5 rounded-full bg-black border border-[#F59E0B] flex items-center justify-center"
-                      >
-                        <span className="w-1 h-1 rounded-full bg-[#090D16]" />
-                      </span>
-                      <span
-                        title="3.5mm MIC Input Jack"
-                        className="w-2.5 h-2.5 rounded-full bg-black border border-[#94A3B8] flex items-center justify-center"
-                      >
-                        <span className="w-1 h-1 rounded-full bg-[#090D16]" />
-                      </span>
-                    </div>
-                    <span className="font-mono text-[4.5px] font-bold uppercase text-[#94A3B8] leading-none">
-                      PHONES/MIC
-                    </span>
-                  </div>
-                </div>
-
                 {/* DEAD-CENTER FOCAL POINT: Oversized Machined Master Volume Dial Surrounded by Concentric Lathed Rings & Radial Ticks */}
-                <div className="relative flex-1 h-full flex flex-col items-center justify-center z-20">
+                <div className="relative w-full flex flex-col items-center justify-center z-20">
                   <div
                     id="cd-master-volume-well"
                     data-center-aligned="true"
+                    data-no-drawer-swipe="true"
                     data-well-diameter-pct={CD_HIFI_SYSTEM_PROPORTIONS.masterVolumeWellDiameterPct}
                     data-knob-diameter-pct={CD_HIFI_SYSTEM_PROPORTIONS.masterVolumeKnobDiameterPct}
+                    style={{ touchAction: 'none' }}
                     onWheel={(e) => {
                       e.preventDefault();
                       const delta = e.deltaY < 0 ? 0.04 : -0.04;
                       onChangeVolume(Number(Math.max(0, Math.min(1, volume + delta)).toFixed(2)));
                     }}
-                    className="cd-master-volume-well cd-concentric-lathed-ring relative mx-auto w-[86px] h-[86px] sm:w-[114px] sm:h-[114px] rounded-full p-[5px] flex items-center justify-center"
+                    className="cd-master-volume-well cd-concentric-lathed-ring relative mx-auto w-[84px] h-[84px] sm:w-[104px] sm:h-[104px] rounded-full p-[4px] flex items-center justify-center select-none"
                   >
-                    {/* Deep Matte-Black Inner Well with Illuminated Radial Calibration Ticks & Laser-Etched dB Scale */}
+                    {/* Deep Matte-Black Inner Well with Active Illuminated Radial Calibration Arc & Laser-Etched dB Scale */}
                     <div className="relative w-full h-full rounded-full bg-[#06080C] border border-[#475569] shadow-[inset_0_5px_14px_rgba(0,0,0,0.96)] flex items-center justify-center">
+                      {/* Illuminated Active Calibration Ring Proportional to Volume */}
+                      <div
+                        aria-hidden="true"
+                        style={{
+                          background: `conic-gradient(from -135deg, ${
+                            volumePct > 85 ? '#FF3B30' : '#00F0FF'
+                          } 0deg, ${rgbSpeakerState.leftRingHex} ${Math.max(
+                            4,
+                            Math.round((volumePct / 100) * 270)
+                          )}deg, rgba(148,163,184,0.14) ${Math.max(
+                            4,
+                            Math.round((volumePct / 100) * 270)
+                          )}deg 270deg, transparent 270deg 360deg)`,
+                          WebkitMask:
+                            'radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px))',
+                          mask: 'radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px))',
+                        }}
+                        className="pointer-events-none absolute inset-[2px] rounded-full"
+                      />
                       {/* Illuminated Radial Calibration Ticks */}
                       <div
                         aria-hidden="true"
-                        className="pointer-events-none absolute inset-[3px] rounded-full border border-dashed border-white/55"
+                        className="pointer-events-none absolute inset-[4px] rounded-full border border-dashed border-white/45"
                       />
                       <div
                         aria-hidden="true"
@@ -1260,10 +1147,10 @@ export const CdHifiDeck: React.FC<CdHifiDeckProps> = React.memo(
                         }}
                         className="pointer-events-none absolute inset-[7px] rounded-full border-[1.5px]"
                       />
-                      {/* Laser-Etched Decibel Markings Around Perimeter */}
+                      {/* Laser-Etched Decibel Markings & Integrated VFD VOL Readout */}
                       <span
                         aria-hidden="true"
-                        className="pointer-events-none absolute bottom-1 left-2 font-mono text-[4px] font-bold text-[#94A3B8]"
+                        className="pointer-events-none absolute bottom-1.5 left-2 font-mono text-[4px] font-bold text-[#94A3B8]"
                       >
                         -∞dB
                       </span>
@@ -1275,25 +1162,47 @@ export const CdHifiDeck: React.FC<CdHifiDeckProps> = React.memo(
                       </span>
                       <span
                         aria-hidden="true"
-                        className="pointer-events-none absolute bottom-1 right-1.5 font-mono text-[4px] font-bold text-[#FF3B30]"
+                        className="pointer-events-none absolute bottom-1.5 right-1.5 font-mono text-[4px] font-bold text-[#FF3B30]"
                       >
                         +6dB
+                      </span>
+                      <span
+                        id="cd-vfd-volume-readout"
+                        data-testid="cd-vfd-volume-readout"
+                        className="pointer-events-none absolute bottom-[3px] left-1/2 -translate-x-1/2 px-1 rounded-[2px] bg-[#04060A]/90 border border-[#00F0FF]/40 font-mono text-[6px] sm:text-[6.5px] font-bold tracking-[0.08em] text-[#00F0FF] tabular-nums leading-tight z-20"
+                      >
+                        VOL {String(volumePct).padStart(2, '0')}
                       </span>
 
                       {/* Machined Brushed-Aluminum Master Volume Rotary Knob with Concentric Lathed Grooves */}
                       <div
                         id="cd-master-volume-dial"
+                        data-no-drawer-swipe="true"
                         role="slider"
                         tabIndex={0}
                         aria-label="Center Master Volume Rotary Knob"
                         aria-valuemin={0}
                         aria-valuemax={100}
                         aria-valuenow={volumePct}
+                        onKeyDown={(e) => {
+                          if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
+                            e.preventDefault();
+                            onChangeVolume(Number(Math.min(1, volume + 0.05).toFixed(2)));
+                          } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
+                            e.preventDefault();
+                            onChangeVolume(Number(Math.max(0, volume - 0.05).toFixed(2)));
+                          }
+                        }}
                         onPointerDown={(e) => {
+                          e.stopPropagation();
+                          const rect = e.currentTarget.getBoundingClientRect();
                           volumeDialDragRef.current = {
                             active: true,
+                            startX: e.clientX,
                             startY: e.clientY,
                             startVol: volume,
+                            centerX: rect.left + rect.width / 2,
+                            centerY: rect.top + rect.height / 2,
                           };
                           try {
                             e.currentTarget.setPointerCapture(e.pointerId);
@@ -1303,141 +1212,174 @@ export const CdHifiDeck: React.FC<CdHifiDeckProps> = React.memo(
                         }}
                         onPointerMove={(e) => {
                           if (!volumeDialDragRef.current.active) return;
-                          const dy = volumeDialDragRef.current.startY - e.clientY;
-                          const nextVol = Math.max(
-                            0,
-                            Math.min(1, volumeDialDragRef.current.startVol + dy / 110)
-                          );
-                          onChangeVolume(Number(nextVol.toFixed(2)));
+                          const { startX, startY, startVol, centerX, centerY } =
+                            volumeDialDragRef.current;
+                          const dxCenter = e.clientX - centerX;
+                          const dyCenter = e.clientY - centerY;
+                          const radialDist = Math.hypot(dxCenter, dyCenter);
+                          const dragDx = Math.abs(e.clientX - startX);
+                          const dragDy = startY - e.clientY;
+                          let nextVol = startVol + dragDy / 110;
+                          if (radialDist >= 16 && dragDx > Math.abs(dragDy) * 0.65) {
+                            const angleDeg =
+                              (Math.atan2(dxCenter, -dyCenter) * 180) / Math.PI;
+                            const clampedAngle = Math.max(-135, Math.min(135, angleDeg));
+                            nextVol = (clampedAngle + 135) / 270;
+                          }
+                          onChangeVolume(Number(Math.max(0, Math.min(1, nextVol)).toFixed(2)));
                         }}
                         onPointerUp={() => {
                           volumeDialDragRef.current.active = false;
                         }}
-                        style={{
-                          transform: `rotate(${volumeDialAngleDeg}deg)`,
-                          transition: prefersReducedMotion ? 'none' : 'transform 75ms ease-out',
+                        onPointerCancel={() => {
+                          volumeDialDragRef.current.active = false;
                         }}
-                        className="cd-master-volume-knob cd-concentric-lathed-ring relative w-[66%] h-[66%] rounded-full border border-white/90 flex items-start justify-center pt-1.5 cursor-ns-resize"
+                        style={{
+                          touchAction: 'none',
+                          transform: `rotate(${volumeDialAngleDeg}deg)`,
+                          transition: prefersReducedMotion ? 'none' : 'transform 65ms ease-out',
+                        }}
+                        className="cd-master-volume-knob cd-concentric-lathed-ring relative w-[66%] h-[66%] rounded-full border border-white/90 flex items-start justify-center pt-1.5 cursor-grab active:cursor-grabbing"
                       >
                         <span
                           aria-hidden="true"
                           className="pointer-events-none absolute inset-[16%] rounded-full border border-black/30"
                         />
-                        <span className="relative z-10 w-1.5 h-2.5 rounded-full bg-[#FF3B30] shadow-[0_0_6px_#FF3B30]" />
+                        <span className="relative z-10 w-1.5 h-2 rounded-full bg-[#FF3B30] shadow-[0_0_6px_#FF3B30]" />
                       </div>
                     </div>
                   </div>
-
-                  {/* Compact Volume + Pitch Trim Bar Directly Under Well */}
-                  <div className="w-full flex items-center justify-center gap-1 mt-1 px-0.5">
-                    <Volume2 className="w-2.5 h-2.5 text-[#0F172A] shrink-0" />
-                    <input
-                      id="vertical-volume-slider"
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={volume}
-                      onChange={(e) => onChangeVolume(Number(e.target.value))}
-                      aria-label="Master Volume Control"
-                      className="w-14 sm:w-16 h-1 accent-[#FF3B30] cursor-pointer"
-                    />
-                    <span className="font-mono text-[6px] sm:text-[7px] font-extrabold text-[#0F172A] tabular-nums">
-                      {volumePct}%
-                    </span>
-                    <Sliders className="w-2 h-2 text-[#1E293B] shrink-0 ml-0.5" />
-                    <input
-                      id="vertical-pitch-slider"
-                      type="range"
-                      min={-8}
-                      max={8}
-                      step={0.5}
-                      value={pitchPercent}
-                      onChange={(e) => onChangePitch(Number(e.target.value))}
-                      aria-label="CD Pitch Tempo Trim"
-                      className="w-10 sm:w-12 h-1 accent-[#1D4ED8] cursor-pointer"
-                    />
-                  </div>
                 </div>
 
-                {/* RIGHT VERTICAL UTILITY STRIP (21% Width — Symmetrical to Left Strip to Lock Volume Knob to Dead Center) */}
+                {/* SINGLE UNIFIED CENTERED FLUSH HORIZONTAL TOUCH BAR: PREV | PLAY/PAUSE | STOP | NEXT | EJECT | RGB | EQ */}
                 <div
-                  id="cd-right-utility-strip"
-                  className="w-[21%] h-full rounded-[4px] bg-gradient-to-b from-[#141821] to-[#0A0D12] border border-[#334155] p-1 flex flex-col items-center justify-between shrink-0 z-20"
+                  id="cd-center-touch-bar"
+                  role="toolbar"
+                  aria-label="CD Receiver Transport and Utility Touch Bar"
+                  className="cd-touch-bar-strip w-full h-[24px] sm:h-[26px] rounded-[4px] grid grid-cols-7 divide-x divide-[#334155]/90 overflow-hidden shrink-0 z-20"
                 >
-                  {/* Play / Pause Primary Key */}
+                  <button
+                    id="cd-btn-prev"
+                    type="button"
+                    onClick={() => {
+                      triggerButtonHaptic(lowPowerMode);
+                      onPrevious();
+                    }}
+                    aria-label="Previous CD Track"
+                    title="PREV"
+                    className="cd-touch-bar-btn flex flex-col items-center justify-center gap-[1px] text-[#E2E8F0] cursor-pointer active:translate-y-[0.5px]"
+                  >
+                    <SkipBack className="w-2.5 h-2.5" />
+                    <span className="font-mono text-[4.5px] font-bold leading-none tracking-tight">PREV</span>
+                  </button>
+
                   <button
                     id="cd-btn-play-pause"
                     type="button"
+                    aria-pressed={isPlaying}
                     onClick={() => {
                       triggerButtonHaptic(lowPowerMode);
                       onTogglePlay();
                     }}
                     aria-label={isPlaying ? 'Pause CD Playback' : 'Play CD Playback'}
-                    className="w-full py-1 rounded-[3px] bg-gradient-to-b from-[#1E293B] to-[#0F172A] border border-[#00F0FF]/75 text-[#00F0FF] font-mono text-[6px] font-extrabold flex items-center justify-center gap-0.5 cursor-pointer active:translate-y-[1px]"
+                    title={isPlaying ? 'PAUSE' : 'PLAY'}
+                    className="cd-touch-bar-btn relative flex flex-col items-center justify-center gap-[1px] text-[#00F0FF] cursor-pointer active:translate-y-[0.5px]"
                   >
+                    <span
+                      className={`w-1.5 h-[2px] rounded-full ${
+                        isPlaying ? 'bg-[#00F0FF] shadow-[0_0_5px_#00F0FF]' : 'bg-[#334155]'
+                      }`}
+                    />
                     {isPlaying ? <Pause className="w-2.5 h-2.5" /> : <Play className="w-2.5 h-2.5" />}
-                    <span>{isPlaying ? 'PAUSE' : 'PLAY'}</span>
                   </button>
 
-                  {/* TUNING / PRESET +/- Skip Keys */}
-                  <div className="w-full grid grid-cols-2 gap-0.5">
-                    <button
-                      id="cd-btn-prev"
-                      type="button"
-                      onClick={() => {
-                        triggerButtonHaptic(lowPowerMode);
-                        onPrevious();
-                      }}
-                      aria-label="Previous CD Track / Tuning -"
-                      title="TUNING - / Previous Track"
-                      className="h-[18px] rounded-[2px] bg-[#262D3B] border border-[#475569] text-[#E2E8F0] flex items-center justify-center cursor-pointer active:translate-y-[1px]"
-                    >
-                      <SkipBack className="w-2.5 h-2.5" />
-                    </button>
-                    <button
-                      id="cd-btn-next"
-                      type="button"
-                      onClick={() => {
-                        triggerButtonHaptic(lowPowerMode);
-                        onNext();
-                      }}
-                      aria-label="Next CD Track / Tuning +"
-                      title="TUNING + / Next Track"
-                      className="h-[18px] rounded-[2px] bg-[#262D3B] border border-[#475569] text-[#E2E8F0] flex items-center justify-center cursor-pointer active:translate-y-[1px]"
-                    >
-                      <SkipForward className="w-2.5 h-2.5" />
-                    </button>
-                  </div>
+                  <button
+                    id="cd-btn-stop"
+                    type="button"
+                    onClick={() => {
+                      triggerButtonHaptic(lowPowerMode);
+                      onStop();
+                    }}
+                    aria-label="Stop CD Playback"
+                    title="STOP"
+                    className="cd-touch-bar-btn flex flex-col items-center justify-center gap-[1px] text-[#CBD5E1] cursor-pointer active:translate-y-[0.5px]"
+                  >
+                    <Square className="w-2 h-2 fill-current" />
+                    <span className="font-mono text-[4.5px] font-bold leading-none tracking-tight">STOP</span>
+                  </button>
 
-                  {/* Stop & EQ Selector Keys */}
-                  <div className="w-full grid grid-cols-2 gap-0.5">
-                    <button
-                      id="cd-btn-stop"
-                      type="button"
-                      onClick={() => {
-                        triggerButtonHaptic(lowPowerMode);
-                        onStop();
+                  <button
+                    id="cd-btn-next"
+                    type="button"
+                    onClick={() => {
+                      triggerButtonHaptic(lowPowerMode);
+                      onNext();
+                    }}
+                    aria-label="Next CD Track"
+                    title="NEXT"
+                    className="cd-touch-bar-btn flex flex-col items-center justify-center gap-[1px] text-[#E2E8F0] cursor-pointer active:translate-y-[0.5px]"
+                  >
+                    <SkipForward className="w-2.5 h-2.5" />
+                    <span className="font-mono text-[4.5px] font-bold leading-none tracking-tight">NEXT</span>
+                  </button>
+
+                  <button
+                    id="cd-touch-eject-btn"
+                    type="button"
+                    aria-pressed={isTrayManuallyOpen}
+                    onClick={handleToggleTrayEject}
+                    aria-label="Eject or Close CD Tray"
+                    title="EJECT"
+                    className="cd-touch-bar-btn flex flex-col items-center justify-center gap-[1px] text-[#F8FAFC] cursor-pointer active:translate-y-[0.5px]"
+                  >
+                    <span
+                      className={`w-1.5 h-[2px] rounded-full ${
+                        isTrayManuallyOpen ? 'bg-[#FF9F0A] shadow-[0_0_5px_#FF9F0A]' : 'bg-[#334155]'
+                      }`}
+                    />
+                    <svg viewBox="0 0 12 12" className="w-2.5 h-2.5 fill-current" aria-hidden="true">
+                      <polygon points="6,2 10.5,7 1.5,7" />
+                      <rect x="1.5" y="8.5" width="9" height="1.8" rx="0.5" />
+                    </svg>
+                  </button>
+
+                  <button
+                    id="cd-rgb-preset-btn"
+                    type="button"
+                    onClick={handleCycleRgbPreset}
+                    title={`RGB Mode: ${rgbSpeakerState.presetLabel}`}
+                    aria-label={`Cycle RGB Speaker Illumination (${rgbSpeakerState.presetLabel})`}
+                    className="cd-touch-bar-btn flex flex-col items-center justify-center gap-[1px] text-[#F8FAFC] cursor-pointer active:translate-y-[0.5px]"
+                  >
+                    <span
+                      style={{
+                        backgroundColor: rgbSpeakerState.leftRingHex,
+                        boxShadow: `0 0 6px ${rgbSpeakerState.leftRingHex}`,
                       }}
-                      aria-label="Stop CD Playback"
-                      className="h-[17px] rounded-[2px] bg-[#1E2430] border border-[#475569] text-[#CBD5E1] flex items-center justify-center cursor-pointer active:translate-y-[1px]"
-                    >
-                      <Square className="w-2 h-2 fill-current" />
-                    </button>
-                    <button
-                      id="cd-preset-eq-btn"
-                      type="button"
-                      onClick={() => {
-                        const nextPreset = getNextCdPresetEq(presetEqMode);
-                        handleSelectEqPreset(nextPreset);
-                      }}
-                      aria-label={`Preset EQ (${presetEqMode})`}
-                      title={`EQ Preset: ${presetEqMode}`}
-                      className="h-[17px] rounded-[2px] bg-[#1E2430] border border-[#38BDF8]/65 font-mono text-[5.5px] font-extrabold text-[#38BDF8] flex items-center justify-center cursor-pointer active:translate-y-[1px]"
-                    >
+                      className="w-1.5 h-[2px] rounded-full"
+                    />
+                    <span className="flex items-center gap-[1px]">
+                      <Sparkles style={{ color: rgbSpeakerState.leftRingHex }} className="w-2 h-2" />
+                      <span className="font-mono text-[4.5px] font-extrabold leading-none">RGB</span>
+                    </span>
+                  </button>
+
+                  <button
+                    id="cd-preset-eq-btn"
+                    type="button"
+                    onClick={() => {
+                      const nextPreset = getNextCdPresetEq(presetEqMode);
+                      handleSelectEqPreset(nextPreset);
+                    }}
+                    aria-label={`Preset EQ (${presetEqMode})`}
+                    title={`EQ Preset: ${presetEqMode}`}
+                    className="cd-touch-bar-btn flex flex-col items-center justify-center gap-[1px] text-[#38BDF8] cursor-pointer active:translate-y-[0.5px]"
+                  >
+                    <span className="w-1.5 h-[2px] rounded-full bg-[#38BDF8] shadow-[0_0_5px_#38BDF8]" />
+                    <span className="font-mono text-[4.5px] font-extrabold leading-none truncate max-w-full px-0.5">
                       {presetEqMode}
-                    </button>
-                  </div>
+                    </span>
+                  </button>
                 </div>
               </div>
 
@@ -1657,13 +1599,22 @@ export const CdHifiDeck: React.FC<CdHifiDeckProps> = React.memo(
                     tabIndex={hideBoxArt ? -1 : 0}
                     aria-hidden={hideBoxArt ? 'true' : undefined}
                     aria-label={`Draggable Photorealistic CD Jewel Case for ${track.title}`}
-                    title="Photorealistic CD Jewel Case · Click to Eject/Reload Disc"
+                    title="Photorealistic CD Jewel Case · Click to Eject/Reload Disc · Double-Click to Hide"
+                    onPointerDownCapture={handleHideArtPointerDown}
+                    onPointerUpCapture={handleHideArtPointerUp}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      handleHideArtDoubleClick(e);
+                    }}
                     onPointerDown={(e) => {
                       if (hideBoxArt) return;
                       setIsDraggingHolder(true);
+                      holderWasDraggedRef.current = false;
                       holderDragStartRef.current = {
                         x: e.clientX - holderOffset.x,
                         y: e.clientY - holderOffset.y,
+                        clientX: e.clientX,
+                        clientY: e.clientY,
                       };
                       try {
                         e.currentTarget.setPointerCapture(e.pointerId);
@@ -1673,6 +1624,13 @@ export const CdHifiDeck: React.FC<CdHifiDeckProps> = React.memo(
                     }}
                     onPointerMove={(e) => {
                       if (!isDraggingHolder) return;
+                      const movedDist = Math.hypot(
+                        e.clientX - holderDragStartRef.current.clientX,
+                        e.clientY - holderDragStartRef.current.clientY
+                      );
+                      if (movedDist >= 8) {
+                        holderWasDraggedRef.current = true;
+                      }
                       const dx = Math.max(-40, Math.min(40, e.clientX - holderDragStartRef.current.x));
                       const dy = Math.max(-24, Math.min(24, e.clientY - holderDragStartRef.current.y));
                       setHolderOffset({ x: dx, y: dy });
@@ -1682,6 +1640,10 @@ export const CdHifiDeck: React.FC<CdHifiDeckProps> = React.memo(
                       setHolderOffset({ x: 0, y: 0 });
                     }}
                     onClick={() => {
+                      if (holderWasDraggedRef.current) {
+                        holderWasDraggedRef.current = false;
+                        return;
+                      }
                       if (!hideBoxArt && !isDraggingHolder) {
                         startMechanicalLoadingSequence();
                         retroAudio.triggerCdTrackChangeCue();
@@ -1690,7 +1652,7 @@ export const CdHifiDeck: React.FC<CdHifiDeckProps> = React.memo(
                     style={{
                       opacity: hideBoxArt ? 0 : 1,
                       transform: `translate3d(${holderOffset.x}px, ${holderOffset.y}px, 0) scale(${
-                        hideBoxArt ? 0.9 : 1
+                        hideBoxArt ? 0.94 : 1
                       })`,
                       pointerEvents: hideBoxArt ? 'none' : 'auto',
                       transition: isDraggingHolder

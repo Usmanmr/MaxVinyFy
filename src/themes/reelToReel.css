@@ -215,3 +215,27 @@
     animation: none !important;
   }
 }
+
+[data-theme="reel-to-reel"] .r2r-aluminum-flange-conic {
+  background-color: #C9CCCE;
+  background-image:
+    repeating-radial-gradient(
+      circle at 50% 50%,
+      rgba(255, 255, 255, 0.12) 0px,
+      rgba(255, 255, 255, 0.12) 1px,
+      rgba(45, 48, 52, 0.08) 1px,
+      rgba(45, 48, 52, 0.08) 2.5px
+    ),
+    conic-gradient(
+      from 28deg,
+      #ECEFF2 0deg,
+      #A4A9AE 46deg,
+      #E3E6EA 98deg,
+      #8D9298 152deg,
+      #F5F7F9 208deg,
+      #989DA3 262deg,
+      #DCE0E4 316deg,
+      #ECEFF2 360deg
+    );
+}
+

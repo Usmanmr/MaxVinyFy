@@ -38,6 +38,7 @@ import {
 import { retroAudio } from '../utils/retroAudioEngine';
 import { playbackClockStore, usePlaybackSecond } from '../utils/playbackStore';
 import { SyncedLyricsPanel } from './SyncedLyricsPanel';
+import { useDoubleTapHideArt } from '../hooks/useDoubleTapHideArt';
 import type { TurntableDeckProps } from './TurntableDeck';
 
 /**
@@ -744,8 +745,29 @@ const CreamClockDateCard = React.memo<{
   );
 });
 
+const REEL_FLANGE_ANGLES = [0, 60, 120, 180, 240, 300] as const;
+
 /**
- * Single Open Aluminum Tape Reel with Dynamic Tape Ring Radius + 3 Curved Spokes + Optional Hub Artwork
+ * Outward-flaring rounded-triangle cutout window path on 200x200 NAB reel flange
+ * (narrow filleted base near hub at r≈45, flaring cleanly out to arc at r≈85).
+ */
+const REEL_CUTOUT_TRIANGLE_PATH =
+  'M 95.8 54.6 Q 94.0 54.4 92.6 52.0 L 73.6 23.2 Q 71.2 19.8 74.8 18.2 A 85 85 0 0 1 125.2 18.2 Q 128.8 19.8 126.4 23.2 L 107.4 52.0 Q 106.0 54.4 104.2 54.6 Q 100 55.4 95.8 54.6 Z';
+
+const REEL_FLANGE_MASK_URI = (() => {
+  const cutouts = REEL_FLANGE_ANGLES.map(
+    (deg) => `<path d="${REEL_CUTOUT_TRIANGLE_PATH}" fill="black" transform="rotate(${deg} 100 100)" />`
+  ).join('');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><rect width="200" height="200" fill="black"/><circle cx="100" cy="100" r="98" fill="white"/>${cutouts}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+})();
+
+/**
+ * Single 10.5" Open Aluminum NAB Tape Reel:
+ * - Anisotropic brushed-aluminum flange with 6 symmetrical outward-flaring rounded-triangle cutouts
+ * - Machined 1px specular chamfer highlights & recessed dark depth shadows on cutout edges
+ * - Central 3-screw NAB locking hub
+ * - Web Animations API continuous GPU spin that freezes at exact paused angle with zero snap + supports FF/REW bursts
  */
 const OpenAluminumReel = React.memo<{
   id: string;
@@ -753,8 +775,8 @@ const OpenAluminumReel = React.memo<{
   diameterPx: number;
   tapeOuterPct: number;
   durationSec: number;
-  timingFunction: string;
   shouldSpin: boolean;
+  spinBurstDir: -1 | 0 | 1;
   stageTransform: string;
   isDocumentHidden: boolean;
   lowPowerMode: boolean;
@@ -768,8 +790,8 @@ const OpenAluminumReel = React.memo<{
     diameterPx,
     tapeOuterPct,
     durationSec,
-    timingFunction,
     shouldSpin,
+    spinBurstDir,
     stageTransform,
     isDocumentHidden,
     lowPowerMode,
@@ -780,6 +802,63 @@ const OpenAluminumReel = React.memo<{
     const hubDiameterPct = 34;
     const tapeRadiusPx = ((tapeOuterPct / 100) * diameterPx) / 2;
     const hubRadiusPx = ((hubDiameterPct / 100) * diameterPx) / 2;
+    const spinLayerRef = useRef<HTMLDivElement | null>(null);
+    const spinAnimRef = useRef<Animation | null>(null);
+
+    const isActivelySpinning = !prefersReducedMotion && !isDocumentHidden && (shouldSpin || spinBurstDir !== 0);
+
+    // Zero-snap Web Animations API spin controller: pauses cleanly at exact current rotation angle
+    useEffect(() => {
+      const el = spinLayerRef.current;
+      if (!el || typeof el.animate !== 'function') return;
+      if (!spinAnimRef.current) {
+        try {
+          const anim = el.animate(
+            [{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }],
+            { duration: 4200, iterations: Infinity, easing: 'linear' }
+          );
+          anim.pause();
+          spinAnimRef.current = anim;
+        } catch {
+          return;
+        }
+      }
+      const anim = spinAnimRef.current;
+      if (!anim) return;
+
+      if (!isActivelySpinning) {
+        if (anim.playState === 'running') {
+          anim.pause();
+        }
+        return;
+      }
+
+      const baseRate = 4.2 / Math.max(0.4, durationSec);
+      const targetRate = spinBurstDir !== 0 ? spinBurstDir * 5.6 : baseRate;
+      try {
+        if (typeof anim.updatePlaybackRate === 'function') {
+          anim.updatePlaybackRate(targetRate);
+        } else {
+          anim.playbackRate = targetRate;
+        }
+        if (anim.playState !== 'running') {
+          anim.play();
+        }
+      } catch {
+        // ignore animation API exceptions
+      }
+    }, [isActivelySpinning, durationSec, spinBurstDir]);
+
+    useEffect(() => {
+      return () => {
+        try {
+          spinAnimRef.current?.cancel();
+        } catch {
+          // ignore
+        }
+        spinAnimRef.current = null;
+      };
+    }, []);
 
     return (
       <div
@@ -788,6 +867,8 @@ const OpenAluminumReel = React.memo<{
         style={{
           width: `${diameterPx}px`,
           height: `${diameterPx}px`,
+          aspectRatio: '1 / 1',
+          flexShrink: 0,
           transform: stageTransform,
           transition:
             isDocumentHidden || lowPowerMode || prefersReducedMotion
@@ -803,16 +884,13 @@ const OpenAluminumReel = React.memo<{
           className="pointer-events-none absolute rounded-full bg-[#2a1b10]/70 border border-[#8B6A45]/45 shadow-[inset_0_4px_12px_rgba(0,0,0,0.85),0_8px_18px_rgba(0,0,0,0.65)]"
         />
 
-        {/* Rotating Reel Assembly */}
+        {/* Rotating Reel Assembly (Continuous angle preserved on pause) */}
         <div
           id={spinId}
-          data-spinning={shouldSpin ? 'true' : 'false'}
-          style={{
-            animationDuration: `${durationSec}s`,
-            animationTimingFunction: timingFunction,
-            animationPlayState: shouldSpin ? 'running' : 'paused',
-          }}
-          className="r2r-reel-spin relative w-full h-full rounded-full flex items-center justify-center"
+          ref={spinLayerRef}
+          data-spinning={isActivelySpinning ? 'true' : 'false'}
+          style={{ willChange: 'transform', contain: 'layout paint' }}
+          className="relative w-full h-full rounded-full flex items-center justify-center"
         >
           {/* Dynamic Wound Magnetic Tape Spool Layer (#3B2A1E + Concentric Tape Sheen Rings) */}
           <div
@@ -822,95 +900,125 @@ const OpenAluminumReel = React.memo<{
               height: `${tapeOuterPct}%`,
               background:
                 'repeating-radial-gradient(circle at center, #3B2A1E 0px, #3B2A1E 2px, #291c13 3px, #4d3726 4.5px)',
-              boxShadow: 'inset 0 0 10px rgba(0,0,0,0.85), 0 0 4px rgba(0,0,0,0.65)',
+              boxShadow: 'inset 0 0 12px rgba(0,0,0,0.88), 0 0 5px rgba(0,0,0,0.65)',
             }}
             className="pointer-events-none absolute rounded-full border border-[#1a110b]"
           />
 
-          {/* Machined Brushed Aluminum Flange Rim + 3 Curved Spokes (SVG) */}
+          {/* Anisotropic Brushed-Aluminum Flange Ring Masked With 6 Symmetrical Cutout Windows */}
+          <div
+            aria-hidden="true"
+            style={{
+              WebkitMaskImage: REEL_FLANGE_MASK_URI,
+              maskImage: REEL_FLANGE_MASK_URI,
+              WebkitMaskSize: '100% 100%',
+              maskSize: '100% 100%',
+              WebkitMaskRepeat: 'no-repeat',
+              maskRepeat: 'no-repeat',
+            }}
+            className="r2r-aluminum-flange-conic pointer-events-none absolute inset-[1%] rounded-full opacity-95 drop-shadow-[0_4px_10px_rgba(0,0,0,0.62)]"
+          />
+
+          {/* Precision Cutout Chamfers, Outer Rim Bevel & 3-Screw NAB Locking Hub (SVG) */}
           <svg
             viewBox="0 0 200 200"
-            className="pointer-events-none relative z-10 w-full h-full drop-shadow-[0_4px_10px_rgba(0,0,0,0.65)]"
+            className="pointer-events-none relative z-10 w-full h-full"
           >
-            <defs>
-              <linearGradient id={`${id}-rim-grad`} x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#eff2f4" />
-                <stop offset="38%" stopColor="#C9CCCE" />
-                <stop offset="72%" stopColor="#9EA2A6" />
-                <stop offset="100%" stopColor="#dfe3e6" />
-              </linearGradient>
-              <mask id={`${id}-flange-mask`}>
-                <rect width="200" height="200" fill="black" />
-                <circle cx="100" cy="100" r="98" fill="white" />
-                {/* 3 Classic Mid-Century Curved Precision Cutout Windows */}
-                {[0, 120, 240].map((rot) => (
-                  <path
-                    key={rot}
-                    d="M 100 54 A 46 46 0 0 1 139 76 L 161 60 A 74 74 0 0 0 100 26 Z"
-                    fill="black"
-                    transform={`rotate(${rot} 100 100)`}
-                  />
-                ))}
-              </mask>
-            </defs>
-
-            {/* Flange Plate with 3 Cutout Windows & 3 Curved Spokes */}
+            {/* Outer Aluminum Rim Depth + Specular Lip */}
             <circle
               cx="100"
               cy="100"
-              r="98"
-              fill={`url(#${id}-rim-grad)`}
-              fillOpacity="0.93"
-              mask={`url(#${id}-flange-mask)`}
-              stroke="#767a7e"
-              strokeWidth="2"
-            />
-            <circle
-              cx="100"
-              cy="100"
-              r="94"
+              r="97.5"
               fill="none"
-              stroke="#ffffff"
-              strokeOpacity="0.55"
-              strokeWidth="1.2"
+              stroke="#686C70"
+              strokeWidth="1.8"
+            />
+            <circle
+              cx="100"
+              cy="100"
+              r="95.5"
+              fill="none"
+              stroke="rgba(255,255,255,0.62)"
+              strokeWidth="1"
+            />
+            <circle
+              cx="100"
+              cy="100"
+              r="89.5"
+              fill="none"
+              stroke="rgba(72,76,80,0.28)"
+              strokeWidth="0.7"
             />
 
-            {/* Precision Spoke Rivets */}
-            {[35, 155, 275].map((ang) => {
-              const rad = (ang * Math.PI) / 180;
-              const rx = 100 + Math.cos(rad) * 44;
-              const ry = 100 + Math.sin(rad) * 44;
-              return (
-                <circle
-                  key={ang}
-                  cx={rx}
-                  cy={ry}
-                  r="3.2"
-                  fill="#E8ECEF"
-                  stroke="#575b5e"
-                  strokeWidth="1"
+            {/* 6 Symmetrical Rounded-Triangle Cutout Chamfer Depth Shadows & 1px Specular Highlights */}
+            {REEL_FLANGE_ANGLES.map((rot) => (
+              <g key={rot} transform={`rotate(${rot} 100 100)`}>
+                <path
+                  d={REEL_CUTOUT_TRIANGLE_PATH}
+                  fill="none"
+                  stroke="rgba(20, 22, 25, 0.72)"
+                  strokeWidth="2.1"
+                  strokeLinejoin="round"
                 />
+                <path
+                  d={REEL_CUTOUT_TRIANGLE_PATH}
+                  fill="none"
+                  stroke="rgba(255, 255, 255, 0.72)"
+                  strokeWidth="0.95"
+                  strokeLinejoin="round"
+                  transform="translate(0.55, 0.55)"
+                />
+              </g>
+            ))}
+
+            {/* Central Brushed Chrome NAB Locking Hub Boss + 3 Locking Screws */}
+            <circle
+              cx="100"
+              cy="100"
+              r="34.5"
+              fill="#d2d6d9"
+              stroke="#62666b"
+              strokeWidth="1.8"
+            />
+            <circle
+              cx="100"
+              cy="100"
+              r="32"
+              fill="none"
+              stroke="rgba(255,255,255,0.65)"
+              strokeWidth="0.9"
+            />
+
+            {/* 3 Counter-Sunk NAB Locking Screws at 120° Intervals */}
+            {[30, 150, 270].map((ang) => {
+              const rad = (ang * Math.PI) / 180;
+              const sx = 100 + Math.cos(rad) * 25;
+              const sy = 100 + Math.sin(rad) * 25;
+              return (
+                <g key={ang}>
+                  <circle cx={sx} cy={sy} r="3.4" fill="#A5AAAE" stroke="#3E4246" strokeWidth="1" />
+                  <line
+                    x1={sx - 1.9}
+                    y1={sy - 1.2}
+                    x2={sx + 1.9}
+                    y2={sy + 1.2}
+                    stroke="#2B2E31"
+                    strokeWidth="0.95"
+                    strokeLinecap="round"
+                  />
+                </g>
               );
             })}
 
-            {/* Polished Chrome Center Hub Boss */}
-            <circle
-              cx="100"
-              cy="100"
-              r="34"
-              fill="#d5d9dc"
-              stroke="#6c7074"
-              strokeWidth="2"
-            />
-            <circle cx="100" cy="100" r="14" fill="#E8ECEF" stroke="#45484b" strokeWidth="1.8" />
-            {/* 3-Prong NAB Spindle Lock */}
+            {/* Center NAB 3-Prong Clamp Collar */}
+            <circle cx="100" cy="100" r="14.5" fill="#E8ECEF" stroke="#45484b" strokeWidth="1.8" />
             {[0, 120, 240].map((ang) => (
               <rect
                 key={ang}
-                x="98"
-                y="84"
-                width="4"
-                height="9"
+                x="98.2"
+                y="84.5"
+                width="3.6"
+                height="8.5"
                 rx="1"
                 fill="#4a4d50"
                 transform={`rotate(${ang} 100 100)`}
@@ -919,16 +1027,16 @@ const OpenAluminumReel = React.memo<{
             <circle cx="100" cy="100" r="5" fill="#232527" stroke="#E8ECEF" strokeWidth="1" />
           </svg>
 
-          {/* Optional Rotating Small Square Album-Art Hub Label on Left Supply Reel */}
+          {/* Compact Rotating Album-Art Hub Label Inside Left Supply Reel (Preserves 3 NAB Hub Screws Visibility) */}
           {hubArtwork && (
             <div
               id="vinyl-center-label-art"
               data-testid="vinyl-center-label-art"
               style={{
-                width: `${Math.max(26, Math.round(hubRadiusPx * 1.48))}px`,
-                height: `${Math.max(26, Math.round(hubRadiusPx * 1.48))}px`,
+                width: `${Math.max(24, Math.round(hubRadiusPx * 0.96))}px`,
+                height: `${Math.max(24, Math.round(hubRadiusPx * 0.96))}px`,
               }}
-              className="pointer-events-none absolute z-20 rounded-[3px] overflow-hidden border-2 border-[#EFE9DC] bg-[#1d140d] shadow-[0_2px_6px_rgba(0,0,0,0.8)]"
+              className="pointer-events-none absolute z-20 rounded-full overflow-hidden border-[1.5px] border-[#EFE9DC] bg-[#1d140d] shadow-[0_2px_6px_rgba(0,0,0,0.8)]"
             >
               {hubArtwork}
             </div>
@@ -994,6 +1102,7 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
     repeatOne,
     shuffleEnabled,
     hideBoxArt = false,
+    onToggleHideBoxArt,
     viewportLayout,
     themePalette,
     onTogglePlay,
@@ -1012,6 +1121,14 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
     const isStandby = track.id === 'standby-empty' || track.durationSec <= 0;
     const isCompactLandscape = viewportLayout === 'mobile-landscape';
     const currentSecond = usePlaybackSecond();
+    const {
+      onDoubleClick: handleHideArtDoubleClick,
+      onPointerDownCapture: handleHideArtPointerDown,
+      onPointerUpCapture: handleHideArtPointerUp,
+    } = useDoubleTapHideArt({
+      enabled: !hideBoxArt,
+      onHide: onToggleHideBoxArt,
+    });
 
     const [isStoppedAtRest, setIsStoppedAtRest] = useState<boolean>(false);
     useEffect(() => {
@@ -1054,7 +1171,7 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
       };
     }, [isStandby, track.id, track.title, track.artist, artworkState.isPlaceholder, onResolvedPerTrackArtwork]);
 
-    // Measure Media Stage for perfectly fitted dual reels & cardboard sleeve holder
+    // Measure Media Stage for enlarged +30% dual 10.5" NAB reels & cardboard sleeve holder
     const topSurfaceRef = useRef<HTMLDivElement | null>(null);
     const mediaStageRef = useRef<HTMLDivElement | null>(null);
     const holderHomeSlotRef = useRef<HTMLDivElement | null>(null);
@@ -1092,23 +1209,24 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
     const isNarrowDeck = stageSize.width < 560;
     const isUltraNarrowDeck = stageSize.width < 430;
 
-    // Two large side-by-side reels sized cleanly to available media-stage height & width
+    // Enlarged (+25% to +35%) side-by-side 10.5" reels with locked 1:1 aspect ratio and clean center gap
     const reelDiameterPx = useMemo(() => {
-      const maxByWidth = Math.floor((stageSize.width - (isUltraNarrowDeck ? 24 : 36)) / 2);
-      const maxByHeight = Math.floor(stageSize.height - (isCompactLandscape ? 20 : 34));
-      return Math.max(76, Math.min(maxByWidth, maxByHeight, 250));
+      const maxByWidth = Math.floor((stageSize.width - (isUltraNarrowDeck ? 18 : 28)) / 2);
+      const maxByHeight = Math.floor(stageSize.height * (isCompactLandscape ? 1.05 : 1.18));
+      return Math.max(96, Math.min(maxByWidth, maxByHeight, 336));
     }, [stageSize.width, stageSize.height, isCompactLandscape, isUltraNarrowDeck]);
 
     // Tape-box cardboard sleeve holder size
     const holderBoxSizePx = useMemo(
-      () => Math.max(66, Math.min(Math.round(reelDiameterPx * 0.7), 132)),
+      () => Math.max(66, Math.min(Math.round(reelDiameterPx * 0.56), 124)),
       [reelDiameterPx]
     );
 
-    // Draggable Tape-Box Holder State (freely draggable across #console-top-surface + double-click re-dock)
+    // Draggable Tape-Box Holder State (freely draggable across #console-top-surface + double-click/double-tap hide)
     const [holderOffset, setHolderOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
     const [holderTiltDeg, setHolderTiltDeg] = useState<number>(-2.5);
     const [isDraggingHolder, setIsDraggingHolder] = useState<boolean>(false);
+    const holderWasDraggedRef = useRef<boolean>(false);
     const holderDragRef = useRef<{
       pointerX: number;
       pointerY: number;
@@ -1124,6 +1242,7 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
 
     const handleHolderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
       e.stopPropagation();
+      holderWasDraggedRef.current = false;
       const surfaceRect =
         topSurfaceRef.current?.getBoundingClientRect() ||
         mediaStageRef.current?.getBoundingClientRect();
@@ -1162,6 +1281,9 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
     const handleHolderPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
       const origin = holderDragRef.current;
       if (!origin) return;
+      if (Math.hypot(e.clientX - origin.pointerX, e.clientY - origin.pointerY) >= 8) {
+        holderWasDraggedRef.current = true;
+      }
       const stepDeltaX = e.clientX - origin.lastPointerX;
       origin.lastPointerX = e.clientX;
       if (Math.abs(stepDeltaX) >= 0.5) origin.lastDeltaX = stepDeltaX;
@@ -1313,6 +1435,31 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
       return () => window.clearInterval(timerId);
     }, [isPlaying, isStandby, isDocumentHidden, prefersReducedMotion, lowPowerMode]);
 
+    // FF / REW high-speed spin burst state (-1 = REW, 0 = normal, 1 = FF)
+    const [manualBurstDir, setManualBurstDir] = useState<-1 | 0 | 1>(0);
+    const spinBurstTimerRef = useRef<number | null>(null);
+    useEffect(() => {
+      return () => {
+        if (spinBurstTimerRef.current !== null) window.clearTimeout(spinBurstTimerRef.current);
+      };
+    }, []);
+
+    const triggerSpinBurst = useCallback(
+      (dir: -1 | 1, durationMs = 650) => {
+        if (prefersReducedMotion || isDocumentHidden) return;
+        setManualBurstDir(dir);
+        if (spinBurstTimerRef.current !== null) window.clearTimeout(spinBurstTimerRef.current);
+        spinBurstTimerRef.current = window.setTimeout(() => {
+          setManualBurstDir(0);
+          spinBurstTimerRef.current = null;
+        }, durationMs);
+      },
+      [prefersReducedMotion, isDocumentHidden]
+    );
+
+    const activeSpinBurstDir: -1 | 0 | 1 =
+      trackChangePhase === 'rewinding-tape' ? -1 : manualBurstDir;
+
     // Tape Nudge momentary visual state
     const [nudgePulseActive, setNudgePulseActive] = useState<boolean>(false);
     const nudgeTimerRef = useRef<number | null>(null);
@@ -1325,13 +1472,14 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
     const handleTriggerNudge = useCallback(() => {
       triggerButtonHaptic(lowPowerMode);
       onScratch('classic');
+      triggerSpinBurst(1, 320);
       setNudgePulseActive(true);
       if (nudgeTimerRef.current !== null) window.clearTimeout(nudgeTimerRef.current);
       nudgeTimerRef.current = window.setTimeout(() => {
         setNudgePulseActive(false);
         nudgeTimerRef.current = null;
       }, 220);
-    }, [lowPowerMode, onScratch]);
+    }, [lowPowerMode, onScratch, triggerSpinBurst]);
 
     const handleStopClick = useCallback(() => {
       triggerButtonHaptic(lowPowerMode);
@@ -1379,7 +1527,7 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
         id="turntable-console-root"
         aria-label="1965-1975 Brushed Aluminum & Walnut Open-Reel Tape Deck"
         data-track-change-phase={trackChangePhase}
-        className="r2r-walnut-cabinet walnut-furniture-cabinet panel-contain relative w-full h-full min-h-0 flex flex-col justify-between overflow-hidden select-none p-2 sm:p-2.5 lg:p-3 gap-1.5"
+        className="r2r-walnut-cabinet walnut-furniture-cabinet panel-contain relative w-full h-full min-h-0 flex flex-col justify-between overflow-visible select-none p-2 sm:p-2.5 lg:p-3 gap-1.5"
       >
         <CornerScrew className="absolute top-1 left-1 w-2.5 h-2.5 z-40" />
         <CornerScrew className="absolute top-1 right-1 w-2.5 h-2.5 z-40" />
@@ -1392,12 +1540,12 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
         <div
           ref={topSurfaceRef}
           id="console-top-surface"
-          className="relative z-20 flex-1 min-h-0 flex flex-col justify-between gap-1"
+          className="relative z-20 flex-1 min-h-0 flex flex-col justify-between gap-1 overflow-visible"
         >
           {/* Upper Engraved Aluminum / Cream Song-Title Nameplate */}
           <div
             id="console-title-plate"
-            className={`r2r-aluminum-fascia relative z-10 w-full rounded-[4px] overflow-hidden shrink-0 ${
+            className={`r2r-aluminum-fascia relative z-30 w-full rounded-[4px] overflow-hidden shrink-0 ${
               isCompactLandscape ? 'px-4 py-1' : 'px-5 py-1.5'
             }`}
           >
@@ -1430,7 +1578,7 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
           <div
             ref={mediaStageRef}
             id="reel-media-stage"
-            className="relative z-40 flex-1 min-h-0 w-full rounded-[4px] border border-[#3e2817] bg-gradient-to-b from-[#7a5537]/50 via-[#5a3b24]/60 to-[#392414]/85 shadow-[inset_0_4px_14px_rgba(0,0,0,0.65)] flex flex-col items-center justify-center overflow-visible px-2 py-1"
+            className="relative z-20 flex-1 min-h-0 w-full rounded-[4px] border border-[#3e2817] bg-gradient-to-b from-[#7a5537]/50 via-[#5a3b24]/60 to-[#392414]/85 shadow-[inset_0_4px_14px_rgba(0,0,0,0.65)] flex flex-col items-center justify-center overflow-visible px-2 py-1"
           >
             <ReelDustCanvas
               width={stageSize.width}
@@ -1445,16 +1593,19 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
               </span>
             </div>
 
-            {/* Dual Side-by-Side Reels */}
-            <div className="relative z-20 flex items-center justify-center gap-4 sm:gap-7 w-full">
+            {/* Dual Side-by-Side 10.5" Open-Reel Spools (Graceful top overhang + clean center gap) */}
+            <div
+              id="r2r-reels-row"
+              className="relative z-20 flex items-center justify-center gap-3 sm:gap-5 w-full overflow-visible -mt-2"
+            >
               <OpenAluminumReel
                 id="r2r-supply-reel"
                 spinId="r2r-supply-spin-layer"
                 diameterPx={reelDiameterPx}
                 tapeOuterPct={tapeRadii.supplyOuterPct}
                 durationSec={reelSpeeds.supplyDurationSec}
-                timingFunction={reelSpeeds.timingFunction}
                 shouldSpin={shouldSpin}
+                spinBurstDir={activeSpinBurstDir}
                 stageTransform={stagePose.supplyTransform}
                 isDocumentHidden={isDocumentHidden}
                 lowPowerMode={lowPowerMode}
@@ -1469,8 +1620,8 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
                 diameterPx={reelDiameterPx}
                 tapeOuterPct={tapeRadii.takeupOuterPct}
                 durationSec={reelSpeeds.takeupDurationSec}
-                timingFunction={reelSpeeds.timingFunction}
                 shouldSpin={shouldSpin}
+                spinBurstDir={activeSpinBurstDir}
                 stageTransform={stagePose.takeupTransform}
                 isDocumentHidden={isDocumentHidden}
                 lowPowerMode={lowPowerMode}
@@ -1533,8 +1684,8 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
                 width: `${holderBoxSizePx}px`,
                 height: `${holderBoxSizePx}px`,
                 opacity: hideBoxArt ? 0 : 1,
-                transform: hideBoxArt ? 'scale(0.92)' : 'scale(1)',
-                transition: prefersReducedMotion ? 'none' : 'opacity 240ms ease, transform 240ms ease',
+                transform: hideBoxArt ? 'scale(0.94)' : 'scale(1)',
+                transition: prefersReducedMotion ? 'none' : 'opacity 220ms ease-out, transform 220ms ease-out',
               }}
               className="pointer-events-none absolute z-50 flex items-center justify-center select-none"
             >
@@ -1547,11 +1698,17 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
                 onPointerMove={handleHolderPointerMove}
                 onPointerUp={handleHolderPointerUp}
                 onPointerCancel={handleHolderPointerUp}
-                onDoubleClick={() => {
-                  setHolderOffset({ x: 0, y: 0 });
-                  setHolderTiltDeg(-2.5);
+                onPointerDownCapture={handleHideArtPointerDown}
+                onPointerUpCapture={handleHideArtPointerUp}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  if (holderWasDraggedRef.current) {
+                    holderWasDraggedRef.current = false;
+                    return;
+                  }
+                  handleHideArtDoubleClick(e);
                 }}
-                title="Drag cardboard tape-box sleeve anywhere across the deck (double-click to re-dock)"
+                title="Drag cardboard tape-box sleeve anywhere across the deck · Double-click to hide"
                 style={{
                   width: `${holderBoxSizePx}px`,
                   height: `${holderBoxSizePx}px`,
@@ -1596,7 +1753,7 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
           </div>
 
           {/* Amber Tuner-Dial Seek Bar Above Backlit Amber Glass Lyrics Window */}
-          <div id="lyrics-strip-slot" className="relative z-10 w-full shrink-0 flex flex-col gap-1">
+          <div id="lyrics-strip-slot" className="relative z-30 w-full shrink-0 flex flex-col gap-1">
             <AmberTunerSeekBar
               trackId={track.id}
               durationSec={track.durationSec}
@@ -1668,6 +1825,7 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
                   title="Rewind / Previous Track"
                   onClick={() => {
                     triggerButtonHaptic(lowPowerMode);
+                    triggerSpinBurst(-1, 700);
                     onPrevious();
                   }}
                 >
@@ -1744,6 +1902,7 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
                   title="Fast-Forward / Next Track"
                   onClick={() => {
                     triggerButtonHaptic(lowPowerMode);
+                    triggerSpinBurst(1, 700);
                     onNext();
                   }}
                 >
@@ -1925,6 +2084,7 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
                   title="Rewind / Previous Track"
                   onClick={() => {
                     triggerButtonHaptic(lowPowerMode);
+                    triggerSpinBurst(-1, 700);
                     onPrevious();
                   }}
                 >
@@ -2001,6 +2161,7 @@ export const ReelToReelDeck = React.memo<TurntableDeckProps>(
                   title="Fast-Forward / Next Track"
                   onClick={() => {
                     triggerButtonHaptic(lowPowerMode);
+                    triggerSpinBurst(1, 700);
                     onNext();
                   }}
                 >

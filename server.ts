@@ -1,4 +1,5 @@
 import express from 'express';
+import http from 'http';
 import fs from 'fs';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
@@ -23,7 +24,57 @@ const youtubeSearchCache = new Map<
 >();
 const spotifyArtCache = new Map<string, string>();
 const spotifyPlaylistCache = new Map<string, unknown>();
+const spotifyEmbedCache = new Map<
+  string,
+  {
+    playlistId: string;
+    name: string;
+    coverUrl: string;
+    totalTracks: number;
+    rawTracks: Array<{
+      uri?: string;
+      title?: string;
+      subtitle?: string;
+      duration?: number;
+      audioPreview?: { url?: string };
+    }>;
+  }
+>();
+const spotifyEmbedInFlight = new Map<
+  string,
+  Promise<{
+    playlistId: string;
+    name: string;
+    coverUrl: string;
+    totalTracks: number;
+    rawTracks: Array<{
+      uri?: string;
+      title?: string;
+      subtitle?: string;
+      duration?: number;
+      audioPreview?: { url?: string };
+    }>;
+  }>
+>();
+const spotifyPlaylistInFlight = new Map<string, Promise<unknown>>();
 const pkceStore = new Map<string, { codeVerifier: string; clientId: string; redirectUri: string }>();
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = 10000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function base64UrlEncode(buf: Buffer): string {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -127,14 +178,14 @@ async function fetchSpotifyTrackArtwork(
     return spotifyArtCache.get(cacheKey)!;
   }
 
-  // 1. Primary: Spotify oEmbed track thumbnail (with 2-attempt retry)
+  // 1. Primary: Spotify oEmbed track thumbnail (with 2-attempt retry + tight timeout)
   if (trackId && !trackId.startsWith('sp-')) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const oembedUrl = `https://open.spotify.com/oembed?url=${encodeURIComponent(
           `https://open.spotify.com/track/${trackId}`
         )}`;
-        const res = await fetch(oembedUrl);
+        const res = await fetchWithTimeout(oembedUrl, {}, 2600);
         if (res.ok) {
           const data = (await res.json()) as { thumbnail_url?: string };
           if (data.thumbnail_url) {
@@ -155,7 +206,7 @@ async function fetchSpotifyTrackArtwork(
       const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(
         searchQuery
       )}&entity=song&limit=1`;
-      const res = await fetch(itunesUrl);
+      const res = await fetchWithTimeout(itunesUrl, {}, 2600);
       if (res.ok) {
         const data = (await res.json()) as {
           results?: Array<{ artworkUrl100?: string }>;
@@ -178,109 +229,184 @@ async function fetchSpotifyTrackArtwork(
 // Note: No hardcoded personal playlists or tracks exist on the server.
 // All user playlists & libraries come dynamically from the signed-in user's Spotify Web API token.
 
-async function fetchPublicSpotifyPlaylistById(playlistId: string) {
-  if (spotifyPlaylistCache.has(playlistId)) {
-    return spotifyPlaylistCache.get(playlistId) as {
-      playlistId: string;
-      name: string;
-      coverUrl: string;
-      totalTracks: number;
-      tracks: Array<{
-        id: string;
-        title: string;
-        artist: string;
-        album: string;
-        durationSec: number;
-        bpm: number;
-        year: number;
-        artworkUrl: string;
-        spotifyUri: string;
-        previewAudioUrl?: string;
-      }>;
-    };
+async function fetchPublicSpotifyEmbedData(playlistId: string) {
+  if (spotifyEmbedCache.has(playlistId)) {
+    return spotifyEmbedCache.get(playlistId)!;
+  }
+  if (spotifyEmbedInFlight.has(playlistId)) {
+    return spotifyEmbedInFlight.get(playlistId)!;
   }
 
-  const embedUrl = `https://open.spotify.com/embed/playlist/${encodeURIComponent(playlistId)}`;
-  const response = await fetch(embedUrl, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    },
-  });
-  if (!response.ok) {
-    throw new Error('Failed to load Spotify playlist embed.');
-  }
-  const html = await response.text();
-  const nextDataMatch = html.match(
-    /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/
-  );
-  if (!nextDataMatch) {
-    throw new Error('Could not parse Spotify playlist tracklist.');
-  }
-
-  const parsed = JSON.parse(nextDataMatch[1]);
-  const entity = parsed?.props?.pageProps?.state?.data?.entity;
-  if (!entity || !Array.isArray(entity.trackList)) {
-    throw new Error('Spotify playlist entity missing trackList.');
-  }
-
-  const playlistName = entity.name || entity.title || 'Spotify Playlist';
-  const playlistCover = entity.coverArt?.sources?.[0]?.url || '';
-  const rawTracks = entity.trackList;
-  const usedTrackIds = new Map<string, number>();
-
-  const tracks = await Promise.all(
-    rawTracks.map(
-      async (
-        item: {
-          uri?: string;
-          title?: string;
-          subtitle?: string;
-          duration?: number;
-          audioPreview?: { url?: string };
+  const work = (async () => {
+    const embedUrl = `https://open.spotify.com/embed/playlist/${encodeURIComponent(playlistId)}`;
+    const response = await fetchWithTimeout(
+      embedUrl,
+      {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         },
-        idx: number
-      ) => {
-        const baseTrackId = (item.uri || '').split(':').pop() || `sp-${idx}`;
-        const seenCount = usedTrackIds.get(baseTrackId) ?? 0;
-        usedTrackIds.set(baseTrackId, seenCount + 1);
-        const trackId = seenCount === 0 ? baseTrackId : `${baseTrackId}__${seenCount + 1}`;
-        const title = item.title || `Track ${idx + 1}`;
-        const artist = (item.subtitle || 'Spotify Artist').replace(/\u00a0/g, ' ');
-        const durationSec = Math.max(30, Math.round((item.duration || 180000) / 1000));
-        const previewAudioUrl = item.audioPreview?.url || undefined;
+      },
+      10000
+    );
+    if (!response.ok) {
+      throw new Error('Failed to load Spotify playlist embed.');
+    }
+    const html = await response.text();
+    const nextDataMatch = html.match(
+      /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/
+    );
+    if (!nextDataMatch) {
+      throw new Error('Could not parse Spotify playlist tracklist.');
+    }
 
-        // Fetch individual per-track artwork for EVERY track in the playlist (never fall back to playlistCover)
-        const artworkUrl = await fetchSpotifyTrackArtwork(baseTrackId, title, artist);
+    const parsed = JSON.parse(nextDataMatch[1]);
+    const entity = parsed?.props?.pageProps?.state?.data?.entity;
+    if (!entity || !Array.isArray(entity.trackList)) {
+      throw new Error('Spotify playlist entity missing trackList.');
+    }
 
-        const images = artworkUrl ? [{ url: artworkUrl, width: 640, height: 640 }] : [];
+    const payload = {
+      playlistId,
+      name: entity.name || entity.title || 'Spotify Playlist',
+      coverUrl: entity.coverArt?.sources?.[0]?.url || '',
+      totalTracks: entity.trackList.length,
+      rawTracks: entity.trackList as Array<{
+        uri?: string;
+        title?: string;
+        subtitle?: string;
+        duration?: number;
+        audioPreview?: { url?: string };
+      }>,
+    };
+    spotifyEmbedCache.set(playlistId, payload);
+    return payload;
+  })();
 
-        return {
-          id: trackId,
-          title,
-          artist,
-          album: `Spotify · ${playlistName}`,
-          durationSec,
-          bpm: 108 + (idx % 16),
-          year: 2024,
-          artworkUrl,
-          images,
-          spotifyUri: item.uri || `spotify:track:${baseTrackId}`,
-          previewAudioUrl,
-        };
-      }
-    )
-  );
+  spotifyEmbedInFlight.set(playlistId, work);
+  try {
+    return await work;
+  } finally {
+    spotifyEmbedInFlight.delete(playlistId);
+  }
+}
 
-  const payload = {
-    playlistId,
-    name: `Spotify · ${playlistName}`,
-    coverUrl: playlistCover,
-    totalTracks: entity.trackList.length,
-    tracks,
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      results[idx] = await mapper(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+async function fetchPublicSpotifyPlaylistById(playlistId: string) {
+  type PublicPlaylistPayload = {
+    playlistId: string;
+    name: string;
+    coverUrl: string;
+    totalTracks: number;
+    tracks: Array<{
+      id: string;
+      title: string;
+      artist: string;
+      album: string;
+      durationSec: number;
+      bpm: number;
+      year: number;
+      artworkUrl: string;
+      images: Array<{ url: string; width: number; height: number }>;
+      spotifyUri: string;
+      previewAudioUrl?: string;
+    }>;
   };
-  spotifyPlaylistCache.set(playlistId, payload);
-  return payload;
+
+  if (spotifyPlaylistCache.has(playlistId)) {
+    return spotifyPlaylistCache.get(playlistId) as PublicPlaylistPayload;
+  }
+  if (spotifyPlaylistInFlight.has(playlistId)) {
+    return spotifyPlaylistInFlight.get(playlistId) as Promise<PublicPlaylistPayload>;
+  }
+
+  const work = (async (): Promise<PublicPlaylistPayload> => {
+    const embedData = await fetchPublicSpotifyEmbedData(playlistId);
+    const playlistName = embedData.name;
+    const playlistCover = embedData.coverUrl;
+    const rawTracks = embedData.rawTracks;
+    const usedTrackIds = new Map<string, number>();
+
+    const trackMeta = rawTracks.map((item, idx) => {
+      const baseTrackId = (item.uri || '').split(':').pop() || `sp-${idx}`;
+      const seenCount = usedTrackIds.get(baseTrackId) ?? 0;
+      usedTrackIds.set(baseTrackId, seenCount + 1);
+      const trackId = seenCount === 0 ? baseTrackId : `${baseTrackId}__${seenCount + 1}`;
+      const title = item.title || `Track ${idx + 1}`;
+      const artist = (item.subtitle || 'Spotify Artist').replace(/\u00a0/g, ' ');
+      const durationSec = Math.max(30, Math.round((item.duration || 180000) / 1000));
+      const previewAudioUrl = item.audioPreview?.url || undefined;
+      return {
+        idx,
+        baseTrackId,
+        trackId,
+        title,
+        artist,
+        durationSec,
+        previewAudioUrl,
+        spotifyUri: item.uri || `spotify:track:${baseTrackId}`,
+      };
+    });
+
+    // Eagerly resolve artwork for the first 12 tracks with bounded concurrency so large playlists never stall.
+    // Remaining tracks resolve per-track artwork lazily on demand via /api/spotify/track-artwork.
+    const eagerArtworkSlice = await mapWithConcurrency(
+      trackMeta.slice(0, 12),
+      6,
+      async (meta) => fetchSpotifyTrackArtwork(meta.baseTrackId, meta.title, meta.artist)
+    );
+
+    const tracks = trackMeta.map((meta, idx) => {
+      const artworkUrl = idx < eagerArtworkSlice.length ? eagerArtworkSlice[idx] || '' : '';
+      const images = artworkUrl ? [{ url: artworkUrl, width: 640, height: 640 }] : [];
+      return {
+        id: meta.trackId,
+        title: meta.title,
+        artist: meta.artist,
+        album: `Spotify · ${playlistName}`,
+        durationSec: meta.durationSec,
+        bpm: 108 + (idx % 16),
+        year: 2024,
+        artworkUrl,
+        images,
+        spotifyUri: meta.spotifyUri,
+        previewAudioUrl: meta.previewAudioUrl,
+      };
+    });
+
+    const payload: PublicPlaylistPayload = {
+      playlistId,
+      name: `Spotify · ${playlistName}`,
+      coverUrl: playlistCover,
+      totalTracks: embedData.totalTracks,
+      tracks,
+    };
+    spotifyPlaylistCache.set(playlistId, payload);
+    return payload;
+  })();
+
+  spotifyPlaylistInFlight.set(playlistId, work);
+  try {
+    return await work;
+  } finally {
+    spotifyPlaylistInFlight.delete(playlistId);
+  }
 }
 
 const fullAudioCache = new Map<string, { streamUrl: string; durationSec: number }>();
@@ -346,10 +472,25 @@ async function resolveFullLengthAudioStream(
   }
 }
 
+function getCliArg(flag: string): string | undefined {
+  const idx = process.argv.indexOf(flag);
+  if (idx !== -1 && idx + 1 < process.argv.length) {
+    return process.argv[idx + 1];
+  }
+  const eqPrefix = `${flag}=`;
+  const eqArg = process.argv.find((arg) => arg.startsWith(eqPrefix));
+  return eqArg ? eqArg.slice(eqPrefix.length) : undefined;
+}
+
 async function startServer() {
   const app = express();
   app.set('trust proxy', true);
-  const PORT = Number(process.env.PORT) || 3000;
+  const cliPort = Number(getCliArg('--port'));
+  const PORT =
+    Number.isFinite(cliPort) && cliPort > 0
+      ? cliPort
+      : Number(process.env.PORT) || 3000;
+  const HOST = getCliArg('--host') || '0.0.0.0';
 
   app.use(express.json());
   app.get('/api/health', (_req, res) => {
@@ -379,6 +520,42 @@ async function startServer() {
 
   const getSpotifyClientSecret = (): string =>
     (process.env.SPOTIFY_CLIENT_SECRET || DEFAULT_SPOTIFY_CLIENT_SECRET).trim();
+
+  let cachedClientToken: { token: string; expiresAtMs: number } | null = null;
+  const getSpotifyClientCredentialsToken = async (): Promise<string | null> => {
+    const now = Date.now();
+    if (cachedClientToken && now < cachedClientToken.expiresAtMs - 15000) {
+      return cachedClientToken.token;
+    }
+    const clientId = getSpotifyClientId();
+    const clientSecret = getSpotifyClientSecret();
+    if (!clientId || !clientSecret) return null;
+    try {
+      const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+      const tokenRes = await fetchWithTimeout(
+        'https://accounts.spotify.com/api/token',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${basicAuth}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({ grant_type: 'client_credentials' }).toString(),
+        },
+        7000
+      );
+      if (!tokenRes.ok) return null;
+      const json = (await tokenRes.json()) as { access_token?: string; expires_in?: number };
+      if (!json.access_token) return null;
+      cachedClientToken = {
+        token: json.access_token,
+        expiresAtMs: Date.now() + Math.max(60, Number(json.expires_in) || 3600) * 1000,
+      };
+      return json.access_token;
+    } catch {
+      return null;
+    }
+  };
 
   // 1. Public Spotify Authorization Code with PKCE Auth URL Endpoint
   app.get('/api/spotify/auth-url', (req, res) => {
@@ -596,15 +773,19 @@ async function startServer() {
         ).toString('base64')}`;
       }
 
-      const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
-        method: 'POST',
-        headers,
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          refresh_token: refreshToken,
-          client_id: envClientId,
-        }),
-      });
+      const tokenRes = await fetchWithTimeout(
+        'https://accounts.spotify.com/api/token',
+        {
+          method: 'POST',
+          headers,
+          body: new URLSearchParams({
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken,
+            client_id: envClientId,
+          }),
+        },
+        10000
+      );
 
       if (!tokenRes.ok) {
         const errData = (await tokenRes.json().catch(() => ({}))) as {
@@ -655,13 +836,21 @@ async function startServer() {
 
     try {
       const [meRes, playlistsRes, savedRes] = await Promise.all([
-        fetch('https://api.spotify.com/v1/me', { headers: { Authorization: authHeader } }),
-        fetch('https://api.spotify.com/v1/me/playlists?limit=50', {
-          headers: { Authorization: authHeader },
-        }),
-        fetch('https://api.spotify.com/v1/me/tracks?limit=1', {
-          headers: { Authorization: authHeader },
-        }).catch(() => null),
+        fetchWithTimeout('https://api.spotify.com/v1/me', { headers: { Authorization: authHeader } }, 10000),
+        fetchWithTimeout(
+          'https://api.spotify.com/v1/me/playlists?limit=50',
+          {
+            headers: { Authorization: authHeader },
+          },
+          10000
+        ),
+        fetchWithTimeout(
+          'https://api.spotify.com/v1/me/tracks?limit=1',
+          {
+            headers: { Authorization: authHeader },
+          },
+          8000
+        ).catch(() => null),
       ]);
 
       if (meRes.status === 401 || playlistsRes.status === 401) {
@@ -700,7 +889,7 @@ async function startServer() {
       let nextUrl = firstPage.next || null;
       let pageCount = 1;
       while (nextUrl && pageCount < 3) {
-        const nextRes = await fetch(nextUrl, { headers: { Authorization: authHeader } });
+        const nextRes = await fetchWithTimeout(nextUrl, { headers: { Authorization: authHeader } }, 10000);
         if (!nextRes.ok) break;
         const nextJson = (await nextRes.json()) as {
           items?: Array<{
@@ -798,7 +987,7 @@ async function startServer() {
           let url: string | null = 'https://api.spotify.com/v1/me/tracks?limit=50';
           let pages = 0;
           while (url && pages < 3) {
-            const trackRes = await fetch(url, { headers: { Authorization: authHeader } });
+            const trackRes = await fetchWithTimeout(url, { headers: { Authorization: authHeader } }, 10000);
             if (trackRes.status === 401) {
               res.status(401).json({
                 errorCode: 'session_expired',
@@ -819,17 +1008,19 @@ async function startServer() {
           }
         } else {
           const [metaRes, firstTracksRes] = await Promise.all([
-            fetch(
+            fetchWithTimeout(
               `https://api.spotify.com/v1/playlists/${encodeURIComponent(
                 playlistId
               )}?fields=name,images`,
-              { headers: { Authorization: authHeader } }
+              { headers: { Authorization: authHeader } },
+              10000
             ),
-            fetch(
+            fetchWithTimeout(
               `https://api.spotify.com/v1/playlists/${encodeURIComponent(
                 playlistId
               )}/tracks?limit=100`,
-              { headers: { Authorization: authHeader } }
+              { headers: { Authorization: authHeader } },
+              10000
             ),
           ]);
 
@@ -858,7 +1049,7 @@ async function startServer() {
             let nextUrl = firstJson.next || null;
             let pages = 1;
             while (nextUrl && pages < 3) {
-              const nextRes = await fetch(nextUrl, { headers: { Authorization: authHeader } });
+              const nextRes = await fetchWithTimeout(nextUrl, { headers: { Authorization: authHeader } }, 10000);
               if (!nextRes.ok) break;
               const nextJson = (await nextRes.json()) as {
                 items?: SpotifyApiTrackItem[];
@@ -958,6 +1149,32 @@ async function startServer() {
     }
   });
 
+  // 6a. Fast Public Spotify Playlist Peek (Title + Artist metadata only for instant loading commentary)
+  app.get('/api/spotify/playlist-peek', async (req, res) => {
+    const rawIdOrUrl = String(req.query.id || '').trim();
+    const matchUrl = rawIdOrUrl.match(/playlist\/([a-zA-Z0-9]+)/);
+    const playlistId = matchUrl ? matchUrl[1] : rawIdOrUrl.replace(/[^a-zA-Z0-9]/g, '');
+
+    if (!playlistId) {
+      res.status(400).json({ error: 'Please provide a valid Spotify playlist URL or ID.' });
+      return;
+    }
+
+    try {
+      const embedData = await fetchPublicSpotifyEmbedData(playlistId);
+      res.json({
+        playlistId,
+        name: `Spotify · ${embedData.name}`,
+        tracks: embedData.rawTracks.slice(0, 24).map((item, idx) => ({
+          title: item.title || `Track ${idx + 1}`,
+          artist: (item.subtitle || 'Spotify Artist').replace(/\u00a0/g, ' '),
+        })),
+      });
+    } catch {
+      res.status(200).json({ playlistId, name: '', tracks: [] });
+    }
+  });
+
   // 6b. Per-Track Individual Artwork Resolver (Never returns parent playlist generic cover art)
   app.get('/api/spotify/track-artwork', async (req, res) => {
     const trackId = String(req.query.trackId || '').trim();
@@ -970,6 +1187,335 @@ async function startServer() {
     } catch {
       res.json({ trackId, artworkUrl: '' });
     }
+  });
+
+  // 6c. Spotify Track & Album Search (Uses User OAuth Token -> Client Credentials -> iTunes Fallback)
+  app.get('/api/spotify/search', async (req, res) => {
+    const query = String(req.query.q || '').trim();
+    const typeParam = String(req.query.type || 'all').trim().toLowerCase();
+    if (!query) {
+      res.json({ tracks: [], albums: [] });
+      return;
+    }
+
+    const searchTypes =
+      typeParam === 'track'
+        ? 'track'
+        : typeParam === 'album'
+          ? 'album'
+          : 'track,album';
+
+    const userAuth = String(req.headers.authorization || '').trim();
+    const candidateTokens: string[] = [];
+    if (userAuth.toLowerCase().startsWith('bearer ')) {
+      candidateTokens.push(userAuth);
+    }
+    const appToken = await getSpotifyClientCredentialsToken();
+    if (appToken) {
+      candidateTokens.push(`Bearer ${appToken}`);
+    }
+
+    interface SpotifySearchApiResponse {
+      tracks?: {
+        items?: Array<{
+          id?: string;
+          name?: string;
+          uri?: string;
+          duration_ms?: number;
+          preview_url?: string | null;
+          artists?: Array<{ name?: string }>;
+          album?: {
+            name?: string;
+            release_date?: string;
+            images?: Array<{ url: string; width?: number; height?: number }>;
+          };
+        }>;
+      };
+      albums?: {
+        items?: Array<{
+          id?: string;
+          name?: string;
+          uri?: string;
+          release_date?: string;
+          total_tracks?: number;
+          artists?: Array<{ name?: string }>;
+          images?: Array<{ url: string; width?: number; height?: number }>;
+        }>;
+      };
+    }
+
+    let spotifyPayload: SpotifySearchApiResponse | null = null;
+
+    for (const bearer of candidateTokens) {
+      try {
+        const searchUrl = `https://api.spotify.com/v1/search?q=${encodeURIComponent(
+          query
+        )}&type=${encodeURIComponent(searchTypes)}&limit=10`;
+        const spRes = await fetchWithTimeout(searchUrl, { headers: { Authorization: bearer } }, 8000);
+        if (spRes.ok) {
+          spotifyPayload = (await spRes.json()) as SpotifySearchApiResponse;
+          break;
+        }
+      } catch {
+        // try next token or fallback
+      }
+    }
+
+    if (spotifyPayload) {
+      const tracks = (spotifyPayload.tracks?.items || [])
+        .filter((tr) => tr?.id && tr?.name)
+        .map((tr, idx) => {
+          const images = (tr.album?.images || []).filter((im) => im && im.url);
+          return {
+            id: String(tr.id),
+            title: String(tr.name),
+            artist:
+              (tr.artists || [])
+                .map((a) => a.name)
+                .filter(Boolean)
+                .join(', ') || 'Spotify Artist',
+            album: tr.album?.name || 'Single',
+            durationSec: Math.max(20, Math.round((tr.duration_ms || 180000) / 1000)),
+            bpm: 108 + (idx % 16),
+            year: Number((tr.album?.release_date || '').slice(0, 4)) || 2024,
+            artworkUrl: images[0]?.url || '',
+            images,
+            spotifyUri: tr.uri || `spotify:track:${tr.id}`,
+            previewAudioUrl: tr.preview_url || undefined,
+          };
+        });
+
+      const albums = (spotifyPayload.albums?.items || [])
+        .filter((al) => al?.id && al?.name)
+        .map((al) => {
+          const images = (al.images || []).filter((im) => im && im.url);
+          return {
+            id: String(al.id),
+            title: String(al.name),
+            artist:
+              (al.artists || [])
+                .map((a) => a.name)
+                .filter(Boolean)
+                .join(', ') || 'Spotify Artist',
+            releaseYear: Number((al.release_date || '').slice(0, 4)) || 2024,
+            totalTracks: Number(al.total_tracks) || 1,
+            artworkUrl: images[0]?.url || '',
+            images,
+            spotifyUri: al.uri || `spotify:album:${al.id}`,
+          };
+        });
+
+      res.json({ tracks, albums });
+      return;
+    }
+
+    // Fallback via iTunes public Search API when Spotify token is unavailable
+    try {
+      const [songRes, albumRes] = await Promise.all([
+        typeParam === 'album'
+          ? Promise.resolve(null)
+          : fetchWithTimeout(
+              `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=10`,
+              {},
+              6500
+            ),
+        typeParam === 'track'
+          ? Promise.resolve(null)
+          : fetchWithTimeout(
+              `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=album&limit=8`,
+              {},
+              6500
+            ),
+      ]);
+
+      const songJson =
+        songRes && songRes.ok
+          ? ((await songRes.json()) as {
+              results?: Array<{
+                trackId?: number;
+                trackName?: string;
+                artistName?: string;
+                collectionName?: string;
+                trackTimeMillis?: number;
+                releaseDate?: string;
+                artworkUrl100?: string;
+                previewUrl?: string;
+              }>;
+            })
+          : { results: [] };
+      const albumJson =
+        albumRes && albumRes.ok
+          ? ((await albumRes.json()) as {
+              results?: Array<{
+                collectionId?: number;
+                collectionName?: string;
+                artistName?: string;
+                trackCount?: number;
+                releaseDate?: string;
+                artworkUrl100?: string;
+              }>;
+            })
+          : { results: [] };
+
+      const tracks = (songJson.results || [])
+        .filter((r) => r.trackId && r.trackName)
+        .map((r, idx) => {
+          const art = (r.artworkUrl100 || '').replace('100x100bb', '600x600bb');
+          return {
+            id: `itunes-tr-${r.trackId}`,
+            title: String(r.trackName),
+            artist: String(r.artistName || 'Artist'),
+            album: String(r.collectionName || 'Single'),
+            durationSec: Math.max(20, Math.round((r.trackTimeMillis || 180000) / 1000)),
+            bpm: 108 + (idx % 16),
+            year: Number((r.releaseDate || '').slice(0, 4)) || 2024,
+            artworkUrl: art,
+            images: art ? [{ url: art, width: 600, height: 600 }] : [],
+            previewAudioUrl: r.previewUrl || undefined,
+          };
+        });
+
+      const albums = (albumJson.results || [])
+        .filter((r) => r.collectionId && r.collectionName)
+        .map((r) => {
+          const art = (r.artworkUrl100 || '').replace('100x100bb', '600x600bb');
+          return {
+            id: `itunes-al-${r.collectionId}`,
+            title: String(r.collectionName),
+            artist: String(r.artistName || 'Artist'),
+            releaseYear: Number((r.releaseDate || '').slice(0, 4)) || 2024,
+            totalTracks: Number(r.trackCount) || 1,
+            artworkUrl: art,
+            images: art ? [{ url: art, width: 600, height: 600 }] : [],
+          };
+        });
+
+      res.json({ tracks, albums });
+    } catch {
+      res.status(502).json({ error: 'Search service unavailable right now.' });
+    }
+  });
+
+  // 6d. Fetch Full Tracklist for a Searched Album ID
+  app.get('/api/spotify/album-tracks', async (req, res) => {
+    const albumId = String(req.query.id || '').trim();
+    if (!albumId) {
+      res.status(400).json({ error: 'Missing album id.' });
+      return;
+    }
+
+    if (albumId.startsWith('itunes-al-')) {
+      const numericId = albumId.replace('itunes-al-', '');
+      try {
+        const lookupRes = await fetchWithTimeout(
+          `https://itunes.apple.com/lookup?id=${encodeURIComponent(numericId)}&entity=song&limit=50`,
+          {},
+          7000
+        );
+        if (!lookupRes.ok) {
+          res.status(502).json({ error: 'Could not load album tracks.' });
+          return;
+        }
+        const json = (await lookupRes.json()) as {
+          results?: Array<{
+            wrapperType?: string;
+            trackId?: number;
+            trackName?: string;
+            artistName?: string;
+            collectionName?: string;
+            trackTimeMillis?: number;
+            releaseDate?: string;
+            artworkUrl100?: string;
+            previewUrl?: string;
+          }>;
+        };
+        const songs = (json.results || []).filter((r) => r.wrapperType === 'track' && r.trackName);
+        const tracks = songs.map((r, idx) => {
+          const art = (r.artworkUrl100 || '').replace('100x100bb', '600x600bb');
+          return {
+            id: `itunes-tr-${r.trackId || idx}`,
+            title: String(r.trackName),
+            artist: String(r.artistName || 'Artist'),
+            album: String(r.collectionName || 'Album'),
+            durationSec: Math.max(20, Math.round((r.trackTimeMillis || 180000) / 1000)),
+            bpm: 108 + (idx % 16),
+            year: Number((r.releaseDate || '').slice(0, 4)) || 2024,
+            artworkUrl: art,
+            images: art ? [{ url: art, width: 600, height: 600 }] : [],
+            previewAudioUrl: r.previewUrl || undefined,
+          };
+        });
+        res.json({ albumId, tracks });
+        return;
+      } catch {
+        res.status(502).json({ error: 'Could not load album tracks.' });
+        return;
+      }
+    }
+
+    const userAuth = String(req.headers.authorization || '').trim();
+    const candidateTokens: string[] = [];
+    if (userAuth.toLowerCase().startsWith('bearer ')) {
+      candidateTokens.push(userAuth);
+    }
+    const appToken = await getSpotifyClientCredentialsToken();
+    if (appToken) {
+      candidateTokens.push(`Bearer ${appToken}`);
+    }
+
+    for (const bearer of candidateTokens) {
+      try {
+        const alRes = await fetchWithTimeout(
+          `https://api.spotify.com/v1/albums/${encodeURIComponent(albumId)}`,
+          { headers: { Authorization: bearer } },
+          8000
+        );
+        if (!alRes.ok) continue;
+        const alJson = (await alRes.json()) as {
+          name?: string;
+          release_date?: string;
+          images?: Array<{ url: string; width?: number; height?: number }>;
+          tracks?: {
+            items?: Array<{
+              id?: string;
+              name?: string;
+              uri?: string;
+              duration_ms?: number;
+              preview_url?: string | null;
+              artists?: Array<{ name?: string }>;
+            }>;
+          };
+        };
+        const images = (alJson.images || []).filter((im) => im && im.url);
+        const albumArt = images[0]?.url || '';
+        const albumYear = Number((alJson.release_date || '').slice(0, 4)) || 2024;
+        const tracks = (alJson.tracks?.items || [])
+          .filter((tr) => tr?.id && tr?.name)
+          .map((tr, idx) => ({
+            id: String(tr.id),
+            title: String(tr.name),
+            artist:
+              (tr.artists || [])
+                .map((a) => a.name)
+                .filter(Boolean)
+                .join(', ') || 'Spotify Artist',
+            album: alJson.name || 'Album',
+            durationSec: Math.max(20, Math.round((tr.duration_ms || 180000) / 1000)),
+            bpm: 108 + (idx % 16),
+            year: albumYear,
+            artworkUrl: albumArt,
+            images,
+            spotifyUri: tr.uri || `spotify:track:${tr.id}`,
+            previewAudioUrl: tr.preview_url || undefined,
+          }));
+        res.json({ albumId, albumName: alJson.name || 'Album', tracks });
+        return;
+      } catch {
+        // try next
+      }
+    }
+
+    res.status(502).json({ error: 'Could not load tracks for this album.' });
   });
 
   // 7. Multi-Channel YouTube Video Search (Index 0 = Official, 1..4 = Top-Viewed Alternate Videos)
@@ -1334,6 +1880,7 @@ async function startServer() {
     res.json(resolved);
   });
 
+  const httpServer = http.createServer(app);
   const distPath = path.join(__dirname, 'dist');
   const distIndexPath = path.join(distPath, 'index.html');
   const isProduction =
@@ -1343,7 +1890,10 @@ async function startServer() {
   if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -1354,8 +1904,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`MaxYoutify server listening on http://0.0.0.0:${PORT}`);
+  httpServer.listen(PORT, HOST, () => {
+    console.log(`MaxYoutify server listening on http://${HOST}:${PORT}`);
   });
 }
 

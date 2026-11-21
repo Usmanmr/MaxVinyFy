@@ -42,9 +42,9 @@ export const CD_HIFI_SYSTEM_PROPORTIONS = {
   centerReceiverWidthPct: 32,
   rightSpeakerWidthPct: 34,
   hornWaveguideHeightPct: 12,
-  mainSpeakerScaleFactor: 0.7,
+  mainSpeakerScaleFactor: 1,
   centerDiscDiameterPct: 84,
-  auxDriversCountPerSide: 3,
+  auxDriversCountPerSide: 0,
   wooferDiameterPct: 82,
   bassReflexPortDiameterPct: 22,
   masterVolumeKnobDiameterPct: 36,
@@ -699,14 +699,153 @@ export function clampRemoteDragPosition(
   y: number,
   viewportW: number,
   viewportH: number,
-  remoteW = 186,
-  remoteH = 496
+  remoteW = 93,
+  remoteH = 248
 ): { x: number; y: number } {
   const maxX = Math.max(8, viewportW - remoteW - 8);
   const maxY = Math.max(8, viewportH - remoteH - 8);
   return {
     x: Math.max(8, Math.min(maxX, Math.round(x))),
     y: Math.max(8, Math.min(maxY, Math.round(y))),
+  };
+}
+
+export interface CdSpinePalette {
+  bgHex: string;
+  inkHex: string;
+  borderHex: string;
+  isFallback: boolean;
+}
+
+export const CD_VIBRANT_FALLBACK_PALETTE: readonly string[] = [
+  '#1D4ED8', // Cobalt Blue
+  '#DC2626', // Crimson Red
+  '#059669', // Emerald Green
+  '#D97706', // Amber Gold
+  '#7C3AED', // Electric Violet
+  '#0891B2', // Cyan Teal
+  '#DB2777', // Magenta Rose
+  '#0D9488', // Seafoam Teal
+  '#EA580C', // Tangerine Orange
+  '#4338CA', // Deep Indigo
+  '#BE185D', // Berry Pink
+  '#15803D', // Forest Green
+] as const;
+
+function cdChannelToLinear(c255: number): number {
+  const s = c255 / 255;
+  return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+}
+
+export function computeCdRelativeLuminance(r: number, g: number, b: number): number {
+  return (
+    0.2126 * cdChannelToLinear(Math.max(0, Math.min(255, r))) +
+    0.7152 * cdChannelToLinear(Math.max(0, Math.min(255, g))) +
+    0.0722 * cdChannelToLinear(Math.max(0, Math.min(255, b)))
+  );
+}
+
+export function computeWcagTextInkHex(r: number, g: number, b: number): '#FFFFFF' | '#111111' {
+  const bgLum = computeCdRelativeLuminance(r, g, b);
+  const whiteLum = 1.0;
+  const darkLum = computeCdRelativeLuminance(17, 17, 17);
+  const whiteRatio = (whiteLum + 0.05) / (bgLum + 0.05);
+  const darkRatio = (bgLum + 0.05) / (darkLum + 0.05);
+  return whiteRatio >= darkRatio ? '#FFFFFF' : '#111111';
+}
+
+function cdRgbToHex(r: number, g: number, b: number): string {
+  const toHex = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+}
+
+function hexToRgbTuple(hex: string): [number, number, number] {
+  const clean = hex.replace('#', '');
+  const n = parseInt(clean.length === 6 ? clean : '1D4ED8', 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+export function getFallbackCdSpinePalette(seedKey: string): CdSpinePalette {
+  const safe = seedKey || 'cd-track';
+  let hash = 0;
+  for (let i = 0; i < safe.length; i += 1) {
+    hash = (hash * 31 + safe.charCodeAt(i)) >>> 0;
+  }
+  const bgHex = CD_VIBRANT_FALLBACK_PALETTE[hash % CD_VIBRANT_FALLBACK_PALETTE.length];
+  const [r, g, b] = hexToRgbTuple(bgHex);
+  const inkHex = computeWcagTextInkHex(r, g, b);
+  const borderHex =
+    inkHex === '#FFFFFF'
+      ? cdRgbToHex(Math.min(255, r + 42), Math.min(255, g + 42), Math.min(255, b + 42))
+      : cdRgbToHex(Math.max(0, r - 42), Math.max(0, g - 42), Math.max(0, b - 42));
+  return {
+    bgHex,
+    inkHex,
+    borderHex,
+    isFallback: true,
+  };
+}
+
+export function extractCdSpinePaletteFromPixels(
+  pixels?: Uint8ClampedArray | number[] | null,
+  fallbackSeedKey = 'cd-track'
+): CdSpinePalette {
+  if (!pixels || pixels.length < 4) {
+    return getFallbackCdSpinePalette(fallbackSeedKey);
+  }
+
+  let totalWeight = 0;
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
+  let colorfulSamples = 0;
+
+  for (let i = 0; i + 3 < pixels.length; i += 4) {
+    const a = pixels[i + 3];
+    if (a < 40) continue;
+    const r = pixels[i];
+    const g = pixels[i + 1];
+    const b = pixels[i + 2];
+
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const sat = max === 0 ? 0 : (max - min) / max;
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+    if (sat < 0.14 || lum < 0.06 || lum > 0.94) continue;
+    colorfulSamples += 1;
+    const w = 0.25 + sat * sat * 4.0;
+    totalWeight += w;
+    sumR += r * w;
+    sumG += g * w;
+    sumB += b * w;
+  }
+
+  if (colorfulSamples === 0 || totalWeight <= 0) {
+    return getFallbackCdSpinePalette(fallbackSeedKey);
+  }
+
+  // Slightly boost vibrancy away from washed-out midtone grays while preserving dominant hue
+  let r = sumR / totalWeight;
+  let g = sumG / totalWeight;
+  let b = sumB / totalWeight;
+  const mean = (r + g + b) / 3;
+  r = Math.max(0, Math.min(255, mean + (r - mean) * 1.18));
+  g = Math.max(0, Math.min(255, mean + (g - mean) * 1.18));
+  b = Math.max(0, Math.min(255, mean + (b - mean) * 1.18));
+
+  const bgHex = cdRgbToHex(r, g, b);
+  const inkHex = computeWcagTextInkHex(r, g, b);
+  const borderHex =
+    inkHex === '#FFFFFF'
+      ? cdRgbToHex(Math.min(255, r + 42), Math.min(255, g + 42), Math.min(255, b + 42))
+      : cdRgbToHex(Math.max(0, r - 42), Math.max(0, g - 42), Math.max(0, b - 42));
+
+  return {
+    bgHex,
+    inkHex,
+    borderHex,
+    isFallback: false,
   };
 }
 
